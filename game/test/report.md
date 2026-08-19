@@ -916,20 +916,9 @@ agrarian 頑健     |##########                    | 0.327
 
 ## 検査器の自己検証
 
-fake-sim に故意のバグを注入し、対応する検査が落ちることを確認する。
+`node test/run.js --selftest` で実行する。
 
-| 注入したバグ | 落ちるべき検査 | 結果 | |
-|---|---|---|---|
-| `linkage` | linkage | WARN | ✅ 検出 |
-| `heritable-skill` | skill | FAIL | ✅ 検出 |
-| `luck50` | wardeath | FAIL | ✅ 検出 |
-| `no-recessive` | recessive | FAIL | ✅ 検出 |
-| `no-nfd` | frequency | WARN | ✅ 検出 |
-| `uniform-policy` | divergence | FAIL | ✅ 検出 |
-| `mock専用の名前` | integration | FAIL(検出) | ✅ 検出 |
-| `壊れた序盤(4対19/捕虜3体/第6世代)` | p1 | FAIL(4項目とも検出) | ✅ 検出 |
-
-
+fake-sim に故意のバグ（腕予算を外す／練度を遺伝させる／運死を50%にする／心系を中間遺伝にする／頻度依存を外す／全プロファイルを同一挙動にする）を注入し、**対応する検査がちゃんと落ちるか**を確かめる。落ちない検査は空振りなので価値がない。
 ---
 
 ## sim に期待しているデータ契約

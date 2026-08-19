@@ -88,6 +88,9 @@ export const POP_PER_LAND = 2.6;     // 密度ストレスの基準
 // 「閉じた血統は腐る」も「外来血で戻る」も両方とも実測できない。
 export const ENDOGAMY = 3.0;
 
+// 兄弟・親子の忌避。村内婚（ENDOGAMY）とは別の軸で、統治方針では動かない。
+export const INCEST_AVOID = 0.15;
+
 export const GRUDGE_INHERIT = 0.62;   // 体制怨恨の家系継承率
 // 風化率そのものはオーナーの手にない（祭祀局の性能）。v2には祭祀局がないので
 // 固定値だが、0.006 にしていたときは全世界の怨恨が1.0に飽和し、

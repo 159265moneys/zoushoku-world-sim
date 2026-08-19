@@ -44,8 +44,18 @@ export function makeGhost(seed, phase = 1, power = 1) {
   for (let i = 0; i < n; i++) {
     const hap = foundingGenome(targets, rng, 0.18);
     const genes = phenotype(hap);
+    // 年齢は本人の寿命と整合させる。
+    //
+    // 年齢と寿命を独立に振っていたため、「寿命6なのに5歳」という個体が湧いていた。
+    // 実在の個体は年齢の数だけ死亡判定を通過している＝年齢が高いこと自体が
+    // 寿命の高さの証拠なので、そういう個体は世界の中には存在しえない。
+    // 実測では捕虜の17%が余命1世代未満で入国し、23%が1〜2世代で老衰していた。
+    // 初戦の捕虜1体は「10体の村に1体＝色が変わる」という企画の看板そのものなので、
+    // 入った直後に死ぬと第2の柱が電源の入る前に切れる。
+    const baseLife = C.BASE_LIFESPAN + C.LIFESPAN_SPAN * genes.寿命;
+    const ageCap = Math.max(1, Math.min(village ? 3 : 5, Math.floor(baseLife * 0.45) - C.ADULT_AGE + 1));
     const ind = makeIndividual(`${key}#${i}`, name.slice(0, 2) + 'の' + (i + 1), {
-      genes, skills: blankSkills(), age: 2 + rng.int(village ? 3 : 5), sex: rng.int(2),
+      genes, skills: blankSkills(), age: C.ADULT_AGE + rng.int(ageCap), sex: rng.int(2),
       district: rng.bool(0.4) ? DISTRICT.FRONTIER : DISTRICT.CENTER,
       lineage: { [key]: 1 },
     });
@@ -615,7 +625,11 @@ export function borderDecision(world, captiveId, decision) {
     sex: cap.sex, age: cap.age, born: world.gen - cap.age,
     lineage: { ...cap.lineage },
     origin: cap.origin,
-    district: DISTRICT.FRONTIER,      // よそ者はまず辺境に置かれる
+    // 住まわせる場所はオーナーの動詞「置く」の管轄（setDistrict）。
+    // 自動で辺境に送っていたが、辺境は寿命に15%の負債が付くので、
+    // 入国した瞬間に隠れたペナルティを課していた。初期配置は中心にして、
+    // 辺境送りにするかどうかはオーナーに決めさせる
+    district: DISTRICT.CENTER,
     role: ROLE.IDLE,
     expressed: { ...cap.expressed },
   });
