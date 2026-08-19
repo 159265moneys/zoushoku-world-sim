@@ -26,6 +26,13 @@ function add(n, kids) {
   }
 }
 
+/**
+ * 既存ノードに子を足す。素の node.append() を使ってはいけない：
+ * null を渡すと文字列 "null" のテキストノードになって画面に出る。
+ * 条件付きの子（cond ? el(...) : null）を書く以上、必ずこちらを通す。
+ */
+export function mount(n, ...kids) { add(n, kids); return n; }
+
 export function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); return n; }
 export function $(sel, root = document) { return root.querySelector(sel); }
 

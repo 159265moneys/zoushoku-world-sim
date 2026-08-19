@@ -2,7 +2,7 @@
 // フェーズ2に入ると「自分で配役する」ボタンは消え、人事（局長の任命）に置き換わる。
 // これは解禁ではなく喪失。
 
-import { el, clear, toast, num } from '../dom.js';
+import { el, clear, toast, num, mount } from '../dom.js';
 import { ROLE, DISTRICT, PHASE, BUREAU, BUREAU_LABEL } from '../../core/model.js';
 import { portrait, training } from '../color.js';
 
@@ -44,7 +44,7 @@ function renderCasting(ctx, node) {
   for (const s of SLOTS) {
     const here = people.filter(p => p.role === s.role);
     const card = el('div', { class: 'card' });
-    card.append(
+    mount(card, 
       el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
         el('h4', {}, `${s.name}　${here.length}`),
         picked != null && world.people.get(picked)?.role !== s.role
@@ -70,7 +70,7 @@ function renderCasting(ctx, node) {
   for (const d of [DISTRICT.CENTER, DISTRICT.FRONTIER]) {
     const here = people.concat(children).filter(p => p.district === d);
     const card = el('div', { class: 'card' });
-    card.append(el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+    mount(card, el('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
       el('h4', {}, `${d === DISTRICT.CENTER ? '中心' : '辺境'}　${here.length}`),
       picked != null && world.people.get(picked)?.district !== d
         ? el('button', { class: 'btn sm', onclick: () => { api.setDistrict(world, picked, d); ctx.refresh(); } }, 'ここへ移す')
@@ -103,9 +103,9 @@ function renderAppointments(ctx, node) {
   for (const key of [BUREAU.MILITARY, BUREAU.AGRI, BUREAU.CIVIL]) {
     const cur = world.bureaus[key] ? world.people.get(world.bureaus[key]) : null;
     const card = el('div', { class: 'card' });
-    card.append(el('h4', {}, BUREAU_LABEL[key]));
+    mount(card, el('h4', {}, BUREAU_LABEL[key]));
     if (cur) {
-      card.append(
+      mount(card, 
         el('div', { class: 'chip on', onclick: () => ctx.select(cur.id) },
           portrait(world, cur, 22), el('div', { class: 'nm' }, cur.name),
           el('div', { class: 'mt' }, `${cur.age}歳`)),
@@ -119,7 +119,7 @@ function renderAppointments(ctx, node) {
         el('p', { class: 'hint' }, riskLine(cur)),
       );
     } else {
-      card.append(el('p', {}, '空位。誰も報告してこない。'));
+      mount(card, el('p', {}, '空位。誰も報告してこない。'));
     }
     const open = state.openBureau === key;
     card.appendChild(el('button', {

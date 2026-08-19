@@ -64,8 +64,9 @@ export function createWorld(seed, answers = [], opts = {}) {
       if (GENES[n].kind === 'mind') alleles[n] = [v, clamp(v + rng.normal(0, 0.16), 0.04, 0.96)];
     }
     normalizeArms(genes);
+    // 創世の二匹は最初から畑に立たせる。無役で始めると初手を打つ前に餓死しうる。
     const ind = makeIndividual(w.nextId++, FOUNDERS[i], {
-      genes, age: 4, sex: i, born: 0, role: ROLE.IDLE,
+      genes, age: 4, sex: i, born: 0, role: ROLE.FARM,
     });
     ind.alleles = alleles;
     ind.lineage = { self: 1 };
@@ -140,7 +141,11 @@ export function nationPower(w) {
 
 /** 自国民は実値、外国人は階級（上位1% / 以降10%刻み） */
 export function publicRank(w, ind) {
-  if (ind.rankPct != null) return { pct: ind.rankPct, label: `上位 ${ind.rankPct}%` };
+  // 外国人（国境で処理待ちの捕虜）は相手国内での階級しか見えない。
+  // 一度国に入れたら自国民なので実値が見える。
+  if (ind.rankPct != null && !w.people.has(ind.id)) {
+    return { pct: ind.rankPct, label: `上位 ${ind.rankPct}%` };
+  }
   const mine = [...w.people.values()].map(powerOf).sort((a, b) => b - a);
   const p = powerOf(ind);
   const idx = mine.findIndex(v => v <= p);
@@ -188,15 +193,15 @@ export function stepTick(w, rng) {
     express(w, p);
     switch (p.role) {
       case ROLE.FARM: {
-        yieldSum += 0.085 * (0.4 + 0.6 * G(p, '器用')) * (0.5 + 0.9 * S(p, '農技')) * (0.6 + 0.7 * G(p, '勤勉'));
+        yieldSum += 0.160 * (0.4 + 0.6 * G(p, '器用')) * (0.5 + 0.9 * S(p, '農技')) * (0.6 + 0.7 * G(p, '勤勉'));
         train(w, p, '農技', 0.012);
-        p.fatigue = clamp(p.fatigue + 0.006);
+        p.fatigue = clamp(p.fatigue + 0.0030);
         break;
       }
       case ROLE.HUNT: {
-        yieldSum += 0.105 * (0.4 + 0.6 * G(p, '攻撃素質')) * (0.5 + 0.9 * S(p, '狩技'));
+        yieldSum += 0.190 * (0.4 + 0.6 * G(p, '攻撃素質')) * (0.5 + 0.9 * S(p, '狩技'));
         train(w, p, '狩技', 0.014); train(w, p, '戦技', 0.006); train(w, p, '恐怖耐性', 0.004);
-        p.fatigue = clamp(p.fatigue + 0.010);
+        p.fatigue = clamp(p.fatigue + 0.0045);
         if (rng.next() < 0.0035 * (1.4 - G(p, '頑健'))) {
           p.wounded = true;
           out.push(ev(w, '負傷', { actor: p.id, revealed: true, text: `${p.name} が狩りで傷を負った。` }));
@@ -206,7 +211,7 @@ export function stepTick(w, rng) {
       case ROLE.DRILL: {
         train(w, p, '戦技', 0.016); train(w, p, '恐怖耐性', 0.010);
         train(w, p, '統率', 0.006 * (0.3 + G(p, '統率素質')));
-        p.fatigue = clamp(p.fatigue + 0.007);
+        p.fatigue = clamp(p.fatigue + 0.0035);
         break;
       }
       default:
@@ -218,7 +223,7 @@ export function stepTick(w, rng) {
   }
 
   w.yieldRate = yieldSum;
-  w.consumption = ppl.length * 0.052 * (w.cards.mercy?.on ? 1.06 : 1.0);
+  w.consumption = ppl.length * 0.045 * (w.cards.mercy?.on ? 1.06 : 1.0);
   w.food = Math.max(0, w.food + (w.yieldRate - w.consumption));
   w.density = clamp(ppl.length / (34 + w.tech * 12));
   w.tech = w.tech + 0.00035 * ppl.reduce((s, p) => s + G(p, '知性'), 0);
@@ -264,9 +269,10 @@ export function advanceGeneration(w, rng) {
   const out = [];
   w.gen++;
 
-  // 加齢と死
+  // 加齢と死。世代の切れ目で疲労は抜ける（抜けないと全員が上限に張り付く）。
   for (const p of [...w.people.values()]) {
     p.age++;
+    p.fatigue = clamp(p.fatigue - 0.55);
     const life = lifespanOf(p);
     let risk = Math.max(0, (p.age - life * 0.68) / (life * 0.5)) * 0.55;
     if (w.food <= 0.5) risk += 0.10;
@@ -274,13 +280,17 @@ export function advanceGeneration(w, rng) {
     if (p.age >= 3 && rng.next() < risk) out.push(die(w, p, '寿命'));
   }
 
-  // 幼体の成熟
+  // 幼体の成熟。発現ウィンドウを抜けたら無役として出てくる。
+  const MATURE = 2;
   for (const p of w.people.values()) {
-    if (p.role === ROLE.CHILD && p.age >= (w.cards.child_protect?.on ? (w.cards.child_protect.value || 3) : 2)) {
+    if (p.role === ROLE.CHILD && p.age >= MATURE) {
       p.role = ROLE.IDLE;
       out.push(ev(w, '成熟', { actor: p.id, revealed: true, text: `${p.name} が働ける歳になった。` }));
     }
   }
+
+  // フェーズ2以降はオーナーの手を離れ、局長が自分の条件式で配役する。
+  if (w.phase !== PHASE.VILLAGE) { const e = bureauCasting(w, rng); if (e) out.push(e); }
 
   // 出産
   out.push(...breed(w, rng));
@@ -293,11 +303,72 @@ export function advanceGeneration(w, rng) {
     w.warReady = true;
     out.push(ev(w, 'フェーズ', { revealed: true, text: '村が10体に達した。隣のシャーレが見つかった。' }));
   }
+  // フェーズ2は100体になるまでに何度も戦争する。数世代おきに相手が現れる。
+  if (w.phase === PHASE.TRIBE && !w.warReady && w.people.size >= 10
+      && (w.gen - (w.lastWarGen ?? -99)) >= 2) {
+    w.warReady = true;
+    out.push(ev(w, '接触', { revealed: true, text: '別のシャーレが接近している。' }));
+  }
 
   w.history.push(snapshot(w));
   if (w.history.length > 400) w.history.shift();
   w._petitions = [];
   return out;
+}
+
+/**
+ * 局長による大量配役。オーナーはカードと数値までしか置けない。
+ * その数字を局長の人格が歪めてから、実際の配役になる。
+ * 「30%と命じたのに、頑迷な局長は40%でやった」は読める歪み。設計として残す側。
+ */
+function bureauCasting(w, rng) {
+  const list = [...w.people.values()].filter(p => p.role !== ROLE.CHILD);
+  if (!list.length) return null;
+  const mil = w.bureaus.military ? w.people.get(w.bureaus.military) : null;
+  const agr = w.bureaus.agri ? w.people.get(w.bureaus.agri) : null;
+
+  const distort = (chief, v) => {
+    if (!chief) return v;
+    let d = 0;
+    if (G(chief, '頑迷') > 0.6) d += 10;   // 命じた数字を超えてやる
+    if (G(chief, '野心') > 0.6) d += 8;    // 自分の局を膨らませる
+    if (G(chief, '保身') > 0.6) d -= 8;    // 責任を取りたくないので控える
+    return Math.max(0, Math.min(100, v + d));
+  };
+
+  const orderedDrill = w.cards.drill_share?.on ? (w.cards.drill_share.value ?? 20) : 0;
+  const orderedFarm = w.cards.farm_share?.on ? (w.cards.farm_share.value ?? 55) : 55;
+  const drill = distort(mil, orderedDrill);
+  const farm = distort(agr, orderedFarm);
+
+  // 備蓄が下限を割ったら畑へ寄せる
+  const floor = w.cards.stock_floor?.on ? (w.cards.stock_floor.value ?? 0) : 0;
+  const farmAdj = w.food < floor ? Math.min(100, farm + 20) : farm;
+
+  const sorted = [...list].sort((a, b) => (G(b, '攻撃素質') + S(b, '戦技')) - (G(a, '攻撃素質') + S(a, '戦技')));
+  const n = sorted.length;
+  const nD = Math.round(n * drill / 100);
+  const nF = Math.round(n * farmAdj / 100);
+  sorted.forEach((p, i) => {
+    if (i < nD) p.role = ROLE.DRILL;
+    else if (i < nD + nF) p.role = ROLE.FARM;
+    else p.role = ROLE.HUNT;
+  });
+
+  const gapD = drill - orderedDrill, gapF = farmAdj - orderedFarm;
+  if (Math.abs(gapD) >= 8 && mil) {
+    return ev(w, '配役', {
+      actor: mil.id, revealed: true,
+      text: `${mil.name} は模擬戦を ${orderedDrill}% と命じられて ${drill}% でやった。`,
+    });
+  }
+  if (Math.abs(gapF) >= 8 && agr) {
+    return ev(w, '配役', {
+      actor: agr.id, revealed: true,
+      text: `${agr.name} は畑を ${orderedFarm}% と命じられて ${farmAdj}% でやった。`,
+    });
+  }
+  return null;
 }
 
 function die(w, p, cause) {
@@ -306,6 +377,14 @@ function die(w, p, cause) {
   w.dead.set(p.id, p);
   // 個人怨恨は本人の死で消える
   for (const q of w.people.values()) if (q.grudges[p.id]) delete q.grudges[p.id];
+  // 局長が死んだら椅子を空ける。放っておくと死人のidが局に残り、
+  // 報告も具申も止まったまま理由が画面に出ない。
+  for (const key in w.bureaus) {
+    if (w.bureaus[key] === p.id) {
+      w.bureaus[key] = null;
+      ev(w, '空位', { actor: p.id, revealed: true, text: `${BUREAU_LABEL[key]}長が死んだ。椅子が空いている。` });
+    }
+  }
   return ev(w, '死亡', { actor: p.id, revealed: true, text: `${p.name} が死んだ（${cause}）。` });
 }
 
@@ -315,33 +394,37 @@ function breed(w, rng) {
   if (adults.length < 2) return out;
 
   const mix = w.cards.mix_policy?.on ? (w.cards.mix_policy.value ?? 60) / 100 : 0;
-  const capacity = 6 + w.food * 0.45;
+  // 備蓄が扶養力の上限を決める。ただし食料が積み上がっても無限には増えない。
+  const capacity = 7 + Math.min(w.food, 60) * 0.45;
   const crowd = clamp(w.people.size / 110);
-  let budget = Math.max(0, Math.min(Math.round(capacity - w.people.size * 0.35), Math.ceil(adults.length * 0.55)));
-  budget = Math.round(budget * (1 - 0.75 * crowd));
+  let budget = Math.max(0, Math.round((capacity - w.people.size * 0.35) * (1 - 0.75 * crowd)));
   if (w.food < 2) budget = 0;
 
   const males = rng.shuffle(adults.filter(p => p.sex === 0));
   const females = rng.shuffle(adults.filter(p => p.sex === 1));
-  const used = new Set();
+  if (!males.length || !females.length) return out;
 
   for (const f of females) {
     if (budget <= 0) break;
-    if (rng.next() > 0.35 + 0.6 * G(f, '繁殖性')) continue;
+    if (rng.next() > 0.45 + 0.55 * G(f, '繁殖性')) continue;
     // 相手選び：融和度が低いと同じ血統を選ぶ＝斑が固定される
-    let cands = males.filter(m => !used.has(m.id));
-    if (!cands.length) break;
+    let cands = males;
     const same = cands.filter(m => dominantStrain(m) === dominantStrain(f));
     if (!rng.bool(mix) && same.length) cands = same;
     const m = cands[rng.int(cands.length)];
-    used.add(m.id);
-    const child = conceive(w, m, f, rng);
-    w.people.set(child.id, child);
-    budget--;
-    out.push(ev(w, '出生', {
-      actor: child.id, target: f.id, revealed: true,
-      text: `${child.name} が生まれた（${m.name} × ${f.name}）。`,
-    }));
+    // 一腹の数は繁殖性で決まる。住人はカビなので一度に複数産む。
+    let litter = 1;
+    if (rng.bool(G(f, '繁殖性'))) litter++;
+    if (rng.bool(G(f, '繁殖性') * 0.45)) litter++;
+    for (let k = 0; k < litter && budget > 0; k++) {
+      const child = conceive(w, m, f, rng);
+      w.people.set(child.id, child);
+      budget--;
+      out.push(ev(w, '出生', {
+        actor: child.id, target: f.id, revealed: true,
+        text: `${child.name} が生まれた（${m.name} × ${f.name}）。`,
+      }));
+    }
   }
   return out;
 }
@@ -660,17 +743,23 @@ export function resolvePetition(w, id, approve, rng) {
 
 // ---------------------------------------------------------------- 対戦相手
 
+// 色相の割り当てには制約が2つある。
+//  1. プレイヤーの自国（赤 = 0）から最低60度離す。近い色を混ぜると
+//     「捕虜が1体入った瞬間に色が違う」が成立せず、看板がまるごと死ぬ。
+//  2. 赤の対蹠点（180度付近）を空ける。0度とほぼ正反対の色相を混ぜると
+//     円環上の中点がどちら回りか不安定になり、似た親から正反対の子色が出る。
+// よって 60..156 と 204..300 の2帯に散らす。混色は必ず「親の間」に落ちる。
 const PROFILES = [
-  { id: 'martial',  name: '武断',   hue: 18,  desc: '狩りと実戦に厚く配役する。降伏しない。' },
-  { id: 'agrarian', name: '農本',   hue: 92,  desc: '産出優先。備蓄を厚く。戦争は最小限。' },
-  { id: 'fecund',   name: '多産',   hue: 320, desc: '繁殖性優先。質より量。密度ストレスを許容。' },
-  { id: 'purist',   name: '純血',   hue: 208, desc: '捕虜をほぼ誅殺。自国産の血だけで回す。' },
-  { id: 'melting',  name: '融和',   hue: 272, desc: '捕虜を全部受け入れる。混血を最大化。' },
-  { id: 'terror',   name: '恐怖',   hue: 350, desc: '怨恨を無視して粛清を多用。従順を選抜。' },
-  { id: 'laissez',  name: '放任',   hue: 46,  desc: 'ほとんど何もしない。局長に丸投げ。' },
-  { id: 'pious',    name: '信仰',   hue: 240, desc: '信仰性・団結傾向を選抜。排他的で捕虜を拒む。' },
-  { id: 'merit',    name: '実力主義', hue: 168, desc: '素質上位を抜擢。家柄を無視する。' },
-  { id: 'dynastic', name: '世襲',   hue: 128, desc: '局長の血統を固定。透過率を最小に。' },
+  { id: 'laissez',  name: '放任',   hue: 60,  desc: 'ほとんど何もしない。局長に丸投げ。' },
+  { id: 'agrarian', name: '農本',   hue: 84,  desc: '産出優先。備蓄を厚く。戦争は最小限。' },
+  { id: 'dynastic', name: '世襲',   hue: 108, desc: '局長の血統を固定。透過率を最小に。' },
+  { id: 'merit',    name: '実力主義', hue: 132, desc: '素質上位を抜擢。家柄を無視する。' },
+  { id: 'pious',    name: '信仰',   hue: 156, desc: '信仰性・団結傾向を選抜。排他的で捕虜を拒む。' },
+  { id: 'purist',   name: '純血',   hue: 204, desc: '捕虜をほぼ誅殺。自国産の血だけで回す。' },
+  { id: 'terror',   name: '恐怖',   hue: 228, desc: '怨恨を無視して粛清を多用。従順を選抜。' },
+  { id: 'melting',  name: '融和',   hue: 252, desc: '捕虜を全部受け入れる。混血を最大化。' },
+  { id: 'martial',  name: '武断',   hue: 276, desc: '狩りと実戦に厚く配役する。降伏しない。' },
+  { id: 'fecund',   name: '多産',   hue: 300, desc: '繁殖性優先。質より量。密度ストレスを許容。' },
 ];
 
 const PROFILE_ANSWERS = {
@@ -894,7 +983,6 @@ export function stepBattle(battle, rng) {
 
   for (const side of ['a', 'b']) {
     const me = battle[side], foe = battle[side === 'a' ? 'b' : 'a'];
-    const enemies = foe.fighters.filter(f => f.state !== 'dead');
     const pressure = 1 - clamp(me.cohesion);
     for (const f of me.fighters) {
       if (f.state === 'dead') continue;
@@ -927,18 +1015,20 @@ export function stepBattle(battle, rng) {
       f.x = clamp(f.x, 0.02, 0.98);
       f.y = clamp(f.y + rng.range(-0.006, 0.006), 0.06, 0.94);
 
+      // 攻撃。標的は毎回引き直す。同じtick内で死んだ相手を殴り続けないため。
+      const enemies = foe.fighters.filter(x => x.state !== 'dead');
       if (!enemies.length) continue;
-
-      // 攻撃
       const mult = f.state === 'fight' ? 1 : (f.state === 'freeze' ? 0.15 : 0.05);
       const atk = (0.18 + 0.42 * G(f.ind, '攻撃素質') + 0.36 * S(f.ind, '戦技')) * mult;
       if (atk <= 0.02) continue;
       const tgt = enemies[rng.int(enemies.length)];
       const def = 0.28 + 0.55 * G(tgt.ind, '頑健') + 0.22 * S(tgt.ind, '恐怖耐性')
         + (tgt.state === 'flee' ? -0.22 : 0);
-      const dmg = Math.max(0.01, atk * rng.range(0.45, 1.3) * 0.30 / Math.max(0.35, def));
+      // 係数が小さいのは意図的。勝敗は殲滅ではなく団結の崩壊で決まるので、
+      // 恐怖が閾値に達するより先に全員が死んではいけない。戦死率は低く保つ。
+      const dmg = Math.max(0.002, atk * rng.range(0.45, 1.3) * 0.050 / Math.max(0.35, def));
       tgt.hp -= dmg;
-      if (tgt.hp <= 0) {
+      if (tgt.hp <= 0 && tgt.state !== 'dead') {
         tgt.state = 'dead'; tgt.ind.alive = false; f.kills++;
         battle.deaths[tgt.side].push(tgt);
         blog(battle, `${tgt.name} が倒れた。（${f.name}）`, 'bad');
@@ -1011,7 +1101,9 @@ export function captiveOptions(battle) {
     const above = survivors.filter(p => powerOf(p) >= avg);
     if (above.length) pool = above;
   }
-  const count = Math.min(pool.length, battle.gen < 4 ? 1 : 1 + ((battle.t + battle.seed) % 3));
+  // フェーズ1の終わりは1体。フェーズ2は戦ごとに1〜5体。
+  const p1 = (battle.a.world?.phase ?? PHASE.VILLAGE) === PHASE.VILLAGE;
+  const count = Math.min(pool.length, p1 ? 1 : 1 + ((battle.t + battle.seed) % 3));
   return {
     won,
     axes: won ? AXES : [],           // 軸を選べるのは勝者だけ
@@ -1047,13 +1139,20 @@ export function takeCaptives(w, battle, axis, rng) {
   }
   ev(w, '捕虜', {
     revealed: true,
-    text: `${battle.opponent.name} から ${out.length} 体を連れ帰った${opt.won && axis ? `（${AXES.find(a => a.key === axis)?.label} 上位から抽選）` : ''}。`,
+    text: out.length
+      ? `${battle.opponent.name} から ${out.length} 体を連れ帰った${opt.won && axis ? `（${AXES.find(a => a.key === axis)?.label} 上位から抽選）` : ''}。`
+      : '生存者がいなかった。殲滅した瞬間に自分の取り分が消えた。',
   });
+  // 取り分がゼロでも戦争は終わる。ここで止めると先へ進めなくなる。
+  if (!w.borderQueue.length) settleWar(w, battle);
   return out;
 }
 
 function cloneAsCaptive(w, src, battle, foeStrains, foeWorld, rng) {
-  const c = makeIndividual(w.nextId++, src.name, {
+  // 名前プールは全世界で共通なので、自国民と同名の捕虜が普通に出る。
+  // 出自を添えて区別できるようにする（画面上で「どっちの◯◯か」が分からなくなるため）。
+  const home = String(battle.opponent.name).replace('のシャーレ', '');
+  const c = makeIndividual(w.nextId++, `${src.name}・${home}`, {
     genes: { ...src.genes }, age: src.age, sex: src.sex, born: w.gen - src.age, role: ROLE.IDLE,
     district: DISTRICT.FRONTIER,
   });
@@ -1090,7 +1189,7 @@ function importLineage(w, lineage, foeStrains, opp) {
     } else {
       key = k; hue = (foeStrains[k] && foeStrains[k].hue) ?? undefined; name = (foeStrains[k] && foeStrains[k].name) || k;
     }
-    if (!w.strains[key]) w.strains[key] = { key, name, hue: hue ?? (140 + (w.nextId * 47) % 200) };
+    if (!w.strains[key]) w.strains[key] = { key, name, hue: hue ?? (60 + (w.nextId * 47) % 240) };
     out[key] = (out[key] || 0) + L[k];
   }
   return out;
@@ -1116,21 +1215,26 @@ export function borderDecision(w, captiveId, decision) {
   } else {
     e = ev(w, '送還', { actor: c.id, revealed: true, text: `${c.name} を送り返した。世界の遺伝子プールは保存された。` });
   }
-  maybeAdvancePhase(w);
+  if (!w.borderQueue.length) settleWar(w, w.lastWar);
   return e;
 }
 
-function maybeAdvancePhase(w) {
-  if (w.borderQueue.length) return;
+/** 戦後処理の締め。捕虜がゼロでも必ず通る道にしてある。 */
+export function settleWar(w, battle) {
+  if (battle && battle.settled) return null;
+  if (battle) battle.settled = true;
+  if (w.borderQueue.length) return null;
   w.warsFought++;
   w.warReady = false;
+  w.lastWarGen = w.gen;
   if (w.phase === PHASE.VILLAGE && w.people.size >= 8) {
     w.phase = PHASE.TRIBE;
-    ev(w, 'フェーズ', {
+    return ev(w, 'フェーズ', {
       revealed: true,
       text: '部族になった。もう自分の手で全員を配役することはできない。局長を立てるしかない。',
     });
   }
+  return null;
 }
 
 // ---------------------------------------------------------------- 補助

@@ -3,7 +3,7 @@
 // 濁った数字ひとつで相手を選び、実際の勝負は中身で決まる。
 // 開発用のデバッグトグルを付けてあり、オンにすると思想名・人口・血統の色・内訳が見える。
 
-import { el, clear, modal, num } from '../dom.js';
+import { el, clear, modal, num, mount } from '../dom.js';
 import { lineageHue, swatchColor, strainName } from '../color.js';
 
 export function openOpponents(ctx, onPick) {
@@ -50,7 +50,7 @@ export function openOpponents(ctx, onPick) {
       const cls = gap > 1.08 ? 'bad' : gap > 0.92 ? 'warn' : 'ac';
 
       const card = el('div', { class: 'card' });
-      card.append(el('div', { style: { display: 'flex', alignItems: 'center', gap: '11px' } },
+      mount(card, el('div', { style: { display: 'flex', alignItems: 'center', gap: '11px' } },
         dot(o.hue, 20),
         el('div', { style: { flex: 1, minWidth: 0 } },
           el('h4', { style: { margin: 0 } }, o.name),
@@ -90,7 +90,7 @@ export function openOpponents(ctx, onPick) {
           for (const [k, v] of mix) {
             bar.appendChild(el('div', { style: { width: (v * 100) + '%', background: swatchColor(w2, k) } }));
           }
-          card.append(bar, el('div', { class: 'mut', style: { fontSize: '10px', marginTop: '3px' } },
+          mount(card, bar, el('div', { class: 'mut', style: { fontSize: '10px', marginTop: '3px' } },
             mix.map(([k, v]) => `${strainName(w2, k)} ${Math.round(v * 100)}%`).join(' / ')));
           // 実際の個体の色を並べる
           const strip = el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '3px', marginTop: '6px' } });

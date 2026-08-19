@@ -88,21 +88,24 @@ export class Dish {
     this.time += dt;
     const cx = this.w / 2, cy = this.h / 2;
     const n = world.people.size || 1;
-    const vr = clamp(38 + n * 1.55, 38, Math.min(this.w, this.h) * 0.20);
+    const vr = clamp(50 + n * 1.5, 50, Math.min(this.w, this.h) * 0.20);
     this.vr = vr;
 
     for (const p of world.people.values()) {
       const s = this.pos.get(p.id);
       if (!s) continue;
+      // 角度と半径には別々のハッシュを使う。同じ値を使い回すと角度と半径が相関して
+      // 群れが渦巻き状の一本線になり、居住区の帯として読めなくなる。
+      const sa = hash01(p.id, 0x9e3779b9);
+      const sr = hash01(p.id, 0x85ebca6b);
       const sector = ROLE_ANGLE[p.role];
-      const spread = p.role === ROLE.CHILD ? Math.PI * 2 : Math.PI * 0.44;
-      const seed = (p.id * 2654435761 % 1000) / 1000;
-      const ang = sector == null ? seed * Math.PI * 2 : sector + (seed - 0.5) * spread;
-      const ringIn = p.district === DISTRICT.FRONTIER ? vr * 2.45 : vr * 1.25;
-      const ringOut = p.district === DISTRICT.FRONTIER ? vr * 3.5 : vr * 2.05;
-      const rr = p.role === ROLE.CHILD ? vr * (0.55 + seed * 0.5) : ringIn + seed * (ringOut - ringIn);
+      const spread = p.role === ROLE.CHILD ? Math.PI * 2 : Math.PI * 0.46;
+      const ang = sector == null ? sa * Math.PI * 2 : sector + (sa - 0.5) * spread;
+      const ringIn = p.district === DISTRICT.FRONTIER ? vr * 2.45 : vr * 1.28;
+      const ringOut = p.district === DISTRICT.FRONTIER ? vr * 3.5 : vr * 2.10;
+      const rr = p.role === ROLE.CHILD ? vr * (0.72 + sr * 0.34) : ringIn + sr * (ringOut - ringIn);
 
-      const wob = Math.sin(this.time * 0.7 + s.ph) * 0.10 + Math.cos(this.time * 0.43 + s.ph * 1.7) * 0.07;
+      const wob = Math.sin(this.time * 0.7 + s.ph) * 0.09 + Math.cos(this.time * 0.43 + s.ph * 1.7) * 0.06;
       const tx = cx + Math.cos(ang + wob * 0.5) * rr * (1 + wob * 0.06);
       const ty = cy + Math.sin(ang + wob * 0.5) * rr * (1 + wob * 0.06);
 
@@ -149,7 +152,7 @@ export class Dish {
     ctx.fillStyle = 'rgba(232,178,74,0.72)';
     for (let i = 0; i < tri; i++) {
       const a = -Math.PI / 2 + (i / Math.max(1, tri)) * Math.PI * 2;
-      const rr = vr * 0.62;
+      const rr = vr * 0.42;
       const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
       const s = 3.4;
       ctx.beginPath();
@@ -192,6 +195,14 @@ export class Dish {
       }
     }
   }
+}
+
+/** id から 0..1 の安定した値を作る。種を変えると独立した系列になる。 */
+function hash01(id, salt) {
+  let h = (id ^ salt) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 2246822507) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 3266489909) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
 function roundRect(ctx, x, y, w, h, r) {

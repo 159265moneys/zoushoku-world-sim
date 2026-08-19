@@ -2,7 +2,7 @@
 // 外国人は総合値の階級しか見えない。国民力に忠誠は入っていないし、未発現の才能も入っていない。
 // つまり国境の選別は無料だが盲目。
 
-import { el, clear, modal, toast } from '../dom.js';
+import { el, clear, modal, toast, mount } from '../dom.js';
 import { portrait, swatchColor, strainName, lineageHue } from '../color.js';
 
 export function openBorder(ctx, battle) {
@@ -23,7 +23,7 @@ export function openBorder(ctx, battle) {
 
   // ---- 勝者は「どの軸の上位から引くか」を1つ選べる
   function renderAxis() {
-    body.append(
+    mount(body, 
       el('div', { class: 'card' },
         el('h4', {}, '勝った。相手の平均より上のプールから抽選する。'),
         el('p', {}, '指名はできない。引く軸を1本だけ選べる。当たり外れは残るが、方向は選べる。'),
@@ -46,8 +46,10 @@ export function openBorder(ctx, battle) {
   }
 
   function renderDraw() {
-    if (!world.borderQueue.length) {
-      api.takeCaptives(world, battle, axis, rng);
+    if (!battle.drawn) {
+      battle.drawn = true;
+      const got = api.takeCaptives(world, battle, axis, rng) || [];
+      battle.tookAny = got.length > 0;
     }
     phase = 'queue';
     render();
@@ -57,9 +59,11 @@ export function openBorder(ctx, battle) {
   function renderQueue() {
     const q = world.borderQueue;
     if (!q.length) {
-      body.append(
+      // 捕虜がゼロ（殲滅）でもここを通る。戦争の締めは必ず実行する。
+      if (api.settleWar) api.settleWar(world, battle);
+      mount(body, 
         el('div', { class: 'card' },
-          el('h4', {}, '国境の処理が終わった'),
+          el('h4', {}, q.length === 0 && !battle.tookAny ? '取り分がなかった' : '国境の処理が終わった'),
           el('p', {}, '戦争終了時に実施したので国民への通達はない。感情変数は動いていない。'
             + '一度国に入れたあとに殺せば、それは粛清として返ってくる。'),
         ),
@@ -68,7 +72,7 @@ export function openBorder(ctx, battle) {
       return;
     }
 
-    body.append(
+    mount(body, 
       el('p', { class: 'hint' },
         battle.outcome === 'win' ? opt.note : '負けたので相手の全プールからの抽選になった。'),
       el('div', { class: 'card', style: { borderColor: '#4a3c1c', background: '#171207' } },
@@ -81,7 +85,7 @@ export function openBorder(ctx, battle) {
     for (const c of [...q]) {
       const rank = api.publicRank(world, c);
       const card = el('div', { class: 'card' });
-      card.append(
+      mount(card, 
         el('div', { style: { display: 'flex', gap: '11px', alignItems: 'center' } },
           portrait(world, c, 40),
           el('div', { style: { flex: 1, minWidth: 0 } },

@@ -53,8 +53,13 @@ export function ageFactor(ind) {
   return clamp(1 - (a - peak) * 0.13, 0.25, 1);
 }
 
+/** 遺伝的荷重による生存力。近親交配で腐り、外来血で戻る。 */
+export function vitality(ind) {
+  return ind.vitality ?? 1;
+}
+
 export function conditionFactor(ind) {
-  return (1 - clamp01(ind.fatigue) * 0.30) * (ind.wounded ? 0.7 : 1);
+  return (1 - clamp01(ind.fatigue) * 0.30) * (ind.wounded ? 0.7 : 1) * vitality(ind);
 }
 
 // ---------------------------------------------------------------------------
@@ -178,22 +183,27 @@ export function combatStats(ind) {
 // ---------------------------------------------------------------------------
 // 生産局面の導出層
 // ---------------------------------------------------------------------------
-export function produce(ind, world) {
+/**
+ * 産出。各項は1.0を中心に振れるように揃えてある。
+ * @param landFactor 規模の逓減（働き手が土地を超えると1人あたりが落ちる）。world 側が渡す。
+ */
+export function produce(ind, world, landFactor = 1) {
   const g = ind.genes;
   const sn = sins(ind);
   const so = sinOutputs(sn);
   const cond = conditionFactor(ind) * ageFactor(ind);
-  const diligence = clamp(0.45 + 0.55 * g.勤勉 - 0.4 * sn.怠惰, 0.12, 1.25);
-  const coop = 0.75 + 0.5 * eff(ind, '共同作業適性');
-  const envAgri = ind.district === DISTRICT.CENTER ? 1.1 : 0.85;
-  const envHunt = ind.district === DISTRICT.FRONTIER ? 1.2 : 0.9;
+  const diligence = clamp(0.65 + 0.70 * g.勤勉 - 0.40 * sn.怠惰, 0.20, 1.45);
+  const coop = 0.85 + 0.30 * eff(ind, '共同作業適性');
+  const envAgri = ind.district === DISTRICT.CENTER ? 1.10 : 0.88;
+  const envHunt = ind.district === DISTRICT.FRONTIER ? 1.20 : 0.90;
   let gross = 0;
   if (ind.role === ROLE.FARM) {
-    gross = 1.15 * (0.35 + 0.65 * (ind.skills.農技 ?? 0)) * (0.5 + 0.6 * eff(ind, '器用'))
-          * diligence * coop * envAgri * cond * so.産出補正;
+    gross = C.FARM_BASE * (0.60 + 0.80 * (ind.skills.農技 ?? 0)) * (0.70 + 0.60 * eff(ind, '器用'))
+          * diligence * coop * envAgri * cond * so.産出補正 * landFactor;
   } else if (ind.role === ROLE.HUNT) {
-    gross = 1.0 * (0.35 + 0.65 * (ind.skills.狩技 ?? 0)) * (0.45 + 0.7 * eff(ind, '攻撃素質'))
-          * diligence * envHunt * cond * so.産出補正;
+    // 狩りだけが生産と両立する。土地には縛られないが上振れも小さい
+    gross = C.HUNT_BASE * (0.60 + 0.75 * (ind.skills.狩技 ?? 0)) * (0.70 + 0.55 * eff(ind, '攻撃素質'))
+          * diligence * envHunt * cond * so.産出補正 * (0.55 + 0.45 * landFactor);
   }
   // 横領・隠匿：怨恨を溜めた国民は反乱の前にまず収穫を隠す
   const grudge = clamp01(ind.regimeGrudge ?? 0);
@@ -205,7 +215,7 @@ export function produce(ind, world) {
 export function consume(ind) {
   const g = ind.genes;
   const sn = sins(ind);
-  const base = C.FOOD_PER_HEAD + 0.35 * g.代謝 + 0.30 * sn.暴食;
+  const base = C.FOOD_PER_HEAD + C.METAB_COST * g.代謝 + C.GLUTTONY_COST * sn.暴食;
   return ind.age < C.ADULT_AGE ? base * C.CHILD_CONSUME : base;
 }
 

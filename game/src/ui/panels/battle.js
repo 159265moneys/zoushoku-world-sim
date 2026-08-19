@@ -84,12 +84,12 @@ export function openBattle(ctx, opponent) {
         ctx2.fillRect(x - 14, y + r + 4, 28, 3);
         ctx2.fillStyle = f.hp > 0.5 ? '#5fe3c4' : '#e2604a';
         ctx2.fillRect(x - 14, y + r + 4, 28 * Math.max(0, f.hp), 3);
-        // 状態
+        // 状態は円の横に出す。上に置くと隣の行の名前と重なって読めなくなる。
         if (f.state !== 'fight') {
           ctx2.font = '9px -apple-system, sans-serif';
           ctx2.fillStyle = f.state === 'flee' ? '#e8b24a' : '#b4becc';
           const t = f.state === 'flee' ? '逃走' : '硬直';
-          ctx2.fillText(t, x - ctx2.measureText(t).width / 2, y - r - 5);
+          ctx2.fillText(t, x + r + 5, y + 3.5);
         }
         ctx2.font = '9.5px -apple-system, sans-serif';
         ctx2.fillStyle = 'rgba(160,172,196,0.85)';
@@ -133,9 +133,9 @@ export function openBattle(ctx, opponent) {
     cohB.set(battle.b.cohesion);
   }
 
-  function loop(now) {
-    raf = requestAnimationFrame(loop);
-    const dt = now - last; last = now;
+  function loop() {
+    const now = performance.now();
+    const dt = Math.min(160, now - last); last = now;
     if (!battle.over) {
       acc += dt;
       if (acc >= STEP_MS) { acc = 0; api.stepBattle(battle, rng); syncLog(); syncBars(); syncRoster(); }
@@ -147,6 +147,8 @@ export function openBattle(ctx, opponent) {
   function finish() {
     if (finished) return;
     finished = true;
+    // 決着時は必ず最終状態を流し込む。ログ・団結・名簿が途中で止まって見えるのを防ぐ。
+    syncLog(); syncBars(); syncRoster();
     nextBtn.hidden = false;
     surrenderBtn.disabled = true;
     const dead = battle.deaths.a.length;
@@ -170,7 +172,7 @@ export function openBattle(ctx, opponent) {
   }
 
   function goNext() {
-    cancelAnimationFrame(raf);
+    clearInterval(raf);
     m.close();
     openBorder(ctx, battle);
   }
@@ -178,7 +180,8 @@ export function openBattle(ctx, opponent) {
   resize();
   new ResizeObserver(resize).observe(canvas);
   syncLog(); syncBars(); syncRoster();
-  raf = requestAnimationFrame(loop);
+  // rAF ではなくタイマー。裏タブで戦闘が止まらないように。
+  raf = setInterval(loop, 33);
   return m;
 }
 

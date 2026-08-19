@@ -39,27 +39,36 @@ export function record(world, kind, opts = {}) {
  * 追跡対象5本の値を動かす。増分に原因イベントIDを付ける。
  * subject は個体か world（民心・産出率は world 側）。
  */
+const LEDGER_MAX = 48;
+
 export function applyDelta(world, subject, field, delta, eventId, extra = {}) {
   if (!TRACKED.includes(field)) {
     // 追跡外の値は普通に動かしてよい
     return;
   }
   if (!subject.ledger) subject.ledger = [];
-  subject.ledger.push({ field, delta, eventId, gen: world.gen, ...extra });
-  if (eventId != null) {
-    const ev = world.eventById.get(eventId);
-    if (ev) ev.refs++;
-  }
-  if (subject.ledger.length > 64) {
-    // 古い増分は畳む。ただし参照カウントは減らさない（＝事件は残る）
-    const drop = subject.ledger.splice(0, subject.ledger.length - 64);
-    for (const d of drop) {
-      if (d.eventId != null && !subject.frozen) {
-        // 畳んだ分の参照は「継承された総和」として1本にまとめる
-        subject.ledger.push({ field: d.field, delta: 0, eventId: d.eventId, gen: d.gen, folded: true });
-      }
+  // 同じ (値, 原因事件) は1行にまとめる。台帳が無限に伸びないので畳む必要がなくなり、
+  // 「生きている怨恨から上流を辿る」鎖も切れない
+  const row = subject.ledger.find((d) => d.field === field && d.eventId === eventId);
+  if (row) {
+    row.delta += delta;
+    row.gen = world.gen;
+  } else {
+    subject.ledger.push({ field, delta, eventId, gen: world.gen, ...extra });
+    if (eventId != null) {
+      const ev = world.eventById.get(eventId);
+      if (ev) ev.refs++;
     }
-    subject.ledger = subject.ledger.slice(-96);
+  }
+  // それでも溢れたら、寄与の小さいものから捨てる（大きい怨恨ほど鎖が残る）
+  if (subject.ledger.length > LEDGER_MAX) {
+    subject.ledger.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    for (const d of subject.ledger.slice(LEDGER_MAX)) {
+      if (d.eventId == null) continue;
+      const ev = world.eventById.get(d.eventId);
+      if (ev && ev.refs > 0) ev.refs--;
+    }
+    subject.ledger.length = LEDGER_MAX;
   }
 }
 
@@ -93,6 +102,21 @@ export function traceUp(world, eventId, depth = 24) {
     cur = up;
   }
   return out;
+}
+
+/**
+ * 1件を開くと上流（何が原因か）と下流（何を引き起こしたか）が展開される。
+ * 年代記UIとテストはこれを叩く。
+ */
+export function trace(world, eventId) {
+  const ev = world.eventById.get(eventId) || null;
+  return {
+    event: ev,
+    up: ev ? traceUp(world, eventId) : [],
+    down: ev ? traceDown(world, eventId) : [],
+    // 表示されるのはオーナーが知っている帰属であって真の原因ではない
+    visible: ev ? (ev.revealed ? 'trueCause' : 'claimed') : null,
+  };
 }
 
 /** 下流に展開する。何を引き起こしたか。 */

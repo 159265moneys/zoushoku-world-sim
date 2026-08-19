@@ -1,7 +1,7 @@
 // 画面1：オープニング。性格診断ふうの数問。
 // 回答するたびに右のバーが伸びる ＝ 回答がそのまま第1世代の遺伝子になるのが見える。
 
-import { el, clear, bar, toast } from '../dom.js';
+import { el, clear, bar, toast, mount } from '../dom.js';
 import { QUESTIONS, previewGenes, touchedGenes } from '../questions.js';
 import { drawIndividual } from '../color.js';
 import { makeIndividual } from '../../core/model.js';
@@ -9,6 +9,7 @@ import { makeIndividual } from '../../core/model.js';
 export function openOpening(onDone) {
   const answers = new Array(QUESTIONS.length).fill(null);
   let qi = 0;
+  let locked = false;   // 連打で問いを飛ばさないための錠
 
   const root = el('div', { id: 'opening' });
   const op = el('div', { class: 'op' });
@@ -21,12 +22,12 @@ export function openOpening(onDone) {
   const gpre = el('div', { class: 'gpre' });
   const wrap = el('div', { class: 'qwrap' }, qbox, gpre);
   const dots = el('div', { class: 'dots' });
-  op.append(title, tagline, wrap, dots);
+  mount(op, title, tagline, wrap, dots);
 
   function renderPreview() {
     clear(gpre);
     const g = previewGenes(answers.filter(Boolean));
-    gpre.append(
+    mount(gpre, 
       el('h4', {}, '創世の二匹の素質'),
       el('div', { class: 'note' }, '答えた分だけ心系の遺伝子が決まる。体系（代謝・頑健）は別枠で振られる。'),
       previewFace(g),
@@ -56,7 +57,7 @@ export function openOpening(onDone) {
     QUESTIONS.forEach((_, i) => dots.appendChild(el('i', { class: i === qi ? 'on' : (answers[i] ? 'done' : '') })));
 
     if (qi >= QUESTIONS.length) {
-      qbox.append(
+      mount(qbox, 
         el('div', { class: 'qn' }, '準備完了'),
         el('div', { class: 'qt' }, '二匹を置く。'),
         el('p', { class: 'hint' }, '放っておくと勝手に増える。10体に達すると隣のシャーレが見つかる。'),
@@ -72,7 +73,7 @@ export function openOpening(onDone) {
     }
 
     const q = QUESTIONS[qi];
-    qbox.append(
+    mount(qbox, 
       el('div', { class: 'qn' }, `問 ${qi + 1} / ${QUESTIONS.length}`),
       el('div', { class: 'qt' }, q.text),
     );
@@ -81,9 +82,12 @@ export function openOpening(onDone) {
       qbox.appendChild(el('button', {
         class: 'opt' + (chosen ? ' on' : ''),
         onclick: () => {
+          if (locked) return;
+          locked = true;
           answers[qi] = { id: q.id, choice: oi, effects: o.effects };
+          renderQ();          // 選んだ側をすぐ光らせる
           renderPreview();
-          setTimeout(() => { qi++; renderQ(); }, 160);
+          setTimeout(() => { qi++; locked = false; renderQ(); }, 200);
         },
       },
         el('div', { class: 'ol' }, o.label),

@@ -12,8 +12,8 @@ import { clamp } from './dom.js';
 export function hashHue(key) {
   let h = 2166136261;
   for (let i = 0; i < String(key).length; i++) { h ^= String(key).charCodeAt(i); h = Math.imul(h, 16777619); }
-  // 赤（自国）を避けて 80..340 に散らす
-  return 80 + ((h >>> 0) % 260);
+  // 赤（自国 = 0）から最低60度離すため 60..300 に散らす
+  return 60 + ((h >>> 0) % 240);
 }
 
 /** 血統キー -> 色相。プレイヤーの自国は赤(0)。他国の世界を覗くときはその国の色。 */
@@ -65,15 +65,17 @@ export function training(ind) {
 export function lightness(ind) {
   const life = 14 + 16 * (ind.genes?.寿命 ?? 0.5) + 6 * (ind.genes?.頑健 ?? 0.5);
   const t = clamp((ind.age ?? 0) / life);
-  let li = 72 - 42 * t;
+  let li = 70 - 42 * t;
   if (ind.wounded) li -= 9;
   li -= 7 * clamp(ind.fatigue ?? 0);
   if (!ind.alive) li = 16;
-  return clamp(li, 12, 78);
+  return clamp(li, 14, 76);
 }
 
+// 彩度の下限を上げてある。0 まで落とすと色相（＝血統）が読めなくなり、
+// このゲームの看板である「斑 → 混色」が見えなくなるため。
 export function saturation(ind) {
-  return clamp(38 + 58 * training(ind), 0, 100);
+  return clamp(52 + 46 * training(ind), 0, 100);
 }
 
 /** 個体の本体色 */

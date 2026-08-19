@@ -62,6 +62,31 @@ export function normalizeGenome(hap) {
   return hap;
 }
 
+/**
+ * 表現型（＝素質）の側にも同じ対抗アーム予算を掛ける。
+ *
+ * 対立遺伝子の正規化だけでは足りない。心系は優劣（離散）なので、
+ * 「A側は優性の高い値・B側も優性の高い値」というドミナンスの引き当て方をすると
+ * 表現型では mean(A)+mean(B) > 1.0 になりうる。実測で「染色体単位で親2人の
+ * 両方を上回る子」が出たのはここが抜けていたため。表現型でも等式にすると、
+ * 対抗アームを持つ全ての染色体で構造的に不可能になる。
+ */
+export function normalizePhenotype(g) {
+  for (const ch of CH_LIST) {
+    if (C.ARM_EXEMPT.has(ch)) continue;
+    const A = CHROMOSOMES[ch].A, B = CHROMOSOMES[ch].B;
+    if (!A.length || !B.length) continue;
+    const s = mean(A.map((n) => g[n])) + mean(B.map((n) => g[n]));
+    if (s <= 1e-6) {
+      for (const n of [...A, ...B]) g[n] = ARM_BUDGET / 2;
+      continue;
+    }
+    const k = ARM_BUDGET / s;
+    for (const n of [...A, ...B]) g[n] = clamp01(g[n] * k);
+  }
+  return g;
+}
+
 /** 2本のハプロタイプから素質（表現型）を出す。生涯不変。 */
 export function phenotype(hap) {
   const g = {};
@@ -78,7 +103,7 @@ export function phenotype(hap) {
       g[name] = (a.v + b.v) / 2;
     }
   }
-  return g;
+  return normalizePhenotype(g);
 }
 
 /** 保因者：片方だけが劣性の心系座位。潜伏している値を返す（v2ではUIに出さない）。 */
@@ -90,6 +115,32 @@ export function carriers(hap) {
     if (a.d !== b.d) out[name] = a.d ? b.v : a.v;
   }
   return out;
+}
+
+/**
+ * 遺伝的荷重。劣性対立遺伝子は「潜伏している値」だけでなく「潜伏している欠陥」も運ぶ。
+ *
+ * これを入れないと近親交配のペナルティが成立しない。劣性ホモ率が上がっても
+ * 出る値が高いか低いかが変わるだけで、腐りはしないからである。
+ * 閉じた血統は劣性ホモが溜まる → 荷重が溜まる → 生存力が落ちる。
+ * 外の血が入るとヘテロに戻って荷重が隠れる ＝ 雑種強勢。
+ * 「戦争に恒久的な経済理由ができた」というのはこの経路のこと。
+ */
+export function geneticLoad(hap) {
+  let sum = 0;
+  for (const name of MIND_GENES) {
+    const ch = GENES[name].ch;
+    const a = hap[ch][0][name], b = hap[ch][1][name];
+    if (a.d || b.d) continue;                    // 優性が隠している間は無害
+    sum += ((a.load || 0) + (b.load || 0)) / 2;
+  }
+  return sum;
+}
+
+/** 荷重から出る生存力。産出・繁殖・戦闘・寿命の全部に掛かる。 */
+export function vitalityOf(load) {
+  const v = 1 - C.LOAD_WEIGHT * load;
+  return v < C.LOAD_FLOOR ? C.LOAD_FLOOR : v > 1 ? 1 : v;
 }
 
 /** 劣性ホモになっている心系座位（＝今世代で表に出た潜伏形質） */
@@ -125,7 +176,7 @@ export function gamete(hap, plasticity, rng) {
     for (let i = 0; i < loci.length; i++) {
       if (i > 0 && rng.next() < xrate) h = 1 - h;
       const src = hap[ch][h][loci[i]];
-      g[loci[i]] = { v: src.v, d: src.d };
+      g[loci[i]] = { v: src.v, d: src.d, load: src.load || 0 };
     }
     out[ch] = g;
   }
@@ -143,6 +194,8 @@ export function mutate(gam, rng) {
       if (rng.next() < C.MUT_RATE) {
         if (GENES[name].kind === KIND.MIND && rng.next() < C.MUT_DOMINANCE_FLIP) {
           al.d = !al.d;
+          // 優性から劣性に落ちた対立遺伝子は欠陥を隠して運び始める
+          if (!al.d && !al.load) al.load = rng.next() < 0.5 ? rng.range(0.1, 0.7) : 0;
         } else {
           al.v = clamp01(al.v + rng.normal(0, 0.18));
         }
@@ -189,6 +242,35 @@ export function enforceNoUniversalSuperiority(childGenes, fGenes, mGenes) {
   return true;
 }
 
+/**
+ * 染色体単位でも「全座位が親2人の両方を上回る」を禁じる。
+ *
+ * 対抗アームを持つ染色体は normalizePhenotype で構造的に不可能になるが、
+ * 8番（予算の対象外＝感受性と他責は対抗ではなく独立座位）だけは抜ける。
+ * そこだけは予算ではなく明示の規則で塞ぐ。余裕の最も小さい1座位を
+ * 親の上限まで戻すので、残りの座位は上回ったままでよい（変異は殺さない）。
+ */
+export function enforceChromosomeCeiling(childGenes, fGenes, mGenes) {
+  let fired = 0;
+  for (const ch of CH_LIST) {
+    const loci = LOCUS_ORDER[ch];
+    if (loci.length < 2) continue;               // 可塑は独立座位なので対象外
+    let all = true;
+    for (const n of loci) {
+      if (!(childGenes[n] > Math.max(fGenes[n], mGenes[n]) + 1e-9)) { all = false; break; }
+    }
+    if (!all) continue;
+    let best = null, bestMargin = Infinity;
+    for (const n of loci) {
+      const m = childGenes[n] - Math.max(fGenes[n], mGenes[n]);
+      if (m < bestMargin) { bestMargin = m; best = n; }
+    }
+    childGenes[best] = Math.max(fGenes[best], mGenes[best]) * 0.995;
+    fired++;
+  }
+  return fired;
+}
+
 /** 創世個体のゲノム。心系は answers（性格診断）で狙い値を与え、劣性は自由に振る。 */
 export function foundingGenome(targets, rng, spread = 0.14) {
   const hap = {};
@@ -204,9 +286,11 @@ export function foundingGenome(targets, rng, spread = 0.14) {
           const v = dominant
             ? clamp01(t + rng.normal(0, spread))
             : (rng.bool() ? rng.range(0.72, 1.0) : rng.range(0.0, 0.28));
-          hap[ch][h][name] = { v, d: dominant };
+          // 劣性の半分は欠陥（荷重）も一緒に運ぶ。優性が隠している間は無害
+          const load = dominant ? 0 : (rng.next() < C.LOAD_P ? rng.range(0.20, 0.95) : 0);
+          hap[ch][h][name] = { v, d: dominant, load };
         } else {
-          hap[ch][h][name] = { v: clamp01(t + rng.normal(0, spread + 0.08)), d: true };
+          hap[ch][h][name] = { v: clamp01(t + rng.normal(0, spread + 0.08)), d: true, load: 0 };
         }
       }
     }

@@ -4,9 +4,9 @@
     {
       "name": "zoushoku",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8731"],
-      "port": 8731,
-      "url": "http://localhost:8731"
+      "runtimeArgs": ["-m", "http.server", "8756"],
+      "port": 8756,
+      "url": "http://localhost:8756"
     }
   ]
 }

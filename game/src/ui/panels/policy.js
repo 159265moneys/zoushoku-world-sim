@@ -1,7 +1,7 @@
 // 「敷く」：方針カード。名前つきカード ＋ 数値 ＋ オン/オフ。
 // 文字入力は一切なし。数値はステッパーとスライダーだけ。
 
-import { el, clear, toggle, stepper } from '../dom.js';
+import { el, clear, toggle, stepper, mount } from '../dom.js';
 import { CARDS } from '../cards.js';
 import { BUREAU_LABEL } from '../../core/model.js';
 
@@ -27,7 +27,7 @@ export function renderPolicy(ctx, node) {
         el('h4', { style: { margin: '0', flex: '1' } }, c.name),
         toggle(cur.on, (on) => { api.setCard(world, c.id, on, world.cards[c.id]?.value ?? c.def); ctx.refresh(); }),
       );
-      card.append(head, el('p', {}, c.desc));
+      mount(card, head, el('p', {}, c.desc));
 
       if (c.max > c.min) {
         const valLabel = el('span', { class: 'mono', style: { minWidth: '46px', textAlign: 'right' } },

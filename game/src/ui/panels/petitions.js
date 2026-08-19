@@ -1,7 +1,7 @@
 // 画面6：具申。局長からの要求。承認／却下の2ボタン。
 // 「誰が誰に何を賭けているか」が読めること。具申は中立な要望ではなく、10人のゲームの手。
 
-import { el, clear, toast } from '../dom.js';
+import { el, clear, toast, mount } from '../dom.js';
 import { PHASE } from '../../core/model.js';
 import { portrait } from '../color.js';
 
@@ -34,7 +34,7 @@ export function renderPetitions(ctx, node, { compact = false } = {}) {
   for (const p of list) {
     const chief = world.people.get(p.fromId);
     const card = el('div', { class: 'card' });
-    card.append(
+    mount(card, 
       el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '5px' } },
         chief ? portrait(world, chief, 24) : null,
         el('div', { style: { flex: '1', minWidth: 0 } },

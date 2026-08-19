@@ -40,13 +40,20 @@ const AXIS_OF = {
 export function createRoster(seed) {
   const base = (seed >>> 0) || 1;
   const nations = [];
+
+  // 10国は「経営思想だけを変えた対照実験」である。
+  // 国ごとに違う初期回答を与えていたときは、創始者2体のくじ運が
+  // 思想の差を丸ごと呑み込んでいた（クラスタ内分散 > クラスタ間距離）。
+  // 同じ元手を10人のオーナーに渡して、200世代後に何が違うかを見る形にする。
+  // 創始者はロスター間でも共通にする。10国 × 10ロスターの全100世界が
+  // 同じ2体から始まるので、200世代後の差はすべて「誰が統治したか」に帰属する。
+  // ロスターの種は歴史（乱数列）の側だけを動かす。
+  const answers = new Array(12).fill(0.5);
+  const FOUND_SEED = 0x5eed1234;
+
   PROFILE_IDS.forEach((pid, i) => {
     const nseed = (base ^ (0x9e3779b9 * (i + 1))) >>> 0;
-    const rng = new RNG(nseed);
-    // 性格診断の回答にあたるもの。国ごとに違う初期心系を与える
-    const answers = [];
-    for (let k = 0; k < 12; k++) answers.push(rng.next());
-    const world = createWorld(nseed, answers);
+    const world = createWorld(nseed, answers, { foundSeed: FOUND_SEED });
     const owner = makeRivalOwner(pid);
     applyProfileToWorld(world, owner);
     world.originKey = pid;
@@ -78,8 +85,10 @@ export function advanceRoster(roster, rng, gens = 1) {
 }
 
 function maybeWars(roster, rng) {
+  // 小さすぎる国は戦争に出さない。人口8で戦をすると、勝っても負けても
+  // 働き手が消えて次の世代が来ない（実測でロスターの絶滅の大半がこれだった）
   const ready = roster.nations.filter(
-    (n) => n.world.people.size >= 6 && (roster.gen - (n.lastWar ?? -99)) >= 3
+    (n) => n.world.people.size >= 25 && (roster.gen - (n.lastWar ?? -99)) >= 4
   );
   if (ready.length < 2) return;
   const nWars = 1 + rng.int(2);

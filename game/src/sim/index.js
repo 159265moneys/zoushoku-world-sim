@@ -10,7 +10,7 @@ export {
 export { setCard, CARDS, CARD_BY_ID, readCard, cardOr, defaultCards } from './cards.js';
 
 export {
-  chronicle, traceUp, traceDown, record, applyDelta, setCanon, pruneChronicle,
+  chronicle, trace, traceUp, traceDown, record, applyDelta, setCanon, pruneChronicle,
 } from './chronicle.js';
 
 export { petitions, resolvePetition, STAKE } from './petitions.js';

@@ -104,7 +104,9 @@ export function selectDeployment(world, rng) {
   );
   pool.sort((a, b) => citizenPower(b) - citizenPower(a));
   let n = Math.max(2, Math.round(pool.length * topPct));
-  n = Math.min(n, pool.length);
+  // 総力戦は自分の首を絞める。畑が止まるだけでなく、小さい国は
+  // 一度の敗戦で人口が戻らなくなるので、全人口の4割を上限にする
+  n = Math.min(n, pool.length, Math.max(2, Math.floor(world.people.size * 0.4)));
   const picked = pool.slice(0, n);
   // 育成派遣：恐怖耐性と統率は実戦でしか本命が伸びない。出さなければ一生開かない
   const young = pool.filter((p) => p.age <= 3 && !picked.includes(p));
@@ -293,11 +295,15 @@ function resolveDown(battle, t, killer, rng, out, luck = false) {
     out.push({ round: battle.round, kind: '負傷', side: t.side, name: t.name, id: t.id, by: killer?.name ?? null });
   } else {
     t.dead = true;
+    // 戦死のうち約10%は流れ矢＝ステータスと無関係な完全ランダム抽選。
+    // 誰がどちらで死んだかを残さないと「ステ由来90%/運10%」が検証できない
+    t.deathDetail = luck ? 'war:luck' : 'war:stat';
+    t.byLuck = luck;
     side.deadThis++;
     if (killer) killer.kills++;
     out.push({
       round: battle.round, kind: '戦死', side: t.side, name: t.name, id: t.id,
-      by: killer?.name ?? null, luck,
+      by: killer?.name ?? null, luck, detail: t.deathDetail,
     });
   }
 }
@@ -331,11 +337,40 @@ export function applyRout(battle, rng) {
       : (battle.pursuit ? C.ROUT_HELD_DEATH * 2.2 : C.ROUT_HELD_DEATH);
     if (rng.next() < clamp(p, 0, 0.95)) {
       u.dead = true;
+      // 敗走中の被害はステータス（逃げたか踏み止まったか）由来。運死ではない
+      u.deathDetail = 'war:stat';
+      u.byLuck = false;
       out.push({ round: battle.round, kind: '戦死', side: u.side, name: u.name, id: u.id, rout: true, fled: u.fled });
     } else if (rng.next() < 0.25) {
       u.wounded = true;
       out.push({ round: battle.round, kind: '負傷', side: u.side, name: u.name, id: u.id, rout: true });
     }
+  }
+  out.push(...drawLuckDeaths(battle, rng));
+  return out;
+}
+
+/**
+ * 流れ矢。戦死者のうち約1割は完全にランダムな抽選で、ステータスと無関係に誰でも引く。
+ *
+ * ラウンド中のHP撃破にだけ運死を付けていたときは実測2.1%にしかならなかった。
+ * 戦死の大半は敗走時の追い討ち（ステータス由来）で出るので、母数が合わない。
+ * 決着後にその戦の全戦死数を数えて、比率が10%になるところまで抽選する。
+ */
+function drawLuckDeaths(battle, rng) {
+  const out = [];
+  const all = [...battle.sides.home.units, ...battle.sides.away.units];
+  const already = all.filter((u) => u.dead && u.byLuck).length;
+  const statDead = all.filter((u) => u.dead && !u.byLuck).length;
+  const want = Math.round(statDead * C.LUCK_SHARE / (1 - C.LUCK_SHARE)) - already;
+  for (let i = 0; i < want; i++) {
+    const living = all.filter((u) => !u.dead);
+    if (living.length <= 1) break;
+    const v = pickLuckVictim(null, living, rng);
+    v.dead = true;
+    v.byLuck = true;
+    v.deathDetail = 'war:luck';
+    out.push({ round: battle.round, kind: '戦死', side: v.side, name: v.name, id: v.id, luck: true, detail: 'war:luck' });
   }
   return out;
 }
@@ -587,7 +622,7 @@ export function applySideLosses(world, battle, sideKey, rng) {
     if (!p) continue;
     if (u.dead) {
       dead++;
-      const ev = kill(world, p, '戦死', battle.startEvent?.id ?? null);
+      const ev = kill(world, p, '戦死', battle.startEvent?.id ?? null, u.deathDetail || 'war:stat');
       if (ev) events.push(ev);
       // 戦死者の家族に怨恨が積む
       for (const q of world.people.values()) {

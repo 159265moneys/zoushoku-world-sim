@@ -21,7 +21,7 @@ import { openOpponents } from './panels/opponents.js';
 import { openBattle } from './panels/battle.js';
 
 const TICK_MS = 220;
-const TICKS_PER_GEN = 40;
+const TICKS_PER_GEN = 120;
 const SEED = 20260819;
 
 const state = {
@@ -40,7 +40,7 @@ const ctx = {
 
 const TABS = [
   { key: 'ind', label: '個体', render: renderInspector },
-  { key: 'roles', label: '配役', render: renderRoles },
+  { key: 'roles', label: '配役', render: renderRoles, badge: () => idleCount() },
   { key: 'policy', label: '方針', render: renderPolicy },
   { key: 'pet', label: '具申', render: renderPetitions, badge: () => petitionCount(ctx) },
   { key: 'search', label: '検索', render: renderSearch },
@@ -74,16 +74,21 @@ function boot(answers, mode) {
 
   if (mode === 2) demoSetup();
 
-  requestAnimationFrame(loop);
+  setInterval(loop, FRAME_MS);
   refresh();
 }
 
 // ------------------------------------------------------------------ ループ
+// requestAnimationFrame ではなくタイマーで回す。rAF は裏タブで止まるので、
+// タブを切り替えただけで世界の時計まで止まってしまう（「不在中も世界は進む」に反する）。
+// ここで使う実時間は描画とtickの間隔だけで、シミュレーションの状態には入らない。
+// 歴史の再現性は RNG と tick 数が担保しているので決定性は壊れない。
+const FRAME_MS = 33;
 let last = performance.now(), acc = 0, tickInGen = 0, dockAcc = 0;
 
-function loop(now) {
-  requestAnimationFrame(loop);
-  const dt = Math.min(80, now - last); last = now;
+function loop() {
+  const now = performance.now();
+  const dt = Math.min(160, now - last); last = now;
   const w = state.world;
   if (!w) return;
 
@@ -113,7 +118,9 @@ function onGeneration() {
   try { if (api.stepRoster) api.stepRoster(state.roster, state.rng); } catch (e) { /* ロスターは無くても続く */ }
 
   for (const e of evs) {
-    if (e.kind === 'フェーズ') toast(e.text, 'warn');
+    // 叩き起こされる条件：局長の死・空位／フェーズ転換／産出が消費を下回った
+    if (e.kind === 'フェーズ' || e.kind === '接触') toast(e.text, 'warn');
+    else if (e.kind === '空位') toast(e.text, 'bad');
     else if (e.kind === '死亡') toast(e.text, 'bad');
     else if (e.kind === '発現') toast(e.text);
   }
@@ -121,7 +128,9 @@ function onGeneration() {
   if (w.collapsing) toast('産出率が消費を下回っている。', 'bad');
 
   refresh();
-  if (state.autoReport && w.gen > 0 && !document.querySelector('.scrim')) showReport();
+  // フェーズ1に報告は存在しない（全個体が画面にいるので自分で見ている）。
+  // 世代境界で止めるのは、統治が人づてになるフェーズ2から。
+  if (state.autoReport && w.phase !== PHASE.VILLAGE && w.gen > 0 && !document.querySelector('.scrim')) showReport();
 }
 
 // ------------------------------------------------------------------ トップバー
@@ -238,29 +247,66 @@ function afterBorder() {
 // 「斑（まだら）→ 混色」を最初から見せるための開発用セットアップ。
 function demoSetup() {
   const w = state.world, rng = state.rng;
-  for (let g = 0; g < 4; g++) {
-    for (let t = 0; t < TICKS_PER_GEN; t++) api.stepTick(w, rng);
-    api.advanceGeneration(w, rng);
-  }
-  const opps = api.listOpponents ? api.listOpponents(state.roster) : [];
-  for (const pick of [opps[3], opps[4]].filter(Boolean)) {     // 純血 と 融和
-    const b = api.startWar(w, rng, pick);
-    let guard = 0;
-    while (!b.over && guard++ < 300) api.stepBattle(b, rng);
-    api.takeCaptives(w, b, '攻撃素質', rng);
-    for (const c of [...w.borderQueue]) api.borderDecision(w, c.id, 'accept');
-    for (let g = 0; g < 2; g++) {
+
+  // フェーズ1のあいだはオーナー（＝この関数）が配役する。放っておくと産出が止まる。
+  const cast = () => {
+    if (w.phase !== PHASE.VILLAGE) return;      // P2 以降は局長の仕事
+    const list = [...w.people.values()].filter(p => p.role !== ROLE.CHILD);
+    list.forEach((p, i) => {
+      p.role = (i % 5 < 3) ? ROLE.FARM : (i % 5 === 3 ? ROLE.HUNT : ROLE.DRILL);
+    });
+  };
+  const runGens = (n) => {
+    for (let g = 0; g < n; g++) {
+      cast();
       for (let t = 0; t < TICKS_PER_GEN; t++) api.stepTick(w, rng);
       api.advanceGeneration(w, rng);
     }
-  }
-  // 局長を据えておく
+  };
+  const fightAndAccept = (opp) => {
+    if (!opp) return;
+    const b = api.startWar(w, rng, opp);
+    let guard = 0;
+    while (!b.over && guard++ < 400) api.stepBattle(b, rng);
+    api.takeCaptives(w, b, '攻撃素質', rng);
+    for (const c of [...w.borderQueue]) api.borderDecision(w, c.id, 'accept');
+    if (api.settleWar) api.settleWar(w, b);
+  };
+
+  runGens(6);                                   // 10体まで増やす
+
+  const opps = api.listOpponents ? api.listOpponents(state.roster) : [];
+  // 緑側と紫側から1国ずつ。赤・緑・紫は互いに100度以上離れるので斑が最も分かりやすく、
+  // 混色（橙とピンク）も必ず親の間に落ちる。
+  const nearest = (target) => [...opps].sort((a, b) => hueDist(a.hue, target) - hueDist(b.hue, target))[0];
+  const far = [nearest(108), nearest(276)];
+
+  fightAndAccept(far[0]);                       // ここでフェーズ2に入る
+  // 局長を据えないと誰も配役しないので、この時点で任命する
   const cands = [...w.people.values()].filter(p => p.role !== ROLE.CHILD)
     .sort((a, b) => (api.powerOf ? api.powerOf(b) - api.powerOf(a) : 0));
   ['military', 'agri', 'civil'].forEach((k, i) => { if (cands[i]) api.appointBureau(w, k, cands[i].id); });
-  w.food += 40;
-  toast('デモ：外来の血が2系統入った状態から始める。融和度を上げると色が溶ける。', 'warn');
+
+  runGens(3);
+  fightAndAccept(far[1]);
+  api.setCard(w, 'mix_policy', true, 100);      // 融和：色を溶かす
+  runGens(4);
+
+  w.food += 60;
+  toast('デモ：外来の血が2系統入った状態から始める。融和度100なので世代ごとに色が溶ける。', 'warn');
 }
+
+// 無役の数。P1 では成熟した個体が無役で出てくるので、放っておくと産出が追いつかない。
+// タブのバッジで気づかせる（配役はP1の主活動）。
+function idleCount() {
+  const w = state.world;
+  if (!w) return 0;
+  if (w.phase !== PHASE.VILLAGE) return Object.values(w.bureaus).filter(v => v == null).length;
+  return [...w.people.values()].filter(p => p.role === ROLE.IDLE).length;
+}
+
+// 色相の円環上の距離
+function hueDist(a, b) { const d = Math.abs((((a - b) % 360) + 360) % 360); return Math.min(d, 360 - d); }
 
 // 開発用フック
 window.増殖 = { state, api, ctx };

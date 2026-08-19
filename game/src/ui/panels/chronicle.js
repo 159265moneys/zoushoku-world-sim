@@ -2,7 +2,7 @@
 // ただし表示されるのはオーナーが知っている帰属であって、真の原因ではない。
 // v2 には諜報局が無いので、原因系の事件は「局長が言っている帰属」で止まる。
 
-import { el, clear, seg, toast } from '../dom.js';
+import { el, clear, seg, toast, mount } from '../dom.js';
 
 const KIND_GROUPS = [
   { label: 'すべて', kinds: null },
@@ -39,7 +39,7 @@ export function renderChronicle(ctx, node) {
       if (ev.target.closest('button')) return;
       s.open = open ? null : e.id; ctx.refresh();
     } });
-    card.append(
+    mount(card, 
       el('div', { style: { display: 'flex', gap: '7px', alignItems: 'baseline' } },
         el('span', { class: 'tag' + (e.kind === '産出低下' ? ' bad' : e.kind === '正史' ? ' ac' : '') }, e.kind),
         el('span', { style: { flex: 1, fontSize: '11.5px' } }, e.text || ''),

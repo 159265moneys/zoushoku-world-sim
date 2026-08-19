@@ -1,7 +1,7 @@
 // 画面3：個体パネル。全ステータス・家系・所属・履歴・実績。
 // 事実は常に正確に見せる。未発現の素質だけがレンジ表示になる。
 
-import { el, clear, bar, num, pct, clamp, seg } from '../dom.js';
+import { el, clear, bar, num, pct, clamp, seg, mount } from '../dom.js';
 import { CHROMOSOMES, GENES, GENE_NAMES } from '../../core/genes.js';
 import { SKILLS, ROLE, DISTRICT, PHASE, BUREAU_LABEL } from '../../core/model.js';
 import { portrait, training, strainName, swatchColor, lineageHue } from '../color.js';
@@ -56,7 +56,7 @@ export function renderInspector(ctx, node) {
   // ---- 事実（常に正確）
   node.appendChild(el('h3', { class: 'sec' }, '実効値'));
   const kv = el('div', { class: 'kv' });
-  const add = (k, v) => { kv.append(el('div', { class: 'k' }, k), el('div', { class: 'v' }, v)); };
+  const add = (k, v) => { mount(kv, el('div', { class: 'k' }, k), el('div', { class: 'v' }, v)); };
   add('国民力', rank.value != null ? String(rank.value) : '—');
   add('国内順位', rank.label);
   add('練度（平均）', pct(training(ind)));
@@ -113,7 +113,7 @@ export function renderInspector(ctx, node) {
     ? el('div', { class: 'chip', onclick: () => ctx.select(p.id) }, portrait(world, p, 18),
         el('div', { class: 'nm' }, `${label}　${p.name}`), el('div', { class: 'mt' }, `${p.age}歳`))
     : el('div', { class: 'row' }, el('div', { class: 'k' }, label), el('div', { class: 'v mut' }, '—'));
-  fam.append(link(look(ind.fatherId), '父'), link(look(ind.motherId), '母'));
+  mount(fam, link(look(ind.fatherId), '父'), link(look(ind.motherId), '母'));
   const kids = [...world.people.values(), ...world.dead.values()].filter(p => p.fatherId === ind.id || p.motherId === ind.id);
   if (kids.length) {
     fam.appendChild(el('div', { class: 'mut', style: { fontSize: '10px', margin: '6px 0 2px' } }, `子 ${kids.length}体`));

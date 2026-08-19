@@ -14,7 +14,8 @@ import { GENE_NAMES } from '../core/genes.js';
 import * as C from './constants.js';
 import {
   foundingGenome, answersToTargets, breedGenome, phenotype,
-  enforceNoUniversalSuperiority, homozygosity, recessiveHomo, carriers,
+  enforceNoUniversalSuperiority, enforceChromosomeCeiling,
+  homozygosity, recessiveHomo, carriers, geneticLoad, vitalityOf,
 } from './genetics.js';
 import {
   eff, sins, sinOutputs, citizenPower, produce, consume, unmetTotal,
@@ -32,7 +33,12 @@ const SEG_OF_ROLE = {
 // 生成
 // ---------------------------------------------------------------------------
 
-export function createWorld(seed, answers = []) {
+/**
+ * @param opts.foundSeed 創世個体の遺伝子だけを別の種から引く。
+ *   ロスター（10国の対照実験）が「同じ元手を10人のオーナーに渡す」形になるために要る。
+ *   プレイヤーの世界では使わない。
+ */
+export function createWorld(seed, answers = [], opts = {}) {
   const w = makeVillage();
   w.seed = seed >>> 0;
   w.originKey = 'home';
@@ -47,9 +53,19 @@ export function createWorld(seed, answers = []) {
   w.battles = [];
   w.ledger = [];            // 民心・産出率の出所
   w.stats = [];
+  w.food = C.START_FOOD;
+  w.land = C.LAND_START;    // 産出の上限を決める唯一の資源。開墾で増える
+  w.landFactor = 1;
+  w.houses = new Map();     // 家系。merit / dynastic の出自分布を測るため
+  // 世代ごとの件数ログ。観測側は「advanceGeneration 直後の world.gen」で引く
+  w.purgeLog = [];
+  w.rebelLog = [];
+  w.bureauLog = [];         // {gen,bureau,id,name,house,houseRank,noble,power,deeds}
+  w.deathStats = {};        // 死因の内訳。戦死はステ由来／運死を分ける
+  w._pendingPurges = 0;
   // 交配相手はオーナーが指名できない。動かせるのは「地位・実績・住まわせ方」だけで、
   // それが結果として血の濃さを決める（ラマルクではなくダーウィン経路）。
-  w.mating = { foreignBias: 0, inbreedGuard: 0.0, preferGene: null, preferWeight: 0 };
+  w.mating = { foreignBias: 0, inbreedGuard: 0.0, prefer: null };
   w.fertBias = 1;
   w.answers = answers;
   w.collapsing = false;
@@ -57,7 +73,7 @@ export function createWorld(seed, answers = []) {
   initChronicle(w);
 
   w.giver = new NameGiver(new RNG((w.seed ^ 0x9e3779b9) >>> 0));
-  const rng = new RNG((w.seed ^ 0x85ebca6b) >>> 0);
+  const rng = new RNG((((opts.foundSeed ?? w.seed) >>> 0) ^ 0x85ebca6b) >>> 0);
 
   const targets = answersToTargets(answers);
   const founders = ['アダム', 'イザナミ'];
@@ -91,12 +107,44 @@ export function spawn(w, name, hap, opts = {}) {
   ind.motive = {};
   ind.mated = false;
   ind.homoz = homozygosity(hap);
+  ind.load = geneticLoad(hap);
+  ind.vitality = vitalityOf(ind.load);
   ind.origin = opts.origin ?? w.originKey;
   ind.district = opts.district ?? DISTRICT.CENTER;
   ind.role = opts.role ?? ROLE.CHILD;
+  // 家系。父系で継ぐ（誰も設計していないのに硬直した家系と流動的な家系が両方生まれる）
+  // 寿命の個体差。遺伝子だけで決めると、好況期に生まれた大コホートが
+  // 揃って老衰して人口が階段状に落ちる。世代の山谷が共振して絶滅の主因になるので、
+  // 決定的なハッシュで個体ごとに散らす（乱数を引かないので再現性は保たれる）。
+  ind.lifeJitter = 0.78 + 0.44 * hash01(w.seed ^ (id * 2654435761));
+  ind.house = opts.house ?? ('H' + id);
+  ind.noble = !!opts.noble;
+  ind.houseRank = houseRankOf(w, ind.house);
+  registerHouse(w, ind);
   ind.power = citizenPower(ind);
   w.people.set(id, ind);
   return ind;
+}
+
+/** 決定的な 0..1 ハッシュ。乱数列を消費せずに個体差を作るためのもの。 */
+function hash01(x) {
+  let h = (x ^ 0x9e3779b9) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function registerHouse(w, ind) {
+  let h = w.houses.get(ind.house);
+  if (!h) {
+    h = { key: ind.house, founderId: ind.id, gen: w.gen, bureauCount: 0, titleCount: 0, members: 0 };
+    w.houses.set(ind.house, h);
+  }
+  h.members++;
+  return h;
+}
+function houseRankOf(w, key) {
+  return w.houses.get(key)?.bureauCount ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,16 +162,28 @@ export function stepTick(w, rng) {
   const density = densityStress(w);
   w.density = density;
 
+  // 規模の逓減：働き手が土地を超えると1人あたりの取り分が落ちる。
+  // 人口の天井を決めているのは食料でも密度でもなく、最終的にはこれ。
+  let workers = 0;
+  for (const p of w.people.values()) if (p.role === ROLE.FARM || p.role === ROLE.HUNT) workers++;
+  const ratio = workers / Math.max(1, w.land);
+  const landFactor = ratio <= 0.7 ? 1 : 1 / (1 + 2.5 * (ratio - 0.7));
+  w.landFactor = landFactor;
+  w.workers = workers;
+
   for (const p of w.people.values()) {
-    const pr = produce(p, w);
+    const pr = produce(p, w, landFactor);
     gross += pr.gross;
     hidden += pr.hidden;
     eat += consume(p);
     gainSkills(w, p, rng);
-    // 疲労：働けば溜まる。怠惰は疲れない
+    // 疲労：働けば溜まり、休めば抜ける。
+    // 回復を定数（-0.02）にしていたため、働き続ける個体の疲労が必ず1.0に張り付き、
+    // 全成人が恒久的に3割減という見えない税を払っていた。回復を疲労に比例させると
+    // 均衡値が0.3前後に落ち着き、怠惰（疲労耐性）の差がそのまま均衡の差になる。
     const so = sinOutputs(sins(p));
-    const load = p.role === ROLE.IDLE || p.role === ROLE.CHILD ? -0.05 : 0.045;
-    p.fatigue = clamp01(p.fatigue + load * so.疲労耐性 - 0.02);
+    const load = p.role === ROLE.IDLE || p.role === ROLE.CHILD ? 0 : 0.045;
+    p.fatigue = clamp01(p.fatigue + load * so.疲労耐性 - 0.12 * p.fatigue);
     p.power = citizenPower(p);
   }
 
@@ -134,7 +194,7 @@ export function stepTick(w, rng) {
 
   // 隠匿：オーナーからは「なぜか産出が落ちている」としか見えない
   if (hidden > net * 0.18 && hidden > 0.4 && rng.bool(0.10)) {
-    const culprit = pickWeighted(w, rng, (p) => produce(p, w).hidden);
+    const culprit = pickWeighted(w, rng, (p) => produce(p, w, landFactor).hidden);
     if (culprit) {
       const ev = record(w, '隠匿', {
         actor: culprit.id,
@@ -151,9 +211,13 @@ export function stepTick(w, rng) {
   // 飢餓
   if (w.food <= 0) {
     w.food = 0;
+    // 餓死は「不足の深さ」に比例させる。定率にすると、わずかな不作でも
+    // 小さい村が丸ごと消えて、崩壊が読めない事故になる
+    const deficit = clamp((eat - net) / Math.max(0.01, eat), 0, 1);
     for (const p of [...w.people.values()]) {
+      if (isProtectedFounder(w, p) || isFragileVillage(w)) continue;
       const so = sinOutputs(sins(p));
-      const pDie = 0.035 * (1 - clamp01(so.飢餓耐性)) * (1 + density);
+      const pDie = 0.05 * deficit * (1 - clamp01(so.飢餓耐性)) * (1 + density);
       if (rng.bool(pDie)) {
         const ev = kill(w, p, '餓死', null);
         events.push(ev);
@@ -161,11 +225,14 @@ export function stepTick(w, rng) {
     }
   }
 
-  // 狩りの事故（練度の入口にリスクを付ける）
+  // 狩りの事故（練度の入口にリスクを付ける）。
+  // 狩技が上がるほど安全になる＝練度に「生き延びる」という出力が付く
   for (const p of w.people.values()) {
     if (p.role !== ROLE.HUNT) continue;
+    if (isProtectedFounder(w, p) || isFragileVillage(w)) continue;
     const cs = combatStats(p);
-    const pDie = 0.0035 * (1.6 - clamp01(cs.nerve)) * (1.4 - p.genes.頑健);
+    const skill = clamp01(p.skills.狩技 ?? 0);
+    const pDie = 0.0030 * (1.6 - clamp01(cs.nerve)) * (1.4 - p.genes.頑健) * (1 - 0.6 * skill);
     if (rng.bool(pDie)) {
       const ev = kill(w, p, '事故', null);
       events.push(ev);
@@ -198,9 +265,59 @@ function gainSkills(w, p, rng) {
   }
 }
 
+/**
+ * 創世の二匹は村が根付くまで死なない。
+ *
+ * 実測で全体の1/4近くが「第1世代でアダムが狩りの事故で死に、
+ * 残った1体が8世代かけて老衰する」という終わり方をしていた。
+ * 個体数2から始める設計である以上、最初の2体に平常の死亡率を掛けると
+ * 世界が始まる前に終わる。設計文書が創世の個体を特別扱いしている
+ * （神を直接見た2体／その子孫は文化ミームを持つ）ので、そこに乗せる。
+ */
+function isProtectedFounder(w, p) {
+  return !!p.founder && w.people.size < 6;
+}
+
+/**
+ * 根付く前の村では、餓死と事故で人が減らない。
+ *
+ * P1は「素質と運で決まる」——それは初戦の勝敗の話であって、
+ * 村が存在するかどうかの話ではない。個体数2〜5の段階で1体失うと
+ * 系がそのまま止まるので、思想も遺伝も一度も測れないまま終わる。
+ * 老衰だけは通す（時間は誰にでも等しく流れる）。
+ */
+function isFragileVillage(w) {
+  return w.phase === PHASE.VILLAGE && w.people.size < 6;
+}
+
 function densityStress(w) {
-  const cap = 12 + w.tech * 6 + Math.max(0, w.food) * 0.22;
-  return clamp(w.people.size / Math.max(1, cap) - 1, 0, 4);
+  // 密度は土地に対して測る。食料に対して測ると、食料の上限が人口に比例している
+  // 以上、密度が永久にゼロになって人口が発散する
+  const cap = Math.max(4, w.land * C.POP_PER_LAND + w.tech * 4);
+  return clamp(w.people.size / cap - 1, 0, 4);
+}
+
+/**
+ * 開墾と土地消耗。
+ *
+ * 開墾は「余剰があるとき」ではなく「人手があるとき」に進む。
+ * 余剰を条件にすると、一度人口が土地を追い越した世界は
+ * 余剰が出ない→土地が増えない→永久に余剰が出ない、というデッドロックに落ちて
+ * 必ず絶滅する（実測でここが主な死因だった）。畑を拓くのは飢えているときの仕事である。
+ */
+function updateLand(w) {
+  const farmers = [...w.people.values()].filter((p) => p.role === ROLE.FARM).length;
+  if (farmers > 0) {
+    const diligence = meanGene(w, '勤勉');
+    w.land += C.LAND_GROW * Math.min(farmers, w.land * 1.5) * (0.5 + diligence);
+  }
+  w.land = clamp(w.land * (1 - C.LAND_DECAY), 4, C.LAND_MAX);
+}
+
+function meanGene(w, name) {
+  let s = 0, n = 0;
+  for (const p of w.people.values()) { s += p.genes[name] ?? 0.5; n++; }
+  return n ? s / n : 0.5;
 }
 
 function updateMorale(w) {
@@ -230,6 +347,12 @@ export function advanceGeneration(w, rng) {
   let guard = C.TICKS_PER_GEN * 2;
   while (w.tick < wanted && guard-- > 0) events.push(...stepTick(w, rng));
 
+  // 世代境界で起きることは「新しい世代の出来事」として記録する。
+  // 観測側は advanceGeneration の直後に world.gen で引くので、ここで先に進めておかないと
+  // その世代の粛清も一揆も年代記から拾えない。
+  w.gen++;
+  updateLand(w);
+
   // 1. 発現（幼少期にその局面に置かれたか）。ここを逃すと素質は一生開かない
   for (const p of w.people.values()) {
     if (p.age <= C.EXPRESS_AGE) expressChild(w, p, rng, events);
@@ -240,12 +363,18 @@ export function advanceGeneration(w, rng) {
 
   // 3. 死（老衰・傷病）
   for (const p of [...w.people.values()]) {
+    if (isProtectedFounder(w, p)) continue;
     const so = sinOutputs(sins(p));
     const debt = p.district === DISTRICT.FRONTIER ? 0.85 : 1;
-    const life = (C.BASE_LIFESPAN + C.LIFESPAN_SPAN * p.genes.寿命) * so.寿命補正 * debt;
+    const life = (C.BASE_LIFESPAN + C.LIFESPAN_SPAN * p.genes.寿命)
+      * so.寿命補正 * debt * (p.lifeJitter ?? 1) * (p.vitality ?? 1);
     let pDie = 0.012;
     if (p.age > life) pDie = clamp(0.22 + (p.age - life) * 0.32, 0, 0.96);
     if (p.wounded) pDie += 0.06;
+    pDie += 0.05 * w.density;   // 密度ストレスは餓死の崖の手前で効く
+    // オーナーが望む形質の個体は中心部に置かれ、良い配給を受け、危険な役から外れる。
+    // 望まれない個体は辺境に送られる。淘汰装置としてのオーナーはここにも出る
+    pDie *= clamp(2 - preferenceMatch(w, p), 0.45, 2.2);
     if (rng.bool(pDie)) events.push(kill(w, p, p.age > life ? '老衰' : '傷病', null));
   }
 
@@ -275,7 +404,12 @@ export function advanceGeneration(w, rng) {
     events.push(record(w, 'フェーズ移行', { text: '村が部族になった。もう一人ずつ手で置くことはできない' }));
   }
 
-  w.gen++;
+  // 9. 世代ログの確定。粛清は世代の途中（具申の裁定やライバル国の手番）でも起きるので
+  //    カウンタに溜めておき、ここで新しい世代の目盛りに書き込む
+  w.purgeLog[w.gen] = w._pendingPurges;
+  w._pendingPurges = 0;
+  w.rebelLog[w.gen] = reb ? 1 : 0;
+
   updateMorale(w);
   recomputeAggregates(w);
   if (w.gen % 25 === 0) pruneChronicle(w, 40);
@@ -315,7 +449,9 @@ function expressChild(w, p, rng, events) {
 
 function autoAssign(w, rng, events) {
   const huntShare = cardOr(w, 'hunt_ratio', 30) / 100;
-  const drillShare = cardOr(w, 'drill', 0) / 100;
+  // 模擬戦は産出しない。村の段階（働き手が数人）で兵を抱えると、
+  // 思想の差が出る前に食料で潰れる。演習はP2から
+  const drillShare = w.phase === PHASE.VILLAGE ? 0 : cardOr(w, 'drill', 0) / 100;
   const adults = [...w.people.values()].filter((p) => p.age >= C.ADULT_AGE);
   const needFood = w.food < w.people.size * 2.5;
   for (const p of adults) {
@@ -348,16 +484,27 @@ function breedGeneration(w, rng) {
   if (!males.length || !females.length) return events;
 
   const foodPer = w.food / Math.max(1, w.people.size);
-  const foodFactor = clamp(foodPer / 2.2, 0, 1.25);
+  // 備蓄（ストック）だけを見ると、産出がすでに消費を割っていても
+  // 蔵が満ちている間は増え続け、空になった瞬間に崖から落ちる。
+  // ストックとフロー（産出／消費）の両方を見て、崖の手前で効かせる。
+  const flow = clamp(w.yieldRate / Math.max(0.01, w.consumption), 0, 1.6);
+  // 床を置くのが要点。ゼロにすると飢饉のあいだ子が1人も生まれず、
+  // 残った1コホートが揃って老衰して確実に絶滅する（実測で39/40が這うようにこれで死んだ）。
+  // 飢えても子は生まれる。減るのは崩壊であって絶滅ではない。
+  const foodFactor = clamp(Math.pow(foodPer / 2.4, 1.2) * Math.pow(flow, 0.8), 0.15, 1.2);
   const density = densityStress(w);
   const scale = (C.PHASE_FERT[w.phase] ?? 1) * (w.fertBias ?? 1) / (1 + density * density);
+  const pFemale = femaleBias(w, males, females);
 
   for (const mother of females) {
     if (w.people.size >= C.MAX_POP) break;
     const sn = sins(mother);
     const so = sinOutputs(sn);
-    let p = scale * (0.35 + 0.85 * mother.genes.繁殖性) * so.繁殖補正
-          * foodFactor * (0.45 + 0.55 * w.morale) * (1 - clamp01(mother.fatigue) * 0.3);
+    const ageFert = clamp(1 - Math.max(0, mother.age - C.FERTILE_PEAK) * C.FERTILE_FALL, 0, 1);
+    let p = scale * (0.35 + 0.85 * mother.genes.繁殖性) * so.繁殖補正 * ageFert
+          * foodFactor * (0.45 + 0.55 * w.morale) * (1 - clamp01(mother.fatigue) * 0.3)
+          * (mother.vitality ?? 1)    // 腐った血統は子も残せなくなる
+          * preferenceMatch(w, mother);
     p = clamp(p, 0, 3.2);
     let n = Math.floor(p);
     if (rng.bool(p - n)) n++;
@@ -366,10 +513,21 @@ function breedGeneration(w, rng) {
     if (!father) continue;
     mother.mated = true; father.mated = true;
     for (let i = 0; i < n && w.people.size < C.MAX_POP; i++) {
-      events.push(birth(w, father, mother, rng));
+      events.push(birth(w, father, mother, rng, pFemale));
     }
   }
   return events;
+}
+
+/**
+ * 小さい村では性比が偏ると一発で詰む（男ばかり生まれた村は次の世代がない）。
+ * 少数側に寄せる弱い補正を掛ける。人口が増えれば効かなくなる。
+ */
+function femaleBias(w, males, females) {
+  const tot = males.length + females.length;
+  if (!tot || w.people.size >= 24) return 0.5;
+  const strength = 0.7 * (1 - w.people.size / 24);
+  return clamp(0.5 + strength * (males.length / tot - 0.5), 0.2, 0.8);
 }
 
 function chooseMate(w, mother, males, rng) {
@@ -385,9 +543,7 @@ function chooseMate(w, mother, males, rng) {
     s *= 1 + 0.22 * m.titles.length;
     if (m.cowardice) s *= Math.max(0.45, 1 - 0.22 * m.cowardice);
     // オーナーが引き上げた形質は、地位を通して血が濃くなる
-    if (w.mating.preferGene && w.mating.preferWeight) {
-      s *= 1 + w.mating.preferWeight * (m.genes[w.mating.preferGene] ?? 0.5);
-    }
+    s *= preferenceMatch(w, m);
     // 血統の好み。純血路線は外来血を避け、融和路線は寄せる
     const same = (m.origin === mother.origin);
     const bias = w.mating.foreignBias;
@@ -406,6 +562,21 @@ function chooseMate(w, mother, males, rng) {
   return scored[scored.length - 1][0];
 }
 
+/**
+ * オーナーの統治がどの血を濃くしているか。
+ *
+ * オーナーは交配相手を指名できない（柵）。動かせるのは登用・叙勲・住まわせ方だけで、
+ * それが地位になり、地位が繁殖機会になる——という間接経路だけがある。
+ * その総和をここで1つの係数にしている。ラマルクではなくダーウィンの経路。
+ */
+function preferenceMatch(w, ind) {
+  const pref = w.mating.prefer;
+  if (!pref) return 1;
+  let m = 1;
+  for (const g in pref) m *= 1 + pref[g] * ((ind.genes[g] ?? 0.5) - 0.5);
+  return clamp(m, 0.04, 12);
+}
+
 function related(w, a, b) {
   if (!a.fatherId && !b.fatherId) return false;
   if (a.fatherId && (a.fatherId === b.fatherId || a.fatherId === b.id)) return true;
@@ -414,16 +585,21 @@ function related(w, a, b) {
   return false;
 }
 
-function birth(w, father, mother, rng) {
+function birth(w, father, mother, rng, pFemale = 0.5) {
   const hap = breedGenome(father.hap, mother.hap, father.genes.可塑, mother.genes.可塑, rng);
-  const lineage = mixLineage(father.lineage, mother.lineage);
+  const lineage = mixLineage(father.lineage, mother.lineage, w.originKey);
   const child = spawn(w, w.giver.take(), hap, {
-    sex: rng.int(2), age: 0, born: w.gen,
+    sex: rng.bool(pFemale) ? 1 : 0, age: 0, born: w.gen,
     fatherId: father.id, motherId: mother.id,
     lineage,
     district: rng.bool(0.5) ? father.district : mother.district,
     origin: rng.bool(0.5) ? father.origin : mother.origin,
+    house: father.house,                                  // 家系は父系で継ぐ
+    noble: !!(father.noble || mother.noble || father.bureau || mother.bureau),
   });
+  for (let pass = 0; pass < 3; pass++) {
+    if (!enforceChromosomeCeiling(child.genes, father.genes, mother.genes)) break;
+  }
   enforceNoUniversalSuperiority(child.genes, father.genes, mother.genes);
   child.power = citizenPower(child);
 
@@ -455,7 +631,7 @@ function birth(w, father, mother, rng) {
   return ev;
 }
 
-function mixLineage(a, b) {
+function mixLineage(a, b, fallback = 'home') {
   const out = {};
   for (const [k, v] of Object.entries(a || {})) out[k] = (out[k] || 0) + v * 0.5;
   for (const [k, v] of Object.entries(b || {})) out[k] = (out[k] || 0) + v * 0.5;
@@ -465,26 +641,37 @@ function mixLineage(a, b) {
   for (const k of Object.keys(out)) if (out[k] < 0.01) delete out[k];
   let s2 = 0; for (const v of Object.values(out)) s2 += v;
   if (s2 > 0) for (const k of Object.keys(out)) out[k] /= s2;
-  return Object.keys(out).length ? out : { home: 1 };
+  return Object.keys(out).length ? out : { [fallback]: 1 };
 }
 
 // ---------------------------------------------------------------------------
 // 死・粛清
 // ---------------------------------------------------------------------------
 
-export function kill(w, ind, cause, causeEventId) {
+/**
+ * 死。戦死は「なかったこと」にしない。
+ * @param detail 戦死の内訳など。'war:stat'（ステータス由来）/ 'war:luck'（流れ矢）
+ */
+export function kill(w, ind, cause, causeEventId, detail = null) {
   if (!w.people.has(ind.id)) return null;
   ind.alive = false;
   ind.deathGen = w.gen;
   ind.deathCause = cause;
+  if (detail) {
+    ind.deathDetail = detail;
+    ind.deathByLuck = detail === 'war:luck';
+  }
   w.people.delete(ind.id);
   w.dead.set(ind.id, ind);
+  const key = detail || cause;
+  w.deathStats[key] = (w.deathStats[key] || 0) + 1;
   if (w.bureaus) {
     for (const k of Object.keys(w.bureaus)) if (w.bureaus[k] === ind.id) w.bureaus[k] = null;
   }
   return record(w, '死亡', {
     actor: ind.id, trueCause: causeEventId,
     text: `${ind.name}が${cause}した`,
+    cause, detail,
     effects: [{ field: '血統', delta: -1, subjectId: ind.id }],
   });
 }
@@ -518,6 +705,9 @@ export function purge(w, id, rng, reason = '粛清') {
     applyDelta(w, p, '怨恨', d, ev.id);
   }
   kill(w, ind, '処刑', ev.id);
+  w._pendingPurges++;
+  w.purges = w.purges || [];
+  w.purges.push({ gen: w.gen, id, name: ind.name, house: ind.house, eventId: ev.id, reason });
   updateMorale(w);
   return ev;
 }
@@ -529,6 +719,9 @@ export function purge(w, id, rng, reason = '粛清') {
 function checkRebellion(w, rng) {
   const pop = w.people.size;
   if (pop < 4) return null;
+  // 蜂起の直後は鎮圧と消耗で動けない。これがないと一揆が2世代に1度起き続け、
+  // そのたびに備蓄が焼けて国が経済ではなく暴動で死ぬ
+  if (w.gen - (w.lastRebelGen ?? -99) < C.REBEL_COOLDOWN) return null;
   let sum = 0;
   const agitators = [];
   for (const p of w.people.values()) {
@@ -537,7 +730,12 @@ function checkRebellion(w, rng) {
     if (p.genes.感受性 > 0.58 && p.genes.知性 > 0.55 && p.regimeGrudge > 0.45) agitators.push(p);
   }
   const mean = sum / pop;
-  const pressure = mean * (1 - w.morale) * (1 + agitators.length * 0.35);
+  // 恐怖は短期には効く。粛清の直後に蜂起は起きない——起きるのは、
+  // それを見ていない世代が怨恨だけを相続して大人になったあとである。
+  // この抑圧項がないと相関のピークが lag=0 に来て、「3世代後に返る」が測れない。
+  w.fear = clamp01((w.fear ?? 0) * 0.58 + (w._pendingPurges + (w.purgeLog[w.gen - 1] ?? 0)) / Math.max(4, pop) * 2.6);
+  const suppression = 1 / (1 + 5.0 * w.fear);
+  const pressure = mean * (1 - w.morale) * (1 + agitators.length * 0.35) * suppression;
   if (pressure < 0.22) return null;
   if (!rng.bool(clamp(pressure, 0, 0.9))) return null;
 
@@ -549,8 +747,17 @@ function checkRebellion(w, rng) {
 
   // 真の原因＝反乱者の怨恨台帳で最も寄与の大きい事件。ここが年代記の鎖の要
   const cause = dominantCause(rebels);
+  const causeEv = cause != null ? w.eventById.get(cause) : null;
   const leader = agitators[0] || rebels[0];
   w.rebellions++;
+  w.lastRebelGen = w.gen;
+  w.rebels = w.rebels || [];
+  w.rebels.push({
+    gen: w.gen, leader: leader.id, n: rebels.length,
+    trueCause: cause, causeGen: causeEv ? causeEv.gen : null,
+    causeKind: causeEv ? causeEv.kind : null,
+    lag: causeEv ? w.gen - causeEv.gen : null,   // 「3世代後に返る」の実測値
+  });
   const ev = record(w, '一揆', {
     actor: leader.id,
     trueCause: cause,
@@ -616,6 +823,8 @@ export function appointBureau(w, bureauKey, id) {
   const prevId = w.bureaus[bureauKey];
   const p = id == null ? null : w.people.get(id);
   if (id != null && !p) return null;
+  w.lastChief = w.lastChief || {};
+  if (prevId != null) w.lastChief[bureauKey] = prevId;
   if (prevId != null && w.people.has(prevId)) {
     const prev = w.people.get(prevId);
     prev.bureau = null;
@@ -631,6 +840,17 @@ export function appointBureau(w, bureauKey, id) {
     p.knowsOwner = true;   // 入信儀式。知ってしまった人間は市井に戻せない
     p.will = willingness(p, 'bureau');
     p.accept = acceptance(p, w);
+    // 出自つきの任命ログ。透過率が血統構造を変えるかはこれでしか測れない
+    const house = w.houses.get(p.house);
+    p.houseRank = house ? house.bureauCount : 0;
+    w.bureauLog.push({
+      gen: w.gen, bureau: bureauKey, id: p.id, name: p.name,
+      house: p.house, houseRank: p.houseRank, noble: !!p.noble,
+      power: citizenPower(p), deeds: p.deeds.length, accept: p.accept,
+      fatherId: p.fatherId, immigrant: !!p.immigrant,
+    });
+    if (house) house.bureauCount++;
+    p.noble = true;        // 局長を出した家はここから名家になる
   }
   const ev = record(w, '任命', {
     target: id,
@@ -722,7 +942,7 @@ export function recomputeAggregates(w) {
     power += citizenPower(p);
     homoz += p.homoz ?? 0;
     grudge += clamp01(p.regimeGrudge);
-    foreign += 1 - (p.lineage.home ?? 0);
+    foreign += 1 - (p.lineage[w.originKey] ?? 0);
     for (const n of GENE_NAMES) geneSum[n] += p.genes[n];
   }
   st.power = power / pop;

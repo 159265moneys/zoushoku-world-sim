@@ -7,7 +7,7 @@
 //   配役の配分 / 抜擢の基準 / 捕虜の受け入れ方針 / 粛清の閾値 / 透過率 / 降伏するか
 // この6項目の差が、世代を重ねると血統の差として出ること——それが検証したいこと。
 
-import { BUREAU, ROLE, DISTRICT } from '../core/model.js';
+import { BUREAU, ROLE, DISTRICT, PHASE } from '../core/model.js';
 import * as C from './constants.js';
 import { citizenPower, sins, eff, clamp, clamp01 } from './derive.js';
 import { setCard } from './cards.js';
@@ -24,8 +24,8 @@ const PROMOTE = {
   martial:  (p) => eff(p, '攻撃素質') * 1.2 + eff(p, '統率素質') + p.genes.胆力 * 0.6,
   agrarian: (p) => eff(p, '器用') + p.genes.勤勉 * 1.1 + eff(p, '共同作業適性') * 0.7,
   fecund:   (p) => p.genes.繁殖性 * 1.5 + p.genes.情愛 * 0.5,
-  purist:   (p) => (p.lineage.home ?? 0) * 1.6 + citizenPower(p),
-  melting:  (p) => (1 - (p.lineage.home ?? 0)) * 1.2 + citizenPower(p) * 1.1,
+  purist:   (p, w) => (p.lineage[w.originKey] ?? 0) * 1.6 + citizenPower(p),
+  melting:  (p, w) => (1 - (p.lineage[w.originKey] ?? 0)) * 1.2 + citizenPower(p) * 1.1,
   terror:   (p) => p.genes.従順 * 1.3 + p.genes.非情 * 0.8 - p.genes.野心 * 1.1,
   laissez:  (p) => p.age * 0.05 + citizenPower(p) * 0.3,
   pious:    (p) => p.genes.信仰性 * 1.4 + p.genes.団結傾向 * 1.0 - p.genes.懐疑 * 0.8,
@@ -37,7 +37,7 @@ const PROMOTE = {
 const PURGE_SCORE = {
   terror:   (p, w) => 0.55 * p.genes.野心 + 0.55 * (1 - p.genes.従順) + 0.5 * p.regimeGrudge + 0.3 * p.genes.誇り,
   pious:    (p, w) => 0.7 * (1 - p.genes.信仰性) + 0.6 * p.genes.懐疑 + 0.3 * p.regimeGrudge,
-  purist:   (p, w) => 1.3 * (1 - (p.lineage.home ?? 0)),
+  purist:   (p, w) => 1.3 * (1 - (p.lineage[w.originKey] ?? 0)),
   martial:  (p, w) => 0.7 * p.genes.保身 + 0.5 * (p.cowardice ? 1 : 0),
   dynastic: (p, w) => 0.6 * p.genes.野心 * (p.bureau ? 0 : 1) - 0.5 * (p.titles.length ? 1 : 0),
   merit:    () => 0, agrarian: () => 0, fecund: () => 0, melting: () => 0, laissez: () => 0,
@@ -47,10 +47,10 @@ export const PROFILES = {
   martial: {
     id: 'martial', name: '武断', label: '狩り・実戦に厚く配役。武力素質を優先抜擢。降伏しない',
     roleMix: { hunt: 0.55, drill: 0.25 }, frontier: 0.55,
-    promote: 'martial', captive: 'accept', purgeThreshold: 1.05, purgeRate: 0.02,
+    promote: 'martial', captive: 'accept', purgeThreshold: 0.88, purgeRate: 0.03,
     transparency: 0.55, surrenderAt: 0, foreignBias: 0.1, inbreedGuard: 0.2,
     fertBias: 0.95, deployTop: 0.65, warAppetite: 0.85,
-    preferGene: '攻撃素質', preferWeight: 0.7,
+    prefer: { 攻撃素質: 2.08, 胆力: 1.30, 保身: -1.30 },
     cards: { deploy_top: 70, drill: 25, hunt_ratio: 55, frontier: 55, raise_young: 45 },
   },
   agrarian: {
@@ -59,7 +59,7 @@ export const PROFILES = {
     promote: 'agrarian', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
     transparency: 0.5, surrenderAt: 0.55, foreignBias: 0.05, inbreedGuard: 0.25,
     fertBias: 1.0, deployTop: 0.22, warAppetite: 0.12,
-    preferGene: '勤勉', preferWeight: 0.6,
+    prefer: { 勤勉: 1.95, 器用: 1.43, 共同作業適性: 1.04 },
     cards: { deploy_top: 20, drill: 0, hunt_ratio: 15, stockpile: 45, frontier: 10 },
   },
   fecund: {
@@ -68,7 +68,7 @@ export const PROFILES = {
     promote: 'fecund', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
     transparency: 0.6, surrenderAt: 0.45, foreignBias: 0.3, inbreedGuard: 0.05,
     fertBias: 1.45, deployTop: 0.4, warAppetite: 0.3,
-    preferGene: '繁殖性', preferWeight: 1.1,
+    prefer: { 繁殖性: 2.60, 情愛: 1.04, 私欲: -0.78 },
     cards: { deploy_top: 40, hunt_ratio: 30, ration_equal: 90, frontier: 30 },
   },
   purist: {
@@ -77,7 +77,7 @@ export const PROFILES = {
     promote: 'purist', captive: 'kill', purgeThreshold: 0.95, purgeRate: 0.03,
     transparency: 0.25, surrenderAt: 0.3, foreignBias: -0.95, inbreedGuard: 0,
     fertBias: 1.05, deployTop: 0.45, warAppetite: 0.45,
-    preferGene: null, preferWeight: 0,
+    prefer: { 序列意識: 1.30, 頑迷: 1.17, 好奇心: -0.91 },
     cards: { deploy_top: 45, hunt_ratio: 30, hereditary: 90, frontier: 20 },
   },
   melting: {
@@ -86,7 +86,7 @@ export const PROFILES = {
     promote: 'melting', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
     transparency: 0.8, surrenderAt: 0.4, foreignBias: 0.95, inbreedGuard: 0.6,
     fertBias: 1.05, deployTop: 0.45, warAppetite: 0.5,
-    preferGene: null, preferWeight: 0,
+    prefer: { 柔軟: 1.56, 好奇心: 1.30, 頑迷: -1.17 },
     cards: { deploy_top: 45, hunt_ratio: 30, hereditary: 10, ration_equal: 80 },
   },
   terror: {
@@ -95,7 +95,7 @@ export const PROFILES = {
     promote: 'terror', captive: 'kill', purgeThreshold: 0.72, purgeRate: 0.08,
     transparency: 0.3, surrenderAt: 0.2, foreignBias: -0.4, inbreedGuard: 0.1,
     fertBias: 1.0, deployTop: 0.55, warAppetite: 0.6,
-    preferGene: '従順', preferWeight: 0.9,
+    prefer: { 従順: 2.34, 野心: -1.95, 誇り: -1.43 },
     cards: { deploy_top: 55, drill: 20, hunt_ratio: 35, hereditary: 60 },
   },
   laissez: {
@@ -104,7 +104,7 @@ export const PROFILES = {
     promote: 'laissez', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
     transparency: 0.5, surrenderAt: 0.5, foreignBias: 0, inbreedGuard: 0.1,
     fertBias: 1.0, deployTop: 0.4, warAppetite: 0.25,
-    preferGene: null, preferWeight: 0,
+    prefer: null,
     cards: {},
   },
   pious: {
@@ -113,7 +113,7 @@ export const PROFILES = {
     promote: 'pious', captive: 'return', purgeThreshold: 0.85, purgeRate: 0.035,
     transparency: 0.35, surrenderAt: 0.25, foreignBias: -0.7, inbreedGuard: 0.05,
     fertBias: 1.15, deployTop: 0.4, warAppetite: 0.4,
-    preferGene: '信仰性', preferWeight: 1.0,
+    prefer: { 信仰性: 2.34, 団結傾向: 1.56, 懐疑: -1.56 },
     cards: { deploy_top: 40, hunt_ratio: 25, hereditary: 70, ration_equal: 70 },
   },
   merit: {
@@ -122,7 +122,7 @@ export const PROFILES = {
     promote: 'merit', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
     transparency: 0.95, surrenderAt: 0.45, foreignBias: 0.4, inbreedGuard: 0.5,
     fertBias: 1.0, deployTop: 0.5, warAppetite: 0.5,
-    preferGene: '知性', preferWeight: 0.6,
+    prefer: { 知性: 1.69, 技術習得: 1.30, 野心: 0.78 },
     cards: { deploy_top: 50, drill: 15, hunt_ratio: 35, hereditary: 0, frontier: 45 },
   },
   dynastic: {
@@ -131,7 +131,7 @@ export const PROFILES = {
     promote: 'dynastic', captive: 'accept', purgeThreshold: 1.1, purgeRate: 0.015,
     transparency: 0.05, surrenderAt: 0.5, foreignBias: -0.3, inbreedGuard: 0,
     fertBias: 1.0, deployTop: 0.35, warAppetite: 0.3,
-    preferGene: '序列意識', preferWeight: 0.5,
+    prefer: { 序列意識: 1.69, 頑迷: 1.43, 柔軟: -1.17 },
     cards: { deploy_top: 35, hunt_ratio: 28, hereditary: 100, frontier: 10 },
   },
 };
@@ -150,8 +150,7 @@ export function applyProfileToWorld(world, owner) {
   world.transparency = pf.transparency;
   world.mating.foreignBias = pf.foreignBias;
   world.mating.inbreedGuard = pf.inbreedGuard;
-  world.mating.preferGene = pf.preferGene;
-  world.mating.preferWeight = pf.preferWeight;
+  world.mating.prefer = pf.prefer;
   world.fertBias = pf.fertBias;
   world.profileId = pf.id;
   world.budget = pf.id === 'martial'
@@ -170,6 +169,11 @@ export function runRivalTurn(world, owner, rng) {
   const pf = owner.profile;
   const events = [];
   if (world.people.size === 0) return events;
+
+  // 局はP2で解禁される。村（2〜10体）に局長を置いて具申を裁いて粛清まで撃つと、
+  // 働き手が数人しかいない段階で経済が壊れて、思想の差が出る前に国が消える。
+  // 設計どおり、P1の村では手を出さない。
+  if (world.phase < PHASE.TRIBE) return events;
 
   // --- 置く：局長の任命 ---
   if (pf.id !== 'laissez' || world.gen % 6 === 0) {
@@ -207,7 +211,8 @@ export function runRivalTurn(world, owner, rng) {
   }
 
   // --- 殺す：粛清。これが一番強い淘汰圧になる ---
-  if (pf.purgeRate > 0 && world.people.size > 6) {
+  // ただし小国では撃たない。人口20の国から毎世代2人消すと、思想が血に出る前に国が消える
+  if (pf.purgeRate > 0 && world.people.size >= 25) {
     const scorer = PURGE_SCORE[pf.id] || (() => 0);
     const cands = [...world.people.values()]
       .filter((p) => p.age >= C.ADULT_AGE && !p.founder)
@@ -231,21 +236,32 @@ export function runRivalTurn(world, owner, rng) {
 }
 
 function pickChief(world, pf, bkey, rng) {
-  const pool = [...world.people.values()].filter(
+  let pool = [...world.people.values()].filter(
     (p) => p.age >= C.ADULT_AGE && !p.bureau && p.alive !== false
   );
   if (!pool.length) return null;
+
+  // 透過率＝制度の緩さ × 測定精度。低いほど「家柄しか見えない」ので、
+  // 候補そのものが名家に絞られる。ここを通さないと、抜擢の基準だけ変えても
+  // 結局いちばん実効値の高い個体＝すでに地位のある家の子が選ばれ続けて、
+  // 世襲国と実力主義国の出自分布が同じになる（実測でそうなった）。
+  if (rng.next() > (world.transparency ?? 0.5)) {
+    const gentry = pool.filter((p) => p.noble);
+    if (gentry.length) pool = gentry;
+  }
+
   if (pf.promote === 'dynastic') {
-    // 前任者の子を継がせる。いなければ既存局長の血縁、それもなければ最年長
-    const prev = world.lastChief?.[bkey];
+    // 前任者の子を継がせる。いなければ既存局長の血縁、それもなければ最年長の名家
+    const prev = world.lastChief?.[bkey] ?? world.bureaus[bkey];
     const heirs = pool.filter((p) => p.fatherId === prev || p.motherId === prev);
     if (heirs.length) return heirs.sort((a, b) => citizenPower(b) - citizenPower(a))[0];
-    const kin = pool.filter((p) => Object.values(world.bureaus).includes(p.fatherId));
-    if (kin.length) return kin[0];
+    const house = prev != null ? (world.people.get(prev) ?? world.dead.get(prev))?.house : null;
+    const kin = house ? pool.filter((p) => p.house === house) : [];
+    if (kin.length) return kin.sort((a, b) => citizenPower(b) - citizenPower(a))[0];
     return pool.sort((a, b) => b.age - a.age)[0];
   }
   const fn = PROMOTE[pf.promote] || PROMOTE.merit;
-  return pool.sort((a, b) => fn(b) - fn(a))[0];
+  return pool.sort((a, b) => fn(b, world) - fn(a, world))[0];
 }
 
 function approves(pf, p, world, rng) {
