@@ -84,6 +84,11 @@ export function adaptWorld(w) {
   });
 
   // 2. 推移グラフ。sim は stats、UI は history。
+  //
+  // admixture / pure を必ず持って来ること。**外来血の「量」(foreign) は同化の
+  // メーターにならない**：隔離するとよそ者どうしで繁殖して系統が薄まらないので、
+  // 量は多いまま混血度だけがゼロに張り付く（＝斑のまま固定）。
+  // 量だけ見て「混ざってきた」と出すと、隔離政策の見え方がまるごと嘘になる。
   def('history', () => (w.stats || []).map(s => ({
     gen: s.gen,
     pop: s.pop,
@@ -92,7 +97,17 @@ export function adaptWorld(w) {
     morale: s.morale ?? 0,
     food: s.food ?? 0,
     grudge: s.grudge ?? 0,
+    admixture: s.admixture ?? 0,   // 1 − 血統の最大成分。0＝単色/斑、0.5＝完全な混色
+    pure: s.pure ?? 0,             // 純血個体の割合
+    foreign: s.foreign ?? 0,       // 外来血の量。混ざり具合ではない
   })));
+
+  // 同化の現在値。history の最後（＝最新世代の集計）。
+  def('mixState', () => {
+    const h = w.stats || [];
+    const s = h[h.length - 1] || {};
+    return { admixture: s.admixture ?? 0, pure: s.pure ?? 1, foreign: s.foreign ?? 0 };
+  });
 
   // 3. 国境で待っている捕虜。sim は Map、UI は配列。
   def('borderQueue', () => (w.border instanceof Map ? [...w.border.values()]
@@ -320,7 +335,12 @@ const CARD_DESC = {
   frontier: '辺境に人を置く。産出は落ちるが練度の伸びがよい。',
   ration_equal: '配給を均等にする。民心は上がるが、伸びる者が伸びない。',
   hereditary: '世襲の度合い。高いほど家柄で人事が決まる。',
+  mix_policy: '0で隔離、100で融和。低いままだと外来の血は入っても混ざらず、'
+    + '斑（まだら）が何世代でも固定される。高いほど中間色が増えて境界が溶ける。',
 };
+
+// 看板のカード。フェーズ2の中心の判断なので、方針タブで一段強く出す。
+const FLAGSHIP = new Set(['mix_policy']);
 
 function adaptCards(cards) {
   if (!Array.isArray(cards)) return null;
@@ -328,6 +348,7 @@ function adaptCards(cards) {
     ...c,
     name: c.name || c.label || c.id,
     desc: c.desc || c.hint || CARD_DESC[c.id] || '',
+    flagship: c.flagship ?? FLAGSHIP.has(c.id),
     on: c.on !== undefined ? c.on : true,
     unit: c.unit ?? '',
     min: c.min ?? 0, max: c.max ?? 100, step: c.step ?? 5, def: c.def ?? 0,
@@ -350,9 +371,6 @@ export function makeAdapter(sim) {
 
   A.advanceGeneration = (w, rng) => {
     const res = sim.advanceGeneration(w, rng);
-    // 世代境界で sim が mating を書き直すことがあるので、adapter が肩代わりして
-    // いるカードの値はここで必ず戻す（戻さないと置いたカードが1世代で消える）。
-    A._applyMix(w);
     refreshWarReady(w);
     // sim は {events, ...} を返す。UI は配列を回す。
     if (Array.isArray(res)) return res;
@@ -558,45 +576,10 @@ export function makeAdapter(sim) {
   /** 外国人の階級を出すために homeRankPct を焼く（sim の rankNation の本来の用途） */
   A.rankForeign = (people) => (sim.rankNation ? sim.rankNation(people) : people);
 
-  // sim は world.mating.foreignBias（-1 隔離 … +1 融和）を交配で読んでいるが、
-  // それを動かすカードが sim 側に無いあいだは既定 0 のまま動かない。
-  // 「100体の段階で融和か優生かを選ばされる」はフェーズ2の中心なので、
-  // 画面から置けるカードとして足す（sim のコードは触らず、sim が読む値を書くだけ）。
-  //
-  // ※ 本来は src/sim/cards.js に居るべきカード。**sim 側の CARDS に入った瞬間、
-  //   この分岐は自動的に死ぬ**（下の own フラグが false になり、素通しになる）。
-  //   sim の作業中に手で消す必要はない。消し忘れて二重に置く事故のほうが高くつく。
-  const MIX_CARD = {
-    id: 'mix_policy', bureau: 'civil', name: '外来の血を混ぜる',
-    desc: '高いほど混血が進み、色の境界が溶ける。低いままだと斑が固定される。',
-    unit: '%', min: 0, max: 100, step: 10, def: 60, on: true, flagship: true,
-  };
-  const CARDS = adaptCards(sim.CARDS) || [];
-  const simHasMix = CARDS.some(c => c.id === MIX_CARD.id);
-  A.CARDS = simHasMix ? CARDS : [...CARDS, MIX_CARD];
-
-  /** adapter が肩代わりしているあいだだけ、sim が読む値を書く。 */
-  function applyMix(w) {
-    if (simHasMix || !w || !w.cards) return;
-    const slot = w.cards[MIX_CARD.id];
-    if (!slot) return;
-    w.mating = w.mating || { foreignBias: 0, inbreedGuard: 0, prefer: null };
-    // 0% = 隔離(-1) / 50% = 中立(0) / 100% = 融和(+1)
-    w.mating.foreignBias = slot.on ? clamp((slot.value - 50) / 50, -1, 1) : 0;
-    // 融和路線は近親も避ける方向に寄る
-    w.mating.inbreedGuard = slot.on ? clamp(Math.max(0, (slot.value - 50) / 100), 0, 1) : 0;
-  }
-  A._applyMix = applyMix;
-
-  A.setCard = (w, id, on, value) => {
-    if (!simHasMix && id === MIX_CARD.id) {
-      w.cards = w.cards || {};
-      w.cards[id] = { on: !!on, value: Number.isFinite(value) ? value : MIX_CARD.def };
-      applyMix(w);
-      return w.cards[id];
-    }
-    return sim.setCard(w, id, on, value);
-  };
+  // mix_policy（外来血を混ぜる）は **sim の cards.js に入った**ので、
+  // adapter が仮に置いていたカードと setCard の分岐は落とした。ここは素通し。
+  A.CARDS = adaptCards(sim.CARDS) || [];
+  A.setCard = (w, id, on, value) => sim.setCard(w, id, on, value);
 
   // 検索のフィルタ名が違う（UI: ageMin/geneMin/strain、sim: minAge/min/origin）。
   // 血統での絞り込みは sim の origin が「主たる出自」なので lineage の最大キーで代用する。

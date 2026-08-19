@@ -24,9 +24,11 @@ export const CARDS = [
     desc: '産出は落ちるが、辺境は練度の伸びがよい。', unit: '', min: 0, max: 0, step: 1, def: 0, on: false },
 
   // ---- 民生局 ----
-  { id: 'mix_policy', bureau: 'civil', name: '外来の血を混ぜる',
-    desc: '高いほど混血が進み、色の境界が溶ける。低いままだと斑が固定される。',
-    unit: '%', min: 0, max: 100, step: 10, def: 60, on: true, flagship: true },
+  // sim の cards.js が本体（既定50＝中立）。ここは既定値を流し込むためだけに持つ。
+  // 60 で撒いていたときは、プレイヤーが何も選んでいないのに融和側へ倒れていた。
+  { id: 'mix_policy', bureau: 'civil', name: '外来血を混ぜる',
+    desc: '0で隔離、100で融和。低いままだと外来の血は入っても混ざらず、斑が固定される。',
+    unit: '%', min: 0, max: 100, step: 10, def: 50, on: true, flagship: true },
   { id: 'child_protect', bureau: 'civil', name: '◯歳未満は働かせない',
     desc: '発現ウィンドウを守る。産出は落ちる。', unit: '歳', min: 0, max: 8, step: 1, def: 3, on: true },
   { id: 'mercy', bureau: 'civil', name: '傷病者を養う',

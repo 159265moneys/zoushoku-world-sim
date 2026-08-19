@@ -92,6 +92,8 @@ main{flex:1;display:flex;min-height:0}
 .strain{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--tx2)}
 .strain i{width:9px;height:9px;border-radius:50%;display:inline-block}
 .strain u{text-decoration:none;color:var(--tx3);font-variant-numeric:tabular-nums}
+.strain.mix{margin-top:3px;padding-top:4px;border-top:1px solid var(--line);color:var(--ac)}
+.strain.mix u{margin-left:2px}
 
 #toast{position:absolute;right:14px;bottom:12px;display:flex;flex-direction:column;gap:5px;align-items:flex-end;pointer-events:none}
 .toast{

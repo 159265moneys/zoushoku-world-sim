@@ -101,18 +101,23 @@ function boot(answers, mode) {
 // ここで使う実時間は描画とtickの間隔だけで、シミュレーションの状態には入らない。
 // 歴史の再現性は RNG と tick 数が担保しているので決定性は壊れない。
 const FRAME_MS = 33;
-// 裏タブでは setInterval が約1秒に絞られる。ここで dt を 160ms に切っていたときは、
-// タブを裏に回した瞬間に世界の時計が実時間の6分の1になっていた（止まりはしないが、
-// 「1世代＝2分」が裏では12分になる）。1フレーム分の上限は絞りの周期より広く取る。
-// スリープ復帰で世界が飛ぶのを防ぐ上限としては、これで十分に効く。
-const MAX_FRAME_MS = 1200;
 let last = performance.now(), acc = 0, tickInGen = 0, dockAcc = 0;
 
 function loop() {
   const now = performance.now();
-  const dt = Math.min(MAX_FRAME_MS, now - last); last = now;
   const w = state.world;
-  if (!w) return;
+  if (!w) { last = now; return; }
+
+  // 1フレームで進めてよい実時間の上限は「1世代ぶん」。
+  //
+  // ここを 160ms のような固定値に切ってはいけない。ブラウザは裏に回したタブの
+  // setInterval を1秒〜1分に絞る（可視性によっては完全に凍る）ので、固定値で切ると
+  // **裏に回した分だけ世界の時計が実時間から遅れていく**。設計は逆で、
+  // 「不在中も世界は進む」。起きた瞬間に、寝ていたぶんを取り戻すのが正しい。
+  //
+  // 上限が1世代なのは、長時間の休止から復帰したときに1フレームで何十世代も
+  // 走らせないため。取り戻しは次のフレーム以降も続くので、止まりはしない。
+  const dt = Math.min(genMs(w), now - last); last = now;
   state.elapsedMs += dt;
 
   if (!state.paused && state.speed > 0) {
@@ -125,6 +130,8 @@ function loop() {
       tickInGen++;
       if (tickInGen >= TICKS_PER_GEN) { tickInGen = 0; onGeneration(); }
     }
+    // 取り戻しきれなかった分は1世代ぶんまでに切る（無限に溜めない）
+    if (acc > step * TICKS_PER_GEN) acc = step * TICKS_PER_GEN;
   }
 
   state.dish.sync(w);
@@ -332,6 +339,23 @@ function renderStrains() {
       el('span', {}, strainName(w, k)),
       el('u', {}, Math.round(v * 100) + '%')));
   }
+
+  // 同化の進み。**外来血の量ではなく混血度（1 − 血統の最大成分）で出す。**
+  // 隔離するとよそ者どうしで繁殖するので、量は多いまま混ざらない。
+  // 量で判定すると「隔離しているのに混ざってきた」と表示してしまう。
+  const st = w.mixState;
+  if (!st) return;
+  box.appendChild(el('div', { class: 'strain mix' },
+    el('span', {}, mixLabel(st, rows.length)),
+    el('u', {}, `混血度 ${st.admixture.toFixed(2)} ・ 純血 ${Math.round(st.pure * 100)}%`)));
+}
+
+/** 設計文書の語彙（単色／斑／混色）に落とす。 */
+function mixLabel(st, strains) {
+  if (strains <= 1) return '単色';
+  if (st.admixture >= 0.25) return '混色';
+  if (st.admixture >= 0.08) return '混ざりはじめ';
+  return '斑（固定）';
 }
 
 function buildSpeed() {
