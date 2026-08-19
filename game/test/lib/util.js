@@ -9,6 +9,15 @@ export function round(x, d = 4) {
   return Math.round(x * p) / p;
 }
 
+// 配列が数十万件になるので Math.max(...arr) は使えない（スタックが溢れる）。
+// 大きくなりうる配列にはこの2本を使うこと。
+export function maxOf(a, init = -Infinity) {
+  let m = init; for (const x of a) if (x > m) m = x; return m;
+}
+export function minOf(a, init = Infinity) {
+  let m = init; for (const x of a) if (x < m) m = x; return m;
+}
+
 export function mean(a) {
   if (!a.length) return 0;
   let s = 0; for (const x of a) s += x;
@@ -113,8 +122,8 @@ export function barChart(rows, opts = {}) {
 /** 数値配列のヒストグラム。 */
 export function histogram(values, opts = {}) {
   const bins = opts.bins ?? 10;
-  const lo = opts.lo ?? Math.min(...values, 0);
-  const hi = opts.hi ?? Math.max(...values, 1);
+  const lo = opts.lo ?? minOf(values, 0);
+  const hi = opts.hi ?? maxOf(values, 1);
   const counts = new Array(bins).fill(0);
   for (const v of values) {
     const i = clamp(Math.floor((v - lo) / ((hi - lo) || 1) * bins), 0, bins - 1);

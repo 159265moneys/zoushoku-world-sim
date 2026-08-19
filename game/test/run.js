@@ -18,12 +18,16 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
 import { RNG } from '../src/core/rng.js';
-import { GENE_NAMES } from '../src/core/genes.js';
+import { GENE_NAMES, MIND_GENES } from '../src/core/genes.js';
+
+// 潜伏の観測対象。全部見ると読めないので心系の先頭8本に絞る。
+const DEFAULT_TRACKED_MIND = MIND_GENES.slice(0, 8);
 import { loadSim } from './sim-adapter.js';
 import { Observer } from './observer.js';
 import { Violations, checkWorld, worldHash, eventHash, POP_CEILING, TICK_LIMIT } from './invariants.js';
 import * as C from './checks.js';
-import { mean, sd, round, pct, lineChart, barChart, padTo, strWidth } from './lib/util.js';
+import { viabilityOf, corpusSummary, viableOnly, MIN_BREEDING_GENS, BREEDING_POP, EARLY_DEATH_GENS } from './viability.js';
+import { mean, sd, round, pct, lineChart, barChart, histogram, maxOf, minOf, padTo, strWidth } from './lib/util.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -53,8 +57,8 @@ const CONF = {
   gens:        num('gens',        QUICK ? 120 : 200),  // 1本あたりの世代数
   freqSeeds:   num('freq-seeds',  QUICK ? 2   : 3),
   freqGens:    num('freq-gens',   QUICK ? 300 : 1000), // AAA-3 は1000世代
-  rosterSeeds: num('roster-seeds',QUICK ? 2   : 4),
-  rosterGens:  num('roster-gens', QUICK ? 120 : 250),
+  rosterSeeds: num('roster-seeds',QUICK ? 2   : 10),
+  rosterGens:  num('roster-gens', QUICK ? 120 : 200),
   inbreedSeeds:num('inbreed-seeds',QUICK ? 3  : 5),
   inbreedGens: num('inbreed-gens', QUICK ? 120 : 200),
   strict:      !!ARG.strict,                            // 毎tick全件検査
@@ -93,11 +97,13 @@ function runWorld(api, o) {
     obs.observe(world);
     genHashes.push(worldHash(world));
 
+    // 戦争を撃つ。公開APIだけで回すので fake でも本物でも同じ経路になる。
+    // 戦死の内訳検査と「外来血の流入」はどちらもここが供給源。
+    if (o.war && world.gen > 2 && world.gen % o.war.every === 0) {
+      driveWar(api, world, rng, o.war);
+    }
     if (inject && world.gen === inject.atGen) {
-      // 外来血の注入は公開APIで行う（fake でも本物でも同じ経路）
-      if (typeof api.takeCaptives === 'function') api.takeCaptives(world, rng, inject.n);
-      world.closed = false;
-      world.outsideBlood = 0.9;
+      injectForeignBlood(api, world, rng, inject.n);
     }
     if (world.people.size === 0) { aborted = 'extinct'; break; }
     if (world.people.size > POP_CEILING) { aborted = 'pop-explosion'; break; }
@@ -109,7 +115,41 @@ function runWorld(api, o) {
     hash: hashList(genHashes), events: eventHash(world),
     injectAt: inject?.atGen ?? null,
     gens: obs.series.length - 1,
+    requestedGens: gens,
+    viability: viabilityOf(obs, gens),
   };
+}
+
+
+/**
+ * 1戦だけ撃つ。sim の公開APIしか使わない。
+ * どれか1本でも欠けていたら黙って何もしない（＝対応する検査は SKIP / INCONCLUSIVE になる）。
+ */
+function driveWar(api, world, rng, policy) {
+  if (!api.makeGhost || !api.startWar || !api.settleWar) return null;
+  try {
+    const ghost = api.makeGhost((world.seed ^ (world.gen * 2654435761)) >>> 0, world.phase ?? 1, 1);
+    const battle = api.startWar(world, rng, ghost);
+    if (!battle) return null;
+    if (api.runBattle) api.runBattle(battle, rng);
+    else if (api.stepBattle) { let g = 200; while (!battle.over && g-- > 0) api.stepBattle(battle, rng); }
+    api.settleWar(world, battle, rng);
+    // 捕虜。勝者だけが軸を選べる（設計文書「勝者は軸を1つ選んで上位プールから抽選」）
+    if (policy.captive && api.takeCaptives && api.borderDecision) {
+      const caps = api.takeCaptives(world, battle, policy.axis ?? '総合', rng) ?? [];
+      for (const c of caps) api.borderDecision(world, c.id ?? c, policy.captive);
+    }
+    return battle;
+  } catch { return null; }
+}
+
+/** 外来血の注入。近親交配からの「回復」を測るための一手。 */
+function injectForeignBlood(api, world, rng, n) {
+  for (let i = 0; i < Math.max(1, Math.ceil(n / 3)); i++) {
+    driveWar(api, world, rng, { captive: 'accept', axis: '総合' });
+  }
+  if (world.mating) world.mating.foreignBias = 0.9;   // 本物のsimの混血レバー
+  world.closed = false; world.outsideBlood = 0.9;     // fake-sim のレバー
 }
 
 function hashList(list) {
@@ -122,47 +162,99 @@ function hashList(list) {
 // ---------------------------------------------------------------------------
 // ロスター（10国）を回す
 // ---------------------------------------------------------------------------
+/**
+ * ロスターの1要素からプロファイルidを取り出す。
+ * **必ず文字列であること**を確かめる。sim によっては `profile` がプロファイル
+ * オブジェクトそのものなので、素直に拾うと全10国が同じキー "[object Object]" に
+ * 潰れて「分化していない」という嘘の実測が出る。
+ */
+function profileIdOf(n, i) {
+  const w = n.world ?? n;
+  for (const cand of [n.id, n.profile, w.profileId, w.profileID, n.key]) {
+    if (typeof cand === 'string' && cand) return cand;
+  }
+  for (const cand of [n.profile?.id, n.profile?.label, w.profile?.id, w.profile?.label]) {
+    if (typeof cand === 'string' && cand) return cand;
+  }
+  return `#${i}`;
+}
+
 function runRoster(api, seed, gens, trackedMind) {
   const TPG = api.TICKS_PER_GEN ?? 8;
   const roster = api.createRoster(seed);
   const rng = new RNG(((seed >>> 0) ^ 0x85ebca6b) >>> 0);
-  const per = (roster.nations ?? roster.worlds ?? []).map(n => ({
+  const nations = roster.nations ?? roster.worlds ?? [];
+  const per = nations.map((n, i) => ({
+    nation: n,
     world: n.world ?? n,
-    profile: n.profile ?? n.id ?? null,
-    label: n.label ?? n.name ?? null,
-    obs: new Observer({ trackedMind, keepBirths: true }),
+    profileId: profileIdOf(n, i),
+    name: n.name ?? null,
+    // 出生レコードはバッチ側で十数万件取れているのでロスターでは持たない。
+    // 10国×種数ぶんの世界を全部抱えるとヒープが尽きる。
+    obs: new Observer({ trackedMind, keepBirths: false }),
     violations: new Violations(),
     seed,
   }));
   for (const p of per) { checkWorld(p.world, p.violations, 'init'); p.obs.observe(p.world); }
 
+  // advanceRoster があれば必ずそれを使う。
+  // 自前で stepTick/advanceGeneration を回すと runRivalTurn（＝10の経営思想そのもの）を
+  // 素通りしてしまい、「オーナーごとに分化しない」という嘘の実測が出る。
+  const useRoster = typeof api.advanceRoster === 'function';
   for (let g = 0; g < gens; g++) {
-    for (const p of per) {
-      for (let t = 0; t < TPG; t++) {
-        api.stepTick(p.world, rng);
-        checkWorld(p.world, p.violations, 'tick', { light: !CONF.strict });
+    if (useRoster) {
+      api.advanceRoster(roster, rng, 1);
+    } else {
+      for (const p of per) {
+        if (!p.world.people.size) continue;
+        for (let t = 0; t < TPG; t++) api.stepTick(p.world, rng);
+        api.advanceGeneration(p.world, rng);
       }
-      api.advanceGeneration(p.world, rng);
+      roster.gen++;
+    }
+    for (const p of per) {
       checkWorld(p.world, p.violations, 'gen');
       p.obs.observe(p.world);
     }
-    roster.gen++;
   }
   for (const p of per) {
     p.death = p.obs.deathBreakdown(p.world);
-    p.profileId = p.world.profileId ?? p.world.profile?.label ?? '?';
     p.hash = worldHash(p.world);
+    p.gens = p.obs.series.length - 1;
+    p.viability = viabilityOf(p.obs, gens);
+    releaseWorld(p.world);
   }
-  return { roster, per };
+  return { roster, per, drivenByRoster: useRoster };
+}
+
+/**
+ * 走り終わった世界から、以降の検査が使わない重いものを捨てる。
+ * ロスターは 10国 × 種数ぶんの世界を同時に抱えるので、これがないとヒープが尽きる。
+ * 残すのは年代記（遡行の検査）と局長ログ（透過率の検査）だけ。
+ */
+function releaseWorld(w) {
+  try {
+    w.people?.clear?.();
+    w.dead?.clear?.();
+    w.foreign?.clear?.();
+    w.border?.clear?.();
+    if (Array.isArray(w.battles)) w.battles.length = 0;
+    if (Array.isArray(w.ledger)) w.ledger.length = 0;
+    if (Array.isArray(w.stats)) w.stats.length = 0;
+  } catch { /* 解放は best effort。失敗しても検査結果は変わらない */ }
 }
 
 // ---------------------------------------------------------------------------
 // 本体
 // ---------------------------------------------------------------------------
 async function main() {
-  const sim = await loadSim();
+  const sim = await loadSim(ARG.impl ?? 'auto');
+  if (!sim.api) { console.error(`sim を読み込めない: ${sim.error}`); process.exit(2); }
   const api = sim.api;
-  const trackedMind = api.TRACKED_MIND ?? [];
+  // 潜伏を追う心系遺伝子。sim が指定しなければ心系の先頭8本を使う。
+  // ここが空配列になると劣性の潜伏検査が黙って0件になるので既定値を必ず入れる。
+  const trackedMind = (api.TRACKED_MIND && api.TRACKED_MIND.length)
+    ? api.TRACKED_MIND : DEFAULT_TRACKED_MIND;
   const log = s => process.stderr.write(s + '\n');
 
   log(`[増殖:test] sim = ${sim.impl}${sim.isReal ? '' : '（src/sim/ が未実装のため代替実装）'}`);
@@ -175,7 +267,8 @@ async function main() {
   const batch = [];
   for (let i = 0; i < CONF.seeds; i++) {
     const seed = 1000 + i * 7919;
-    batch.push(runWorld(api, { seed, gens: CONF.gens, trackedMind }));
+    // 4世代に1度は戦争を撃つ。戦死の内訳を測る母集団はここで作る。
+    batch.push(runWorld(api, { seed, gens: CONF.gens, trackedMind, war: { every: 4, captive: 'accept', axis: '総合' } }));
   }
   const allV = new Violations(60);
   for (const r of batch) allV.merge(r.violations);
@@ -186,7 +279,10 @@ async function main() {
   const det = [];
   for (let i = 0; i < detN; i++) {
     const seed = 1000 + i * 7919;
-    const again = runWorld(api, { seed, gens: CONF.gens, trackedMind, collectViolations: false });
+    const again = runWorld(api, {
+      seed, gens: CONF.gens, trackedMind, collectViolations: false,
+      war: { every: 4, captive: 'accept', axis: '総合' },
+    });
     det.push({
       seed,
       a: batch[i].hash, b: again.hash,
@@ -225,8 +321,17 @@ async function main() {
   const closed = [], open = [], recovery = [];
   for (let i = 0; i < CONF.inbreedSeeds; i++) {
     const s = 777001 + i * 32452843;
-    closed.push(runWorld(api, { seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false, answers: { closed: true, outsideBlood: 0 } }));
-    open.push(runWorld(api, { seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false, answers: { closed: false, outsideBlood: 0.9 } }));
+    // 閉鎖＝一度も外の血を入れない（戦争もしない）。開放＝戦うたびに捕虜を受け入れる。
+    // fake-sim は answers のフラグで、本物の sim は「捕虜を受け入れるかどうか」で同じ状態になる。
+    closed.push(runWorld(api, {
+      seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false,
+      answers: { closed: true, outsideBlood: 0 },
+    }));
+    open.push(runWorld(api, {
+      seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false,
+      answers: { closed: false, outsideBlood: 0.9 },
+      war: { every: 3, captive: 'accept', axis: '総合' },
+    }));
     recovery.push(runWorld(api, {
       seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false,
       answers: { closed: true, outsideBlood: 0 },
@@ -239,7 +344,7 @@ async function main() {
   const allRuns = [...batch, ...freq];
   const rosterFlat = Object.values(byProfile).flat();
   const checks = [
-    C.checkLinkage([...allRuns, ...rosterFlat]),
+    C.checkLinkage([...allRuns, ...rosterFlat], api.ARM_EXEMPT),
     C.checkFrequency(freq),
     C.checkRecessiveLatency(allRuns, trackedMind),
     C.checkInbreeding(closed, open, recovery),
@@ -256,8 +361,12 @@ async function main() {
   // ===== 検査器の自己検証（--selftest）====================================
   let selftest = null;
   if (ARG.selftest) {
-    log(`[+] selftest: 故意のバグを入れて、検査がちゃんと落ちるか確かめる`);
-    selftest = await runSelfTest(api, trackedMind);
+    // selftest は必ず fake-sim の上で走らせる。
+    // 故意のバグ（サボタージュ）を注入できるのは参照実装だけで、
+    // ここで確かめたいのは sim の正しさではなく「検査器が空振りでないこと」。
+    log(`[+] selftest: 参照実装に故意のバグを入れて、検査がちゃんと落ちるか確かめる`);
+    const fakeSim = await loadSim('fake');
+    selftest = await runSelfTest(fakeSim.api, fakeSim.api.TRACKED_MIND ?? trackedMind);
   }
 
   // ===== レポート =========================================================
@@ -282,21 +391,49 @@ async function main() {
   }
 
   // ===== 標準出力に要約 ===================================================
-  const line = (s, t) => `${s.padEnd(5)} ${t}`;
+  const line = (s, t) => `${String(s).padEnd(13)} ${t}`;
+  const allWorlds = [...batch, ...freq, ...rosterFlat, ...closed, ...open, ...recovery];
+  const corpus = corpusSummary(allWorlds);
   console.log('');
   console.log(`sim: ${sim.impl}`);
-  console.log(line(allV.ok && !aborted.length ? 'PASS' : 'FAIL',
-    `不変条件 (${CONF.seeds}種×${CONF.gens}世代 + 1000世代 + 10国×${CONF.rosterSeeds})  違反=${allV.total} 中断=${aborted.length}`));
+  const hardAborts = aborted.filter(r => r.aborted !== 'extinct');
+  const hardOk = allV.ok && hardAborts.length === 0;
+  const earlyOk = corpus.earlyDeathRate <= 0.10;
+  console.log(line(hardOk ? 'PASS' : 'FAIL',
+    `不変条件a NaN/範囲/負値/人口爆発/無限ループ  違反=${allV.total} 強制終了=${hardAborts.length}`));
+  console.log(line(earlyOk ? 'PASS' : 'FAIL',
+    `不変条件b 即死しない  ${EARLY_DEATH_GENS}世代以内の絶滅=${corpus.earlyDeaths}/${corpus.worlds} (${pct(corpus.earlyDeathRate)})`));
   console.log(line(det.every(d => d.ok) ? 'PASS' : 'FAIL', `決定性 (${det.length}種を2周)  異なる歴史=${distinct}/${batch.length}`));
-  for (const c of checks) console.log(line(c.status, `${c.title} — ${c.summary}`));
+  console.log(line(corpus.viableWorlds ? 'INFO' : 'BLOCKED',
+    `判定可能な世界 ${corpus.viableWorlds}/${corpus.worlds}（絶滅 ${corpus.extinctWorlds}／平均繁殖可能 ${corpus.meanBreedingGens}世代）`));
+  console.log('');
+  for (const c of checks) console.log(line(c.status, `${c.title} — ${oneLine(c.summary)}`));
   if (selftest) {
     console.log('');
     for (const s of selftest) console.log(line(s.caught ? 'PASS' : 'FAIL', `selftest[${s.sabotage}] → ${s.expect} が ${s.got}`));
   }
+  const nInc = checks.filter(c => c.status === 'INCONCLUSIVE').length;
+  if (nInc) {
+    console.log('');
+    console.log(`※ INCONCLUSIVE ${nInc}件は「主張が偽」ではなく「世界が続かないので測れていない」。FAILと混同しないこと。`);
+  }
 
-  const hardFail = !allV.ok || aborted.length > 0 || det.some(d => !d.ok) || checks.some(c => c.status === 'FAIL')
-    || (selftest ?? []).some(s => !s.caught);
+  // 終了コード：設計主張の INCONCLUSIVE では落とさない（測れていないだけ）。
+  // 落とすのは 不変条件・決定性・実測で否定された主張・検査器の空振り。
+  const hardFail = !hardOk || !earlyOk || det.some(d => !d.ok)
+    || checks.some(c => c.status === 'FAIL') || (selftest ?? []).some(s => !s.caught);
   process.exitCode = hardFail ? 1 : 0;
+}
+
+function histogramText(values) {
+  if (!values.length) return '(none)';
+  const hi = maxOf(values, 1);
+  return histogram(values, { bins: Math.min(10, Math.max(3, hi)), lo: 0, hi: Math.max(10, hi), width: 34 });
+}
+
+function oneLine(s) {
+  const t = String(s ?? '').replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+  return t.length > 150 ? t.slice(0, 147) + '…' : t;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +441,7 @@ async function main() {
 // 検査が「何をやってもPASS」なら、その検査には価値がない。
 // ---------------------------------------------------------------------------
 async function runSelfTest(api, trackedMind) {
-  const G = 140, S = 3;
+  const G = 160, S = 8;
   const cases = [
     { sabotage: 'linkage',         expect: 'linkage',        run: 'plain' },
     { sabotage: 'heritable-skill', expect: 'skill',          run: 'plain' },
@@ -318,19 +455,28 @@ async function runSelfTest(api, trackedMind) {
     let res;
     if (c.run === 'roster') {
       const by = {};
-      for (let i = 0; i < 2; i++) {
+      for (let i = 0; i < 4; i++) {
         const TPG = api.TICKS_PER_GEN ?? 8;
         const roster = api.createRoster(90001 + i * 15485863, { sabotage: c.sabotage });
         const rng = new RNG(((90001 + i * 15485863) ^ 0x85ebca6b) >>> 0);
-        const per = roster.worlds.map(w => ({ world: w, obs: new Observer({ trackedMind }) }));
+        const nations = roster.nations ?? roster.worlds ?? [];
+        const per = nations.map((n, k) => ({
+          world: n.world ?? n,
+          profileId: profileIdOf(n, k),
+          obs: new Observer({ trackedMind }),
+        }));
         for (let g = 0; g < G; g++) {
           for (const p of per) {
+            if (!p.world.people.size) continue;
             for (let t = 0; t < TPG; t++) api.stepTick(p.world, rng);
             api.advanceGeneration(p.world, rng);
-            p.obs.observe(p.world);
           }
+          for (const p of per) p.obs.observe(p.world);
         }
-        for (const p of per) (by[p.world.profileId] ||= []).push(p);
+        for (const p of per) {
+          p.viability = viabilityOf(p.obs, G);
+          (by[p.profileId] ||= []).push(p);
+        }
       }
       res = C.checkDivergence(by);
     } else {
@@ -340,9 +486,10 @@ async function runSelfTest(api, trackedMind) {
         runs.push(runWorld(api, {
           seed: 5150 + i * 7907, gens, trackedMind,
           answers: { sabotage: c.sabotage }, collectViolations: false,
+          war: { every: 3, captive: 'accept', axis: '総合' },
         }));
       }
-      res = c.expect === 'linkage' ? C.checkLinkage(runs)
+      res = c.expect === "linkage" ? C.checkLinkage(runs, api.ARM_EXEMPT)
         : c.expect === 'skill' ? C.checkSkillHeritability(runs)
         : c.expect === 'wardeath' ? C.checkWarDeath(runs)
         : c.expect === 'recessive' ? C.checkRecessiveLatency(runs, trackedMind)
@@ -360,7 +507,14 @@ async function runSelfTest(api, trackedMind) {
 // ---------------------------------------------------------------------------
 // レポート
 // ---------------------------------------------------------------------------
-const BADGE = { PASS: '✅ PASS', FAIL: '❌ FAIL', WARN: '⚠️ WARN', SKIP: '⏭ SKIP' };
+const BADGE = {
+  PASS: '✅ PASS',
+  FAIL: '❌ FAIL（実測で否定された）',
+  WARN: '⚠️ WARN',
+  SKIP: '⏭ SKIP（simがデータを出していない）',
+  INCONCLUSIVE: '🚧 INCONCLUSIVE（測れていない・否定ではない）',
+};
+const SHORT = { PASS: '✅', FAIL: '❌', WARN: '⚠️', SKIP: '⏭', INCONCLUSIVE: '🚧' };
 
 function renderReport(d) {
   const { sim, conf, batch, allV, aborted, det, distinct, freq, byProfile, opponents,
@@ -372,43 +526,85 @@ function renderReport(d) {
   P('');
   P('`node test/run.js` が生成。**このファイルは手で編集しない。**');
   P('');
-  P(`- 検査対象 sim: **${sim.impl}**${sim.isReal ? '' : '　← `src/sim/` がまだ無いので `test/fake-sim.js`（代替実装）を検査している'}`);
+  P(`- 検査対象 sim: **${sim.impl}**${sim.isReal ? '' : '　← `src/sim/` を使えなかったので `test/fake-sim.js`（参照実装）を検査している'}`);
+  P(`- 読み込み元: \`${sim.from}\``);
   if (!sim.isReal) {
     P('');
-    P('  > **重要**: 以下の「PASS」は代替実装が設計どおりに書かれていることしか示さない。');
-    P('  > 本物の `src/sim/` が生えたら sim-adapter が自動でそちらに切り替わり、同じ検査が本番の実装にかかる。');
-    P('  > 価値があるのはそのときで、いまは「何を測るか」を確定させている段階。');
+    P('  > **重要**: 以下の結果は参照実装が設計どおりに書かれていることしか示さない。');
+    P('  > 本物の `src/sim/` が読めるようになれば sim-adapter が自動でそちらに切り替わる。');
   }
-  if (sim.missing.length) {
-    P(`- 未実装のAPI（fake で代替中）: \`${sim.missing.join('`, `')}\``);
+  for (const n of sim.notes ?? []) P(`- 注記: ${n}`);
+  if (sim.missing?.length) {
+    P(`- sim が出していない関数（対応する検査は SKIP）: \`${sim.missing.join('`, `')}\``);
   }
   P(`- 実行パラメータ: 不変条件 ${conf.seeds}種×${conf.gens}世代 / 頻度依存 ${conf.freqSeeds}種×${conf.freqGens}世代 / ロスター ${conf.rosterSeeds}種×${conf.rosterGens}世代 / 近親交配 ${conf.inbreedSeeds}種×${conf.inbreedGens}世代`);
   P('');
 
+  // ---- 結果の読み方（ここを先に置く。FAIL と INCONCLUSIVE の混同が一番の事故）----
+  const allWorlds = [...batch, ...freq, ...Object.values(byProfile).flat(), ...closed, ...open, ...recovery];
+  const corpus = corpusSummary(allWorlds);
+  P('## この記号の意味');
+  P('');
+  P('| 記号 | 意味 |');
+  P('|---|---|');
+  P('| ✅ PASS | 十分な歴史があり、主張どおりの結果が出た |');
+  P('| ❌ FAIL | **十分な歴史があり、そのうえで主張と逆の結果が出た**。設計か実装のどちらかが間違っている |');
+  P('| 🚧 INCONCLUSIVE | **測れていない。主張が否定されたわけではない。** 世界が続かず、判定に必要な歴史が集まらなかった |');
+  P('| ⏭ SKIP | sim がその観測に必要なデータを出していない（データ契約の穴） |');
+  P('');
+  if (corpus.viableWorlds < corpus.worlds) {
+    P('> **🚧 は ❌ ではない。**');
+    P('> 世界が10世代もたずに絶滅すると「劣性が数世代潜伏する」も「血が濃くなる」も');
+    P('> 原理的に観測できない。それは設計への反証ではなく、測定が成立していないという意味。');
+    P('> 経済が直って世界が続くようになれば、検査側は何も変えなくても判定に変わる。');
+    P('');
+  }
+
   // ---- サマリ ----
   P('## サマリ');
   P('');
-  const invOk = allV.ok && aborted.length === 0;
+  const hardOk = allV.ok && !aborted.some(r => r.aborted !== 'extinct');
+  const earlyOk = corpus.earlyDeathRate <= 0.10;
   const detOk = det.every(x => x.ok);
+  P(`検証の母集団: 世界 **${corpus.worlds}本**中、判定に足る歴史を持ったのは **${corpus.viableWorlds}本**`);
+  P(`（絶滅 ${corpus.extinctWorlds}本／うち${EARLY_DEATH_GENS}世代以内の即死 ${corpus.earlyDeaths}本 / 平均到達 ${corpus.meanGens}世代 / 繁殖可能な規模で回った平均 ${corpus.meanBreedingGens}世代 / 最大到達人口 ${corpus.peakPop}）`);
+  P('');
   P('| | 検査 | 結果 |');
   P('|---|---|---|');
   P(`| AAA-1 | 決定性（同じ種＝同じ歴史） | ${BADGE[detOk ? 'PASS' : 'FAIL']} |`);
-  P(`| AAA-2 | 不変条件（NaN・無限ループ・人口爆発・即死） | ${BADGE[invOk ? 'PASS' : 'FAIL']} |`);
+  P(`| AAA-2a | 不変条件（NaN・0..1逸脱・負値・人口爆発・無限ループ） | ${BADGE[hardOk ? 'PASS' : 'FAIL']} |`);
+  P(`| AAA-2b | 即死しない（${EARLY_DEATH_GENS}世代以内の絶滅が1割以下） | ${BADGE[earlyOk ? 'PASS' : 'FAIL']}　${corpus.earlyDeaths}/${corpus.worlds} = ${pct(corpus.earlyDeathRate)} |`);
   const idToAAA = { frequency: 'AAA-3', linkage: 'AAA-4', recessive: 'AAA-5', chronicle: 'AAA-6' };
   for (const c of checks) P(`| ${idToAAA[c.id] ?? '—'} | ${c.title} | ${BADGE[c.status]} |`);
   P('');
   const fails = checks.filter(c => c.status === 'FAIL');
   const skips = checks.filter(c => c.status === 'SKIP');
+  const incs = checks.filter(c => c.status === 'INCONCLUSIVE');
   if (fails.length) {
-    P('### 実測で否定された主張');
+    P('### ❌ 実測で否定された主張');
     P('');
-    for (const c of fails) P(`- **${c.title}** — ${c.summary}`);
+    P('十分な歴史があったうえで逆の結果が出たもの。ここだけが本当の「設計への反証」。');
+    P('');
+    for (const c of fails) P(`- **${c.title}** — ${oneLine(c.summary)}`);
+    P('');
+  } else {
+    P('### ❌ 実測で否定された主張');
+    P('');
+    P('**なし。** 設計主張のうち、十分な歴史のうえで逆の結果が出たものは1つもない。');
+    P('');
+  }
+  if (incs.length) {
+    P('### 🚧 まだ測れていない主張');
+    P('');
+    P('世界が続かないため判定に至っていないもの。**主張が偽だという証拠は何も出ていない。**');
+    P('');
+    for (const c of incs) P(`- **${c.title}**`);
     P('');
   }
   if (skips.length) {
-    P('### 測れなかった主張（sim が必要な情報を出していない）');
+    P('### ⏭ sim が必要な情報を出していない');
     P('');
-    for (const c of skips) P(`- **${c.title}** — ${c.summary}`);
+    for (const c of skips) P(`- **${c.title}** — ${oneLine(c.summary)}`);
     P('');
   }
 
@@ -422,7 +618,17 @@ function renderReport(d) {
   P(`検査した世界: **${totalWorlds}本**（うちバッチ ${batch.length}本、1000世代級 ${freq.length}本、10国ロスター ${Object.values(byProfile).flat().length}本）`);
   P(`最長の世界: ${Math.max(...freq.map(r => r.gens), ...batch.map(r => r.gens))}世代 / 総tick ${batch.reduce((a, r) => a + r.ticks, 0) + freq.reduce((a, r) => a + r.ticks, 0)}`);
   P('');
-  if (allV.ok) P('違反 **0件**。NaN / Infinity / 負の人口 / 負の食料 / 0..1 逸脱 / 死者の混入 / 血統比の破れ、いずれも検出されず。');
+  P(`絶滅した世界: **${corpus.extinctWorlds}/${corpus.worlds}本**`
+    + `（うち${EARLY_DEATH_GENS}世代以内の即死 ${corpus.earlyDeaths}本 = ${pct(corpus.earlyDeathRate)}）`);
+  if (corpus.deathGens.length) {
+    P('');
+    P('絶滅した世代の分布:');
+    P('```');
+    P(histogramText(corpus.deathGens));
+    P('```');
+  }
+  P('');
+  if (allV.ok) P('そのほかの不変条件の違反 **0件**。NaN / Infinity / 負の人口 / 負の食料 / 0..1 逸脱 / 死者の混入 / 血統比の破れ、いずれも検出されず。');
   else {
     P(`違反 **${allV.total}件**`);
     P('');

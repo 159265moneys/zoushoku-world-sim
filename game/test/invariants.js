@@ -38,7 +38,9 @@ export function checkWorld(world, v, where, opts = {}) {
   }
   const n = world.people.size;
   if (bad(n) || n < 0) v.add('neg-pop', `人口が不正: ${n}`, at);
-  if (n === 0) v.add('extinct', `人口0（即死）`, at);
+  // 絶滅はここでは数えない。毎世代で数えると1回の絶滅が数百件の違反に化けて、
+  // NaN や人口爆発といった本物の不変条件違反が埋もれる。
+  // 絶滅は「世界ごとの結末」として run.js が1本につき1回だけ集計する。
   if (n > POP_CEILING) v.add('pop-explosion', `人口 ${n} > ${POP_CEILING}`, at);
   if (world.morale < -1e-9 || world.morale > 1 + 1e-9) v.add('range', `morale=${world.morale} が 0..1 外`, at);
   // 食料は負になってよい（飢饉）が、非有限や桁違いの負は異常

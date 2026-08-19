@@ -97,17 +97,54 @@ export class Observer {
     this.finalPop = 0;
   }
 
-  /** 死因の内訳。戦死のうち運死が何割かも出す（設計は「ステ由来90% / 運10%」） */
+  /**
+   * 死因の内訳。戦死のうち「運（流れ矢）」が何割かを出す（設計は ステ由来90% / 運10%）。
+   *
+   * 運かどうかは sim が印を付けてくれないと分からない。以下のどれか1つがあればよい：
+   *   a) world.deathTally = { war_stat, war_luck }
+   *   b) individual.deathCause が '戦死:運' / '戦死:ステ' のように分かれている
+   *   c) individual.deathByLuck === true
+   *   d) world.battles[].sides[*].units[] の死亡ユニットに luck フラグ
+   * どれも無ければ war だけ数えて luck は null（＝検査は SKIP になる）。
+   */
   deathBreakdown(world) {
     const by = {};
-    let total = 0, war = 0, luck = 0;
-    for (const d of world.dead.values()) {
-      const c = d.deathCause ?? '不明';
+    let total = 0, war = 0, luck = 0, stat = 0, marked = false;
+
+    const t = world.deathTally;
+    if (t && (t.war_stat != null || t.war_luck != null)) {
+      stat = t.war_stat ?? 0; luck = t.war_luck ?? 0; marked = true;
+    }
+
+    // 個体側の印を数える。marked は「印の付け方が1つでも見つかったか」であって、
+    // 数え上げの打ち切り条件ではない（ここを間違えると運死を大幅に取りこぼす）。
+    for (const d of (world.dead?.values?.() ?? [])) {
+      const c = String(d.deathCause ?? '不明');
       by[c] = (by[c] ?? 0) + 1;
       total++;
-      if (c === '戦死') { war++; if (d.deathByLuck) luck++; }
+      if (!/戦死|war/i.test(c)) continue;
+      war++;
+      if (t && (t.war_stat != null || t.war_luck != null)) continue;   // a) を採用済み
+      if (/運|luck|流れ矢/i.test(c) || d.deathByLuck === true) { luck++; marked = true; }
+      else if (/ステ|stat/i.test(c) || d.deathByLuck === false) { stat++; marked = true; }
     }
-    return { total, by, war, luck, luckRatio: war ? luck / war : null };
+
+    // d) 戦闘オブジェクトのユニットに印が付いている場合
+    if (!marked) {
+      for (const b of (world.battles ?? [])) {
+        for (const sideKey of Object.keys(b.sides ?? {})) {
+          for (const u of b.sides[sideKey].units ?? []) {
+            if (!u.dead) continue;
+            if (u.luck === true) { luck++; marked = true; }
+            else if (u.luck === false) { stat++; marked = true; }
+          }
+        }
+      }
+    }
+    // 印が「運だけ」に付く実装なら、残りはステータス由来とみなす
+    if (marked && stat === 0 && war > luck) stat = war - luck;
+    this.caps.deathCause = marked;
+    return { total, by, war, stat, luck, marked, luckRatio: (stat + luck) ? luck / (stat + luck) : null };
   }
 
   observe(world) {
@@ -209,7 +246,10 @@ function birthRecord(child, dad, mom) {
     if (d > 0) above++;
     if (d > best) best = d;
   }
-  let chromDom = 0;
+  // どの染色体で「全座位が親2人超え」が起きたか。番号で残す。
+  // 対抗アーム予算から意図的に外している染色体（sim の ARM_EXEMPT、v2では8番）は
+  // 制覇されても設計違反ではないので、判定側で除外できるよう番号のまま持つ。
+  const chromDomList = [];
   for (const ch of Object.keys(CHROM_GENES)) {
     if (CHROM_GENES[ch].length < 2) continue;     // 可塑は独立座位なので対象外
     let all = true;
@@ -218,7 +258,7 @@ function birthRecord(child, dad, mom) {
       const p = Math.max(dad.genes?.[g] ?? 0, mom.genes?.[g] ?? 0);
       if (c <= p) { all = false; break; }
     }
-    if (all) chromDom++;
+    if (all) chromDomList.push(Number(ch));
   }
   const ps = [], cs = [];
   for (const k of SKILLS) {
@@ -227,7 +267,7 @@ function birthRecord(child, dad, mom) {
   }
   return {
     gen: child.born, id: child.id,
-    minMargin, above, best, chromDom,
+    minMargin, above, best, chromDomList,
     parentSkill: mean(ps), childSkill: mean(cs),
     parentSkillMax: Math.max(...ps), childSkillMax: Math.max(...cs),
   };

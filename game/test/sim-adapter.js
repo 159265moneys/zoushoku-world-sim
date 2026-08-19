@@ -76,6 +76,9 @@ function pack(mod, label, from, notes) {
   api.TICKS_PER_GEN = mod.SIM_CONST?.TICKS_PER_GEN ?? mod.TICKS_PER_GEN ?? 12;
   api.LUCK_SHARE = mod.SIM_CONST?.LUCK_SHARE ?? mod.LUCK_SHARE ?? 0.10;
   api.PROFILES = mod.PROFILES ?? mod.RIVAL_PROFILES ?? null;
+  // 対抗アーム予算から意図的に外している染色体。連鎖の検査がここを除外して数える。
+  api.ARM_EXEMPT = mod.SIM_CONST?.ARM_EXEMPT ?? mod.ARM_EXEMPT ?? new Set();
+  api.TRACKED_MIND = mod.TRACKED_MIND ?? null;
   api.__mod = mod;
   return { api, impl: label, from, missing, notes: notes ?? [] };
 }

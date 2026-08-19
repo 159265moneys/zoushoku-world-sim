@@ -407,10 +407,12 @@ function emit(w, kind, o = {}) {
 
 function recompute(w) {
   let cons = 0, yield_ = 0;
+  // 産出と消費の釣り合い。素質が未発現・練度0の初期状態でも、
+  // 働き手が半分いれば黒字になるところから始める（そうしないと村が必ず餓死する）。
   for (const p of w.people.values()) {
-    cons += 0.62 + 0.32 * p.genes['代謝'];
-    if (p.role === ROLE.FARM) yield_ += 1.55 * (0.35 + 0.65 * farmPower(p));
-    else if (p.role === ROLE.HUNT) yield_ += 1.05 * (0.35 + 0.65 * (0.5 * farmPower(p) + 0.5 * warPower(p)));
+    cons += (p.age < AGE_ADULT ? 0.30 : 0.55) + 0.25 * p.genes['代謝'];
+    if (p.role === ROLE.FARM) yield_ += 3.6 * (0.35 + 0.65 * farmPower(p));
+    else if (p.role === ROLE.HUNT) yield_ += 2.4 * (0.35 + 0.65 * (0.5 * farmPower(p) + 0.5 * warPower(p)));
   }
   const n = w.people.size;
   w.density = n / TARGET_POP;
@@ -854,8 +856,13 @@ function breed(w, rng, ev) {
     s += 0.35 * p.merit;                            // 戦功。逃げた者は下がる
     s += 0.25 * (p.genes['繁殖性'] - 0.5);
     s -= 0.9 * p.load;                              // 劣性ホモの荷重
-    if (!w.cfg.noFrequencyDependence) {
-      const d = derive(p);
+    const d = derive(p);
+    if (w.cfg.noFrequencyDependence) {
+      // サボタージュ：頻度に依らず常に得をする＝上限なしの上位互換。
+      // 利得だけ残して罰を外す。こうすると私欲と怠惰は集団に固定するはずで、
+      // 頻度依存の検査がそれを捕まえられなければ検査は空振りということになる。
+      s += d.強欲 * 0.55 + d.怠惰 * 0.45;
+    } else {
       // 私欲：食料が潤沢なら得、蔓延すると奪う先が消えて損（設計文書）
       s += d.強欲 * clamp(foodPer, 0, 2) * 0.30 - d.強欲 * meanGreed * 0.75;
       // 怠惰：本人は消耗しないが、蔓延すると全員飢える
@@ -867,7 +874,10 @@ function breed(w, rng, ev) {
   females.sort((a, b) => score(b) - score(a));
 
   const capacity = clamp01((TARGET_POP * 1.35 - w.people.size) / TARGET_POP);
-  const foodOk = clamp01(0.25 + w.food / 90);
+  const foodOk = clamp01(0.35 + w.food / 70);
+  // フェーズ1（2体から10体まで）は繁殖力を持ち上げる。
+  // 創世の二匹だけで置換率を超えられないと、村は毎回ボトルネックで消える。
+  const smallBoost = w.people.size < 12 ? 2.6 : 1;
   const pairs = Math.min(males.length, females.length);
   let born = 0;
   for (let i = 0; i < pairs; i++) {
@@ -875,7 +885,7 @@ function breed(w, rng, ev) {
     if (w.closed && (dad.foreign || mom.foreign)) continue;
     const fert = 0.55 * (dad.genes['繁殖性'] + mom.genes['繁殖性']) * prof.fecundity;
     const rank = 1 - i / Math.max(1, pairs);      // 上位ほど繁殖機会が多い
-    const n = fert * capacity * foodOk * (0.45 + 0.9 * rank) * 1.9;
+    const n = fert * capacity * foodOk * (0.45 + 0.9 * rank) * 1.9 * smallBoost;
     let k = Math.floor(n);
     if (rng.next() < n - k) k++;
     for (let c = 0; c < k && w.people.size < HARD_CAP; c++) {
