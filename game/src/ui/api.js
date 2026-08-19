@@ -8,36 +8,29 @@
 // UI のコードは一切変えない。ズレはすべてこのファイルに閉じ込める。
 
 import * as mock from './mock.js';
+import { makeAdapter, setRoster } from './adapter.js';
 
-const DEFAULT_SOURCE = 'mock';
+const DEFAULT_SOURCE = 'sim';
 
 const params = new URLSearchParams(location.search);
 const want = params.get('sim') || DEFAULT_SOURCE;
 
 let real = null;
-if (want === 'sim' || want === 'real') {
+if (want !== 'mock') {
   try { real = await import('../sim/index.js'); }
   catch (e) { console.warn('[api] src/sim の読み込みに失敗したので mock を使う', e); real = null; }
 }
 
-// 本物の sim の名前 -> UI が呼んでいる名前
-const ALIAS = {
-  powerOf: 'citizenPower',
-  nationPower: 'rankNation',
-  canonize: 'setCanon',
-  stepRoster: 'advanceRoster',
-  createRoster: 'createRoster',
-  listOpponents: 'listOpponents',
-  peek: 'peek',
-};
+// 本物の sim は world も battle も UI とは違う形を持っている。
+// 名前の別名だけでは足りないので、adapter.js が形ごと写す。
+const bridge = real ? makeAdapter(real) : null;
 
-const filled = new Set();   // 本物に無くて mock で埋めた名前
+const filled = new Set();   // 本物にも adapter にも無くて mock で埋めた名前
 
 function resolve(k) {
-  if (real) {
+  if (bridge) {
+    if (k in bridge && bridge[k] !== undefined) return bridge[k];
     if (k in real && real[k] !== undefined) return real[k];
-    const a = ALIAS[k];
-    if (a && a in real && real[a] !== undefined) return real[a];
   }
   if (k in mock) { if (real) filled.add(k); return mock[k]; }
   return undefined;
@@ -51,6 +44,9 @@ export const api = new Proxy({}, {
 export const SIM_SOURCE = real ? 'sim' : 'mock';
 export const SIM_FILLED = filled;
 export const rawSim = real;
+
+/** roster を adapter に預ける（startWar が相手の world を引くのに要る） */
+export function registerRoster(roster) { setRoster(roster); }
 
 if (real) {
   // どの関数が mock 由来のままかを起動時に一度だけ出す（無言で混ざるのが一番危ない）

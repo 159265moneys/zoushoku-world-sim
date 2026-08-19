@@ -1,7 +1,7 @@
 // 画面のシェル。ルーティング・ループ・トップバー。
 // 依存の向きは ui -> sim -> core の一方向。sim へは必ず api.js 越しに触る。
 
-import { api, SIM_SOURCE } from './api.js';
+import { api, SIM_SOURCE, registerRoster } from './api.js';
 import { RNG } from '../core/rng.js';
 import { PHASE, ROLE, BUREAU_LABEL } from '../core/model.js';
 import { el, clear, num, pct, toast } from './dom.js';
@@ -59,6 +59,7 @@ function boot(answers, mode) {
   seedCards(api, state.world);
   try { state.roster = api.createRoster ? api.createRoster(SEED) : null; }
   catch (e) { console.warn('roster 生成に失敗', e); state.roster = null; }
+  registerRoster(state.roster);
 
   const badge = document.getElementById('sim-badge');
   badge.textContent = SIM_SOURCE === 'sim' ? 'sim' : 'mock sim';

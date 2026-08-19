@@ -4,7 +4,7 @@
 // 開発用のデバッグトグルを付けてあり、オンにすると思想名・人口・血統の色・内訳が見える。
 
 import { el, clear, modal, num, mount } from '../dom.js';
-import { lineageHue, swatchColor, strainName } from '../color.js';
+import { lineageHue, swatchColor, strainName, homeHue } from '../color.js';
 
 export function openOpponents(ctx, onPick) {
   const { world, api, state } = ctx;
@@ -18,7 +18,7 @@ export function openOpponents(ctx, onPick) {
     clear(body);
 
     body.appendChild(el('div', { class: 'card', style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-      dot(world.strains.self.hue, 22),
+      dot(homeHue(world), 22),
       el('div', { style: { flex: 1 } },
         el('h4', { style: { margin: 0 } }, world.name),
         el('p', {}, `第 ${world.gen} 世代 ・ ${world.people.size} 体`)),
@@ -68,9 +68,9 @@ export function openOpponents(ctx, onPick) {
       // 混ざるとどうなるかを色で見せる
       card.appendChild(el('div', { class: 'ctl', style: { marginTop: '7px', gap: '9px' } },
         el('span', { class: 'mut', style: { fontSize: '10px' } }, '混ざると'),
-        dot(world.strains.self.hue, 13), el('span', { class: 'mut' }, '＋'), dot(o.hue, 13),
-        el('span', { class: 'mut' }, '→'), dot(blend(world.strains.self.hue, o.hue), 15),
-        el('span', { class: 'mut' }, '→'), dot(blend(world.strains.self.hue, blend(world.strains.self.hue, o.hue)), 13),
+        dot(homeHue(world), 13), el('span', { class: 'mut' }, '＋'), dot(o.hue, 13),
+        el('span', { class: 'mut' }, '→'), dot(blend(homeHue(world), o.hue), 15),
+        el('span', { class: 'mut' }, '→'), dot(blend(homeHue(world), blend(homeHue(world), o.hue)), 13),
         el('span', { class: 'mut', style: { fontSize: '10px' } }, '（世代が進むほど中間色が増える）'),
       ));
 

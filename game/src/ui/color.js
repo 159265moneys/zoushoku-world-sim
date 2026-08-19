@@ -16,6 +16,22 @@ export function hashHue(key) {
   return 60 + ((h >>> 0) % 240);
 }
 
+/**
+ * 自国の血統キー。mock は 'self'、本物の sim は 'home' を使う。
+ * どちらでも通るように world から引く。
+ */
+export function homeStrainKey(world) {
+  if (world && world.originKey) return world.originKey;
+  if (world && world.strains) {
+    if (world.strains.self) return 'self';
+    if (world.strains.home) return 'home';
+  }
+  return 'self';
+}
+
+/** 自国の色相 */
+export function homeHue(world) { return strainHue(world, homeStrainKey(world)); }
+
 /** 血統キー -> 色相。プレイヤーの自国は赤(0)。他国の世界を覗くときはその国の色。 */
 export function strainHue(world, key) {
   const s = world && world.strains && world.strains[key];
