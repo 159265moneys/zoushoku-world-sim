@@ -17,6 +17,9 @@ export const CARDS = [
   { id: 'frontier',     bureau: BUREAU.CIVIL,    label: 'N%の家系を辺境へ',    min: 0,  max: 100, step: 10, def: 20, unit: '%' },
   { id: 'ration_equal', bureau: BUREAU.CIVIL,    label: '配給を平等にする',    min: 0,  max: 100, step: 10, def: 50, unit: '%' },
   { id: 'hereditary',   bureau: BUREAU.CIVIL,    label: '世襲を尊重する',      min: 0,  max: 100, step: 10, def: 50, unit: '%' },
+  // フェーズ2の第一問。0＝隔離して純血を保つ / 100＝混ぜて雑種強勢を取る。
+  // 「100体の段階で融和か優生かを選ばされる。しかも読める規模で」
+  { id: 'mix_policy',   bureau: BUREAU.CIVIL,    label: '外来血を混ぜる',      min: 0,  max: 100, step: 10, def: 50, unit: '%' },
 ];
 
 export const CARD_BY_ID = new Map(CARDS.map((c) => [c.id, c]));

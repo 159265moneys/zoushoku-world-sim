@@ -105,5 +105,9 @@ export const ROUT_FLED_DEATH = 0.30;  // 敗走時、逃げていた個体の基
 export const ROUT_FLED_CROWD = 0.28;  // ＋逃走率に比例して上がる分（頻度依存の本体）
 export const ROUT_HELD_DEATH = 0.11;  // 敗走時、踏み止まっていた個体の死亡率
 
+// 初戦（10体到達時の強制戦争）の規模。設計の看板の場面なので固定する。
+// 「5対5なら、攻撃力天才が恐怖で固まって死ぬのを目撃できる」
+export const FIRST_WAR_SIZE = 5;
+
 // --- 捕虜 ---
 export const CAPTIVE_COUNT = { 1: [1, 1], 2: [1, 5] };

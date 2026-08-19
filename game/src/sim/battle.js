@@ -7,7 +7,7 @@
 //  ・降伏はオーナー裁定。代価は戦況の関数。資源が動くのは降伏のときだけ
 
 import { RNG } from '../core/rng.js';
-import { ROLE, DISTRICT, blankSkills, makeIndividual } from '../core/model.js';
+import { ROLE, DISTRICT, PHASE, blankSkills, makeIndividual } from '../core/model.js';
 import { GENE_NAMES } from '../core/genes.js';
 import * as C from './constants.js';
 import { foundingGenome, phenotype, homozygosity } from './genetics.js';
@@ -34,7 +34,9 @@ export function makeGhost(seed, phase = 1, power = 1) {
   const rng = new RNG((seed >>> 0) || 1);
   const key = 'ghost' + (seed >>> 0);
   const name = GHOST_NAMES[rng.int(GHOST_NAMES.length)] + '国';
-  const n = phase === 1 ? 5 + rng.int(4) : 12 + rng.int(28);
+  // フェーズ1の相手は「隣の村」であって国ではない。人数も練度もこちらと同格にする
+  const village = phase === PHASE.VILLAGE;
+  const n = village ? C.FIRST_WAR_SIZE + rng.int(4) : 12 + rng.int(28);
   // 国ごとに遺伝子の狙いを振る＝国の性格。同じ相手ばかりにならない
   const targets = {};
   for (const g of GENE_NAMES) targets[g] = clamp01(rng.range(0.2, 0.8));
@@ -43,7 +45,7 @@ export function makeGhost(seed, phase = 1, power = 1) {
     const hap = foundingGenome(targets, rng, 0.18);
     const genes = phenotype(hap);
     const ind = makeIndividual(`${key}#${i}`, name.slice(0, 2) + 'の' + (i + 1), {
-      genes, skills: blankSkills(), age: 2 + rng.int(5), sex: rng.int(2),
+      genes, skills: blankSkills(), age: 2 + rng.int(village ? 3 : 5), sex: rng.int(2),
       district: rng.bool(0.4) ? DISTRICT.FRONTIER : DISTRICT.CENTER,
       lineage: { [key]: 1 },
     });
@@ -55,9 +57,13 @@ export function makeGhost(seed, phase = 1, power = 1) {
     ind.regimeGrudge = clamp01(rng.range(0, 0.35));
     ind.ledger = [];
     ind.motive = {};
-    // その国の環境が開いた素質しか国民力には出ない
-    ind.expressed = { war: rng.bool(0.35 + 0.4 * power), prod: rng.bool(0.6) };
-    for (const s of Object.keys(ind.skills)) ind.skills[s] = clamp01(rng.range(0, 0.55) * power);
+    // その国の環境が開いた素質しか国民力には出ない。
+    // 村どうしの初戦では、向こうも練度が浅い（＝素質と練度の差が見える場面になる）
+    ind.expressed = village
+      ? { war: rng.bool(0.4), prod: rng.bool(0.6) }
+      : { war: rng.bool(0.35 + 0.4 * power), prod: rng.bool(0.6) };
+    const skillCap = village ? 0.30 : 0.55;
+    for (const s of Object.keys(ind.skills)) ind.skills[s] = clamp01(rng.range(0, skillCap) * power);
     ind.power = citizenPower(ind);
     people.push(ind);
   }
@@ -138,9 +144,17 @@ function buildSide(name, inds, key) {
 }
 
 export function startWar(world, rng, opponent) {
-  const mine = selectDeployment(world, rng);
+  // 初戦＝10体到達時の強制戦争。ここだけは同格・同規模にする。
+  //
+  // 「5対5なら、攻撃力天才が恐怖で固まって死ぬのを目撃できる。素質と練度が
+  //  別物だという設計を、チュートリアルなしで教えられる」——看板の場面なので、
+  // 派遣カードにも相手の規模にも左右させない。4対19では個体が識別できない。
+  const firstWar = world.phase === PHASE.VILLAGE && !world.firstWarDone;
+  const mine = firstWar ? selectFirstWarForce(world) : selectDeployment(world, rng);
   const guards = Math.round(cardOr(world, 'guards', 0));
-  const theirs = pickEnemyForce(opponent, rng);
+  const theirs = firstWar
+    ? matchEnemyForce(opponent, mine.length)
+    : pickEnemyForce(opponent, rng);
 
   const home = buildSide('自国', mine, 'home');
   const away = buildSide(opponent.name || '敵国', theirs, 'away');
@@ -159,6 +173,9 @@ export function startWar(world, rng, opponent) {
   const battle = {
     id: `w${world.gen}-${world.battles.length}`,
     gen: world.gen, worldSeed: world.seed,
+    // 開戦時のフェーズを持っておく。捕虜の人数はこれで決まるので、
+    // 戦後にフェーズが上がっても captiveOptions と takeCaptives が食い違わない
+    phase: world.phase, firstWar,
     opponentKey: opponent.key, opponentName: opponent.name,
     sides: { home, away },
     round: 0, over: false, outcome: null, pursuit: false,
@@ -170,6 +187,38 @@ export function startWar(world, rng, opponent) {
     text: `${opponent.name}と戦になった（${home.units.length}対${away.units.length}）`,
   });
   return battle;
+}
+
+/**
+ * 初戦の自軍。派遣カードを通さず5体を揃える。
+ *
+ * 人口10の村に成人は4人しかいないことが多い（残りは子ども）。
+ * 足りない分は年長の子どもで埋める——これは手抜きではなく設計そのもので、
+ * 「将来の名将は、一番死にやすい時期に戦場へ出さないと育たない」に対応する。
+ * 恐怖耐性と統率は実戦でしか本命が伸びないので、初戦は育成の機会でもある。
+ */
+export function selectFirstWarForce(world) {
+  const all = [...world.people.values()].filter((p) => !p.wounded);
+  const adults = all.filter((p) => p.age >= C.ADULT_AGE);
+  adults.sort((a, b) => citizenPower(b) - citizenPower(a));
+  const picked = adults.slice(0, C.FIRST_WAR_SIZE);
+  if (picked.length < C.FIRST_WAR_SIZE) {
+    const youths = all
+      .filter((p) => p.age >= 1 && p.age < C.ADULT_AGE)
+      .sort((a, b) => citizenPower(b) - citizenPower(a));
+    for (const y of youths) {
+      if (picked.length >= C.FIRST_WAR_SIZE) break;
+      picked.push(y);
+    }
+  }
+  return picked;
+}
+
+/** 初戦の敵軍。こちらと同数・上位から。規模で殴り合いにしない。 */
+function matchEnemyForce(opponent, n) {
+  const pool = [...opponent.people].filter((p) => p.alive !== false);
+  pool.sort((a, b) => citizenPower(b) - citizenPower(a));
+  return pool.slice(0, Math.max(1, Math.min(n, pool.length)));
 }
 
 function pickEnemyForce(opponent, rng) {
@@ -430,15 +479,26 @@ export const CAPTIVE_AXES = [
   { key: '頑健', label: '頑健', score: (p) => p.genes.頑健 + 0.4 * p.genes.寿命 },
 ];
 
+/** その戦で引ける捕虜の人数。開戦時のフェーズで決まる。 */
+export function captiveRange(battle) {
+  return C.CAPTIVE_COUNT[battle?.phase ?? 1] || C.CAPTIVE_COUNT[1];
+}
+
 /** 勝者だけが軸を1本選べる。指名ではないので当たり外れは残るが、方向は選べる。 */
 export function captiveOptions(battle) {
   const won = battle.outcome && battle.outcome.winner === 'home';
   const survivors = battle.sides.away.units.filter((u) => !u.dead).length;
+  // 人数は takeCaptives とまったく同じ出所から出す。
+  // 別々に計算していたため「1体と表示して3〜5体返る」という食い違いが起きていた
+  const [lo, hi] = captiveRange(battle);
   return {
     axes: won ? CAPTIVE_AXES.map((a) => ({ key: a.key, label: a.label })) : [],
     winner: !!won,
     pool: won ? '平均より上' : '全プール',
     survivors,
+    min: Math.min(lo, survivors), max: Math.min(hi, survivors),
+    count: Math.min(lo, survivors),   // 確定人数（lo===hi のフェーズ1はこれがそのまま）
+    exact: lo === hi,
     note: won ? '軸を1つ選ぶと、相手の平均より上のプールから抽選する' : '敗者は相手の全プールから抽選する',
   };
 }
@@ -463,7 +523,7 @@ export function takeCaptives(world, battle, axis, rng, mySide = 'home') {
   // 殲滅した瞬間、自分の報酬が消える
   if (!alive.length) { battle[cacheKey] = []; return []; }
 
-  const [lo, hi] = C.CAPTIVE_COUNT[world.phase] || [1, 1];
+  const [lo, hi] = captiveRange(battle);
   const n = Math.min(alive.length, lo + rng.int(hi - lo + 1));
 
   let pool = alive;
@@ -632,6 +692,11 @@ export function settleWar(world, battle, rng, opts = {}) {
   applyDelta(world, world, '民心', won ? 0.08 : -0.15, ev.id);
   world.morale = clamp(world.morale + (won ? 0.08 : -0.15), C.MORALE_FLOOR, 1);
   events.push(ev);
+  // 初戦が終わった。これでフェーズ2に上がれる（順番は 10体 → 初戦 → 戦後 → P2）
+  if (battle.firstWar) {
+    world.firstWarDone = true;
+    world.pendingFirstWar = false;
+  }
   battle.summary = { dead, wounded, fled, won, rounds: battle.round };
   return events;
 }

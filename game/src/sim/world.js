@@ -22,7 +22,7 @@ import {
   willingness, acceptance, clamp, clamp01, combatStats,
 } from './derive.js';
 import { initChronicle, record, applyDelta, inheritLedger, pruneChronicle } from './chronicle.js';
-import { defaultCards, cardOr } from './cards.js';
+import { defaultCards, cardOr, readCard } from './cards.js';
 
 const SEG_OF_ROLE = {
   [ROLE.HUNT]: 'war', [ROLE.DRILL]: 'war', [ROLE.WAR]: 'war',
@@ -67,6 +67,9 @@ export function createWorld(seed, answers = [], opts = {}) {
   // それが結果として血の濃さを決める（ラマルクではなくダーウィン経路）。
   w.mating = { foreignBias: 0, inbreedGuard: 0.0, prefer: null };
   w.fertBias = 1;
+  w.reachedThreshold = false; // 一度でも10体に達したか（初戦の損耗で割り込んでも戻らない）
+  w.firstWarDone = false;     // 強制戦争（初戦）を終えたか。フェーズ2の前提条件
+  w.pendingFirstWar = false;  // 10体に達したがまだ戦っていない＝UIが初戦を出す合図
   w.answers = answers;
   w.collapsing = false;
   w.rebellions = 0;
@@ -399,10 +402,34 @@ export function advanceGeneration(w, rng) {
   if (reb) events.push(reb);
 
   // 8. フェーズ移行
-  if (w.phase === PHASE.VILLAGE && w.people.size >= PHASE_THRESHOLD[1]) {
-    w.phase = PHASE.TRIBE;
-    events.push(record(w, 'フェーズ移行', { text: '村が部族になった。もう一人ずつ手で置くことはできない' }));
+  //
+  // 順番は「10体到達 → 初戦 → 戦後処理 → フェーズ2」。
+  // 人口だけで上げていたときは、初戦より先に部族フェーズへ入ってしまい、
+  // 配役タブが消えたあとに初戦が来ていた。設計はその逆で、
+  // フェーズ2は**外来血の流入で幕を開ける**——初戦で連れ帰った1体が幕開けそのもの。
+  if (w.people.size >= PHASE_THRESHOLD[1]) w.reachedThreshold = true;
+  if (w.phase === PHASE.VILLAGE && w.reachedThreshold) {
+    if (!w.firstWarDone) {
+      // 強制戦争。閾値に達したがまだ戦っていない。ここで足踏みさせる
+      if (!w.pendingFirstWar) {
+        w.pendingFirstWar = true;
+        events.push(record(w, '初戦の予兆', {
+          text: '村が10体に達した。隣のシャーレが見えている',
+        }));
+      }
+    } else {
+      w.phase = PHASE.TRIBE;
+      w.pendingFirstWar = false;
+      events.push(record(w, 'フェーズ移行', {
+        text: '村が部族になった。もう一人ずつ手で置くことはできない',
+      }));
+    }
   }
+
+  // 「敷く」：融和か隔離か。カードがオンのときだけオーナーの数字が通る
+  //（ライバル国はカードを使わず profile が直接 foreignBias を持つので干渉しない）
+  const mix = readCard(w, 'mix_policy');
+  if (mix != null) w.mating.foreignBias = clamp((mix - 50) / 50, -1, 1);
 
   // 9. 世代ログの確定。粛清は世代の途中（具申の裁定やライバル国の手番）でも起きるので
   //    カウンタに溜めておき、ここで新しい世代の目盛りに書き込む
@@ -505,12 +532,17 @@ function breedGeneration(w, rng) {
           * foodFactor * (0.45 + 0.55 * w.morale) * (1 - clamp01(mother.fatigue) * 0.3)
           * (mother.vitality ?? 1)    // 腐った血統は子も残せなくなる
           * preferenceMatch(w, mother);
+    const father = chooseMate(w, mother, males, rng);
+    if (!father) continue;
+    // 融和／隔離は「その組み合わせが成立するか」に効く。
+    // 相手選びの重みにしか掛けていなかったとき、外来の女は候補が全員よそ者なので
+    // 全候補が同じ係数で割られ、正規化された抽選では何も起きなかった——
+    // 隔離政策なのに外来の血が母系から素通りしていた。
+    p *= originFactor(w, father, mother);
     p = clamp(p, 0, 3.2);
     let n = Math.floor(p);
     if (rng.bool(p - n)) n++;
     if (n <= 0) continue;
-    const father = chooseMate(w, mother, males, rng);
-    if (!father) continue;
     mother.mated = true; father.mated = true;
     for (let i = 0; i < n && w.people.size < C.MAX_POP; i++) {
       events.push(birth(w, father, mother, rng, pFemale));
@@ -545,10 +577,7 @@ function chooseMate(w, mother, males, rng) {
     // オーナーが引き上げた形質は、地位を通して血が濃くなる
     s *= preferenceMatch(w, m);
     // 血統の好み。純血路線は外来血を避け、融和路線は寄せる
-    const same = (m.origin === mother.origin);
-    const bias = w.mating.foreignBias;
-    if (bias > 0) s *= same ? 1 : 1 + bias * 1.6;
-    if (bias < 0) s *= same ? 1 : Math.max(0.02, 1 + bias * 1.2);
+    s *= originFactor(w, m, mother);
     // 個人怨恨は結ばれない
     if (mother.grudges[m.id] > 0.4 || m.grudges[mother.id] > 0.4) s *= 0.15;
     // 村は狭い。近い血ほど結ばれやすく、その結果として劣性ホモが溜まる。
@@ -583,6 +612,17 @@ function preferenceMatch(w, ind) {
   let m = 1;
   for (const g in pref) m *= 1 + pref[g] * ((ind.genes[g] ?? 0.5) - 0.5);
   return clamp(m, 0.04, 12);
+}
+
+/**
+ * 出自の異なる者どうしの結ばれやすさ。
+ * mix_policy カード（0＝隔離 … 100＝融和）が world.mating.foreignBias を動かす。
+ * 「100体の段階で融和か優生かを選ばされる。しかも読める規模で」——フェーズ2の第一問。
+ */
+function originFactor(w, a, b) {
+  const bias = w.mating.foreignBias || 0;
+  if (!bias || a.origin === b.origin) return 1;
+  return bias > 0 ? 1 + bias * 1.6 : Math.max(0.05, 1 + bias * 0.95);
 }
 
 /**
@@ -976,7 +1016,7 @@ export function recomputeAggregates(w) {
   const pop = w.people.size;
   const st = { gen: w.gen, pop, food: w.food, morale: w.morale, yield: w.yieldRate, consumption: w.consumption };
   if (!pop) { st.power = 0; st.homoz = 0; st.grudge = 0; st.foreign = 0; w.stats.push(st); w.powerIndex = 0; return st; }
-  let power = 0, homoz = 0, grudge = 0, foreign = 0;
+  let power = 0, homoz = 0, grudge = 0, foreign = 0, admix = 0, pure = 0;
   const geneSum = {};
   for (const n of GENE_NAMES) geneSum[n] = 0;
   for (const p of w.people.values()) {
@@ -984,12 +1024,20 @@ export function recomputeAggregates(w) {
     homoz += p.homoz ?? 0;
     grudge += clamp01(p.regimeGrudge);
     foreign += 1 - (p.lineage[w.originKey] ?? 0);
+    // 同化のメーター。色が混ざる＝遺伝が混ざる、が比喩ではなく同じ処理になる。
+    // 外来血の「量」とは別物で、隔離政策では量が多いまま混血度だけがゼロに張り付く（＝斑）
+    let top = 0;
+    for (const k in p.lineage) if (p.lineage[k] > top) top = p.lineage[k];
+    admix += 1 - top;
+    if (top > 0.95) pure++;
     for (const n of GENE_NAMES) geneSum[n] += p.genes[n];
   }
   st.power = power / pop;
   st.homoz = homoz / pop;
   st.grudge = grudge / pop;
   st.foreign = foreign / pop;
+  st.admixture = admix / pop;   // 0＝単色/斑、0.5＝完全な混色
+  st.pure = pure / pop;         // 純血個体の割合
   st.genes = {};
   for (const n of GENE_NAMES) st.genes[n] = geneSum[n] / pop;
   w.stats.push(st);
