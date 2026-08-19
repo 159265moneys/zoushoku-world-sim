@@ -4,13 +4,18 @@
 
 import { el, clear, seg, toast, mount } from '../dom.js';
 
+// kind は sim が record() で書いている文字列そのもの。
+// ここを推測で書くと、絞り込みが静かに空になる（例外は出ない）。
 const KIND_GROUPS = [
   { label: 'すべて', kinds: null },
-  { label: '生死', kinds: ['出生', '死亡', '成熟', '負傷', '発現'] },
-  { label: '統治', kinds: ['配役', '移住', '任命', '具申可否', '正史'] },
-  { label: '戦争', kinds: ['戦闘', '捕虜', '受入', '誅殺', '送還'] },
-  { label: '原因不明', kinds: ['産出低下', '怨恨'] },
+  { label: '生死', kinds: ['誕生', '死亡', '発現', '潜伏形質の発現'] },
+  { label: '統治', kinds: ['配役', '移住', '任命', '裁定', '粛清', '一揆'] },
+  { label: '戦争', kinds: ['開戦', '戦終', '捕虜', '帰化', '誅殺', '送還'] },
+  { label: '節目', kinds: ['創世', '初戦の予兆', 'フェーズ移行'] },
 ];
+
+const BAD_KINDS = new Set(['死亡', '誅殺', '粛清', '一揆', '隠匿']);
+const HI_KINDS = new Set(['フェーズ移行', '創世', '帰化', '初戦の予兆']);
 
 export function renderChronicle(ctx, node) {
   const { world, api, state } = ctx;
@@ -41,7 +46,7 @@ export function renderChronicle(ctx, node) {
     } });
     mount(card, 
       el('div', { style: { display: 'flex', gap: '7px', alignItems: 'baseline' } },
-        el('span', { class: 'tag' + (e.kind === '産出低下' ? ' bad' : e.kind === '正史' ? ' ac' : '') }, e.kind),
+        el('span', { class: 'tag' + (BAD_KINDS.has(e.kind) ? ' bad' : HI_KINDS.has(e.kind) ? ' ac' : '') }, e.kind),
         el('span', { style: { flex: 1, fontSize: '11.5px' } }, e.text || ''),
       ),
       e.canon ? el('p', { class: 'hint', style: { color: '#5fe3c4' } }, `正史：${e.canon}`) : null,

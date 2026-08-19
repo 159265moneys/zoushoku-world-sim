@@ -102,11 +102,22 @@ export function adaptWorld(w) {
     foreign: s.foreign ?? 0,       // 外来血の量。混ざり具合ではない
   })));
 
-  // 同化の現在値。history の最後（＝最新世代の集計）。
+  // 同化の現在値。stats の最終行は「前の世代境界で焼いた値」なので、
+  // 捕虜を入れた直後に読むと入国前の数字が出る。いま画面に映っている個体から出す。
   def('mixState', () => {
-    const h = w.stats || [];
-    const s = h[h.length - 1] || {};
-    return { admixture: s.admixture ?? 0, pure: s.pure ?? 1, foreign: s.foreign ?? 0 };
+    const home = w.originKey || 'home';
+    let admix = 0, pure = 0, foreign = 0, n = 0;
+    for (const p of w.people.values()) {
+      const L = p.lineage || {};
+      let top = 0;
+      for (const k in L) if (L[k] > top) top = L[k];
+      admix += 1 - top;
+      if (top > 0.95) pure++;
+      foreign += 1 - (L[home] ?? 0);
+      n++;
+    }
+    if (!n) return { admixture: 0, pure: 1, foreign: 0 };
+    return { admixture: admix / n, pure: pure / n, foreign: foreign / n };
   });
 
   // 3. 国境で待っている捕虜。sim は Map、UI は配列。
@@ -515,7 +526,17 @@ export function makeAdapter(sim) {
 
   A.borderDecision = (w, id, decision) => {
     const d = BORDER_DECISION[decision] || 'accept';
+    const cap = w.border instanceof Map ? w.border.get(id) : null;
     const e = sim.borderDecision(w, id, d);
+    // 帰化した個体に「よそ者」の印を残す。sim は immigrant / fromNation で持つが、
+    // 画面（個体パネルの外来タグ、シャーレの白い縁）が読むのは foreign / homeName。
+    if (d === 'accept' && e && e.target != null) {
+      const ind = w.people.get(e.target);
+      if (ind) {
+        ind.foreign = true;
+        ind.homeName = ind.fromNation || (cap && cap.fromNation) || ind.homeName;
+      }
+    }
     refreshWarReady(w);
     return e;
   };
@@ -551,7 +572,23 @@ export function makeAdapter(sim) {
     return { pct, label: `上位 ${pct}%`, value: Math.round(p) };
   };
 
-  A.petitions = (w, rng) => adaptPetitions(sim.petitions(w, rng), w);
+  // sim の petitions() は「読む」関数ではなく **「湧かせる」関数** で、呼ぶたびに
+  // 新しい具申を作り、world.petitions に積み、RNG を消費する。
+  // 画面はタブのバッジ・具申タブ・帰還報告から**毎回の再描画で**これを読むので、
+  // 素通しにすると
+  //   ・クリックのたびに具申が増える（同じ局長が同じことを何度も言う）
+  //   ・乱数列が「何回描画したか」に依存して、同じ種から同じ歴史が出なくなる
+  // 湧かせるのは1世代に1回だけ。あとは world.petitions を読むだけにする。
+  const PETITION_GEN = new WeakMap();   // world -> 最後に湧かせた世代
+  A.petitions = (w, rng) => {
+    if (PETITION_GEN.get(w) !== w.gen) {
+      PETITION_GEN.set(w, w.gen);
+      try { sim.petitions(w, rng); } catch (e) { console.warn('[adapter] petitions', e); }
+    }
+    const all = w.petitions instanceof Map ? [...w.petitions.values()] : [];
+    const pending = all.filter(p => !p.resolved).sort((a, b) => (b.gen ?? 0) - (a.gen ?? 0));
+    return adaptPetitions(pending.slice(0, 6), w);
+  };
   A.resolvePetition = (w, id, ok, rng) => {
     // sim 側の id が数値なら戻す
     const n = Number(id);
@@ -560,6 +597,21 @@ export function makeAdapter(sim) {
   };
 
   A.canonize = (w, id, text, opts) => (sim.setCanon || sim.canonize)?.(w, id, text, opts);
+
+  // 年代記の絞り込み。名前が違う（UI: kinds/genMin/genMax、sim: kind/minGen/maxGen）。
+  // 素通しにしていたとき、**絞り込みが黙って全部無視されていた**。
+  // 例外も出ないし件数も返るので、画面を見ているだけでは気づけない。
+  A.chronicle = (w, f = {}) => sim.chronicle(w, {
+    kind: f.kinds && f.kinds.length ? f.kinds : (f.kind || undefined),
+    minGen: f.genMin ?? f.minGen ?? undefined,
+    maxGen: f.genMax ?? f.maxGen ?? undefined,
+    actor: f.actor ?? undefined,
+    target: f.target ?? undefined,
+    involving: f.involving ?? undefined,
+    text: f.text ?? undefined,
+    desc: f.desc ?? true,        // 画面は新しい順に読む
+    limit: f.limit ?? undefined,
+  }) || [];
 
   A.powerOf = (ind) => sim.citizenPower(ind);
 
@@ -609,7 +661,7 @@ export function makeAdapter(sim) {
   // 素通しでよいもの
   // 注意：ここに setCard / search を入れてはいけない。上で包んだものが潰される。
   for (const k of ['assignRole', 'setDistrict', 'appointBureau',
-    'chronicle', 'traceUp', 'traceDown']) {
+    'traceUp', 'traceDown']) {
     if (typeof sim[k] === 'function' && !(k in A)) A[k] = sim[k];
   }
 

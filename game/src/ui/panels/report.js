@@ -7,7 +7,9 @@ import { PHASE, BUREAU_LABEL } from '../../core/model.js';
 import { renderPetitions } from './petitions.js';
 import { portrait } from '../color.js';
 
-const BIG_KINDS = ['戦闘', '捕虜', '誅殺', '送還', '受入', '任命', '産出低下', 'フェーズ', '正史', '発現'];
+// sim が record() で書いている kind そのもの。推測で書くと静かに空になる。
+const BIG_KINDS = ['開戦', '戦終', '捕虜', '誅殺', '送還', '帰化', '任命', '裁定',
+  '粛清', '一揆', 'フェーズ移行', '初戦の予兆', '発現', '潜伏形質の発現', '移住'];
 
 export function openReport(ctx, { onClose } = {}) {
   const { world, api } = ctx;
@@ -57,7 +59,7 @@ export function openReport(ctx, { onClose } = {}) {
   // ---- 重大イベント
   body.appendChild(el('h3', { class: 'sec' }, `第 ${world.gen} 世代に起きたこと`));
   const evs = api.chronicle(world, { genMin: world.gen, kinds: BIG_KINDS, limit: 40 });
-  const births = api.chronicle(world, { genMin: world.gen, kinds: ['出生'], limit: 99 }).length;
+  const births = api.chronicle(world, { genMin: world.gen, kinds: ['誕生'], limit: 99 }).length;
   const deaths = api.chronicle(world, { genMin: world.gen, kinds: ['死亡'], limit: 99 }).length;
   body.appendChild(el('div', { class: 'kv', style: { marginBottom: '8px' } },
     el('div', { class: 'k' }, '生まれた'), el('div', { class: 'v' }, `${births} 体`),
@@ -109,12 +111,15 @@ function bureauLine(w, key, c) {
     return `「畑は回っています。産出 ${num(w.yieldRate, 2)}／消費 ${num(w.consumption, 2)}。」`;
   }
   if (key === 'military') {
-    const drill = w.cards?.drill_share?.value ?? 0;
+    const drill = w.cards?.drill?.value ?? 0;   // カードidは sim の 'drill'
     if (tone === 'amb') return `「兵の練度が足りません。模擬戦を ${drill}% では話になりません。増やさせてください。」`;
     if (tone === 'pride') return '「軍務に問題はありません。」';
     return `「模擬戦 ${drill}%。戦えるのは ${[...w.people.values()].filter(p => p.role === 'drill' || p.role === 'hunt').length} 体です。」`;
   }
-  const foreign = [...w.people.values()].filter(p => p.foreign).length;
+  const foreign = [...w.people.values()].filter(p => p.immigrant || p.foreign).length;
   if (w.regimeGrudge > 3) return `「民心 ${pct(w.morale)}。不満を口にする者が増えています。」`;
-  return `「民心 ${pct(w.morale)}。外来 ${foreign} 体。混ぜるか隔てるか、そろそろ決めてください。」`;
+  // 「量」ではなく混血度で言う。隔離していると外来が何体いても混ざらない。
+  const mix = w.mixState ? w.mixState.admixture : 0;
+  return `「民心 ${pct(w.morale)}。外来 ${foreign} 体、混血度 ${num(mix, 2)}。`
+    + `混ぜるか隔てるか、そろそろ決めてください。」`;
 }

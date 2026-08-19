@@ -44,7 +44,7 @@ const state = {
   speed: 1, paused: false, selected: null, tab: 'ind',
   castPick: null, openBureau: null, search: null, chron: null,
   battle: null, rosterDebug: false, autoReport: true,
-  firstWarSeen: false, elapsedMs: 0,
+  firstWarSeen: false, elapsedMs: 0, hadForeign: false,
 };
 
 const ctx = {
@@ -90,6 +90,11 @@ function boot(answers, mode) {
   document.getElementById('btn-war').onclick = () => startWarFlow();
 
   if (mode === 2) demoSetup();
+
+  // 時計の原点はここ。オープニングに何分かけていても世界の時間には入れない。
+  // （`last` はモジュール評価時に置かれているので、リセットしないと初回フレームで
+  //   設問に答えていた時間ぶんの tick が一気に流れ込む）
+  last = performance.now(); acc = 0; tickInGen = 0; state.elapsedMs = 0;
 
   setInterval(loop, FRAME_MS);
   refresh();
@@ -147,7 +152,16 @@ function loop() {
 function onGeneration() {
   const w = state.world;
   const wasPhase = w.phase;
+  const wasBureaus = { ...w.bureaus };
   const evs = api.advanceGeneration(w, state.rng) || [];
+
+  // 局長が死んで空位になった。sim はこれを事件として書かないが、
+  // 「叩き起こされる条件」の筆頭なので画面で拾う。空位の局は報告も具申も出さない。
+  for (const k in wasBureaus) {
+    if (wasBureaus[k] != null && w.bureaus[k] == null) {
+      toast(`${BUREAU_LABEL[k]}が空位になった。誰も報告してこない。`, 'bad');
+    }
+  }
   try { if (api.stepRoster) api.stepRoster(state.roster, state.rng); } catch (e) { /* ロスターは無くても続く */ }
 
   // 死亡は世代あたり複数出る。1件ずつ流すとトーストが埋まって他が読めないので束ねる。
@@ -164,6 +178,14 @@ function onGeneration() {
   }
   if (dead.length === 1) toast(dead[0].text, 'bad');
   else if (dead.length > 1) toast(`この世代で ${dead.length} 体が死んだ。`, 'bad');
+
+  // 外来の血が絶えた瞬間。P1の捕虜は1体なので、その1体が子を残す前に死ぬと
+  // 色は単色に戻る。画面から斑が消えたことは、黙って起きてはいけない。
+  const hasForeign = (w.mixState ? w.mixState.foreign : 0) > 0.0001;
+  if (state.hadForeign && !hasForeign) {
+    toast('外来の血が絶えた。色は単色に戻った。', 'bad');
+  }
+  state.hadForeign = hasForeign;
 
   if (w.collapsing) toast('産出率が消費を下回っている。', 'bad');
 

@@ -62,7 +62,8 @@ export function renderInspector(ctx, node) {
   add('練度（平均）', pct(training(ind)));
   add('疲労', pct(ind.fatigue || 0));
   add('未充足の欲', pct(ind.unmet || 0));
-  add('継承した怨恨', num(ind.inheritedGrudge || 0, 2));
+  // sim が持っているのは regimeGrudge（体制怨恨。家系に継承され、本人の死では消えない）。
+  add('体制への怨恨', num(ind.regimeGrudge || 0, 2));
   node.appendChild(kv);
   node.appendChild(el('p', { class: 'hint' }, '国民力に忠誠は含まれない。武力が高く叛意も高い個体は上位に見える。'));
 
