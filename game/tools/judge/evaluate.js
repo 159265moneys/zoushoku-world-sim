@@ -67,7 +67,7 @@ function runEvalOnce(payload, timeoutMs) {
       try {
         const j = JSON.parse(out);
         if (!j || !Array.isArray(j.results)) throw new Error('results 配列が無い');
-        resolve(j.results);
+        resolve({ results: j.results, meta: j.meta || {} });
       } catch (e) {
         reject(new Error(`eval.js の出力が契約と違う: ${e.message}\n先頭: ${out.slice(0, 400)}`));
       }
@@ -200,10 +200,14 @@ export function makeEvaluator({ world = 'real', gens = 200, cache = true, timeou
   if (cache && !fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 
   let calls = 0, rowsOut = 0, cacheHits = 0;
+  // 評価器が自己申告するメタ情報。とくに inertCards（動かしても何も起きないカード）は
+  // 判定の前提そのもの。死んだ次元を距離に混ぜると、挙動が同じ方針が「別の型」に見える。
+  let lastMeta = null;
 
   return {
     fake, world, gens,
     stats: () => ({ calls, rows: rowsOut, cacheHits }),
+    meta: () => lastMeta,
 
     /** policies × seeds × opponents をまとめて評価して行の配列を返す */
     async run(policies, seeds, opponents) {
@@ -221,7 +225,9 @@ export function makeEvaluator({ world = 'real', gens = 200, cache = true, timeou
         const cf = path.join(CACHE_DIR, `${world}-${key}.json`);
 
         if (cache && fs.existsSync(cf)) {
-          out.push(...JSON.parse(fs.readFileSync(cf, 'utf8')));
+          const hit = JSON.parse(fs.readFileSync(cf, 'utf8'));
+          out.push(...(hit.rows || hit));
+          if (hit.meta) lastMeta = hit.meta;
           cacheHits++;
           continue;
         }
@@ -231,11 +237,14 @@ export function makeEvaluator({ world = 'real', gens = 200, cache = true, timeou
           for (const p of batch) for (const s of seeds) for (const o of opponents) {
             rows.push(fakeRow(p, s, o, this.gens, world));
           }
+          lastMeta = { inertCards: [], cardsReadBySim: null, fake: true };
         } else {
-          rows = await runEvalOnce(payload, timeoutMs);
+          const r = await runEvalOnce(payload, timeoutMs);
+          rows = r.results;
+          lastMeta = r.meta;
         }
         calls++;
-        if (cache) fs.writeFileSync(cf, JSON.stringify(rows));
+        if (cache) fs.writeFileSync(cf, JSON.stringify({ rows, meta: lastMeta }));
         out.push(...rows);
         if (!quiet && !fake) {
           process.stderr.write(`  eval: ${Math.min(i + chunk, policies.length)}/${policies.length} 方針\n`);

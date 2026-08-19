@@ -75,15 +75,40 @@ export const FEATURE_NAMES = [
 ];
 
 /**
- * 方針間の距離。1つまみあたりのRMSに正規化するので、値は 0〜1 に収まる。
- * 「0.3」は「16個のつまみが平均して範囲の30%ずれている」と読める。
+ * 死んだ次元のマスク。
+ *
+ * sim にもオーナー層にも読み手がいないカードは、動かしても結果がビット一致する。
+ * これを距離に混ぜると、**挙動が完全に同じ方針が「離れている」ことになり、
+ * クラスタが死にカードの上で割れて勝ち筋の本数が水増しされる。**
+ * 評価器が meta.inertCards で自己申告してくるので、それを唯一の出典にする
+ * （こちらの grep での推測は使わない。オーナー層で配線されているカードもあるため）。
+ */
+let INERT = new Set();
+export function setInertCards(list) { INERT = new Set(list || []); }
+export function getInertCards() { return [...INERT]; }
+export const isInert = (id) => INERT.has(id);
+export function activeKnobCount() { return N_KNOBS - INERT.size; }
+
+/** 死んだカードの成分を0にした特徴ベクトル。距離とクラスタリングはこちらを使う */
+export function encodeActive(policy) {
+  const v = encode(policy);
+  CARD_IDS.forEach((id, i) => { if (INERT.has(id)) v[i] = 0; });
+  return v;
+}
+
+/**
+ * 方針間の距離。**生きているつまみ**1個あたりのRMSに正規化するので 0〜1 に収まる。
+ * 「0.3」は「生きているつまみが平均して範囲の30%ずれている」と読める。
  */
 export function distance(a, b) {
-  const x = Array.isArray(a) ? a : encode(a);
-  const y = Array.isArray(b) ? b : encode(b);
+  const x = Array.isArray(a) ? a : encodeActive(a);
+  const y = Array.isArray(b) ? b : encodeActive(b);
   let s = 0;
-  for (let i = 0; i < x.length; i++) s += (x[i] - y[i]) ** 2;
-  return Math.sqrt(s / N_KNOBS);
+  for (let i = 0; i < x.length; i++) {
+    if (i < CARD_IDS.length && INERT.has(CARD_IDS[i])) continue;
+    s += (x[i] - y[i]) ** 2;
+  }
+  return Math.sqrt(s / Math.max(1, activeKnobCount()));
 }
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : Number.isFinite(x) ? x : 0);

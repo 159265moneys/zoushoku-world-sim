@@ -10,14 +10,19 @@
 //   上位方針の成績が丸ごと過適合になる。
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RNG, mean, cohenD } from './stats.js';
-import { verifySpace, samplePolicy, CARD_IDS, CARD_RANGE, OPPONENTS, CAPTIVE_AXES, BORDERS, PROMOTES } from './space.js';
+import {
+  verifySpace, samplePolicy, CARD_IDS, CARD_RANGE, OPPONENTS,
+  CAPTIVE_AXES, BORDERS, PROMOTES, setInertCards, getInertCards, activeKnobCount,
+} from './space.js';
 import { makeEvaluator, hasRealEvaluator, METRIC_NAMES, GAME_ROOT } from './evaluate.js';
 import {
   buildTable, q1Dominance, q2WinLines, q3OpponentDependence, q4SkillGradient,
-  globalSensitivity, oatSensitivity,
+  globalSensitivity, oatSensitivity, measurementLimits,
 } from './questions.js';
 import { renderReport } from './report.js';
 
@@ -58,6 +63,28 @@ function parseArgs(argv) {
 // 本物の sim を叩いたときの実測。gens=200・並列9 で 1行あたりおよそ1.4秒
 // （種ごとの10国ロスター構築を含む。方針数が増えるほどロスター分は薄まる）
 const SEC_PER_ROW_AT_200 = 1.4;
+
+/**
+ * 測定した時点の sim の指紋。
+ * 探索中に src/sim/ が書き換わっていたことがあるので、**時期をまたいだ絶対値の比較はできない。**
+ * 報告書に指紋を残しておけば、後から「これは別の sim の数字だ」と気づける。
+ */
+function simFingerprint() {
+  const dir = path.join(GAME_ROOT, 'src', 'sim');
+  const h = createHash('sha1');
+  let newest = 0;
+  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.js')).sort()) {
+    const p = path.join(dir, f);
+    h.update(f).update(fs.readFileSync(p));
+    newest = Math.max(newest, fs.statSync(p).mtimeMs);
+  }
+  let rev = null;
+  try {
+    rev = execSync('git rev-parse --short HEAD', { cwd: GAME_ROOT, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+  } catch { /* git が無くても判定は続ける */ }
+  return { hash: h.digest('hex').slice(0, 12), mtime: new Date(newest).toISOString().slice(0, 19).replace('T', ' '), rev };
+}
 
 export function estimateCost(nPolicies, nSeeds, nOpponents, gens) {
   const rows = nPolicies * nSeeds * nOpponents;
@@ -166,10 +193,15 @@ async function synthesizeElite(evaluator, rng, cap, metricName, scale = 1) {
     .map((p, i) => ({ ...p, id: `elite${String(i + 1).padStart(3, '0')}` }));
 }
 
-function verdictLines(q1, q2, q3, q4, meta) {
+function verdictLines(q1, q2, q3, q4, meta, limits) {
   const L = [];
   const dominant = q1.verdict === 'DOMINANT_STRICT' || q1.verdict === 'DOMINANT_TYPE';
-  if (q1.verdict === 'NO_SIGNAL') {
+  // 天井が互角に届いていないなら、「支配戦略が無い」は装置の手柄ではない。
+  // プレイヤーの動詞が相手より少ないだけ、という可能性を先に潰す。
+  const capped = limits && limits.parity != null && limits.atParity === false;
+  if (capped && !dominant) {
+    L.push(`1. **支配戦略は見つからないが、それは装置が効いている証拠にならない。** 探索空間で到達できた最良は ${limits.metric}=${limits.ceiling.toFixed(3)} で、互角の線 ${limits.parity} に届いていない（互角以上に立てた方針は全体の ${(limits.aboveParityFrac * 100).toFixed(0)}%）。何を敷いても勝ち越せない以上、「勝ち筋が1本に決まらない」のは収束を防ぐ装置ではなく**プレイヤーの手が相手より少ない**ことの帰結でありうる。勝ち筋は ${q2.nTypes}本。`);
+  } else if (q1.verdict === 'NO_SIGNAL') {
     L.push(`1. **問1は判定不能。** 相手ごとの最上位ティアに全方針の ${(q1.tierFrac * 100).toFixed(0)}% が入ってしまい、方針の優劣そのものが測れていない。支配戦略が「無い」のではなく、有無を言える状態にない。`);
   } else if (dominant) {
     L.push(`1. **支配戦略が実在する。** 全10相手で最上位ティアに入る方針が ${q1.universal.length}本あり、その得意不得意のかたちは直径 ${q1.uShapeDiameter.toFixed(3)}（測定誤差の床 ${q1.noiseFloor.toFixed(3)}）で区別がつかない＝1本の型。カード設定は散らばっている（直径 ${q1.uDiameter.toFixed(3)}）が、それは効かないカードの違いにすぎない。「最適解は複数」は実装で成立していない。`);
@@ -188,10 +220,15 @@ function verdictLines(q1, q2, q3, q4, meta) {
     L.push(`2. **相手ごとの最良の入れ替わりは、測定ノイズと区別がつかない。** 相手間 ${q3.betweenMean.toFixed(3)} 対 同一相手のノイズ床 ${q3.withinMean.toFixed(3)}（比 ${q3.ratio.toFixed(2)}）。相手依存を主張する根拠は現時点で無い。`);
   }
   const nn = Number.isFinite(q4.nNeeded) ? `${q4.nNeeded}戦` : '無限';
+  // 天井が低いなら、差の絶対値ではなく「到達できる幅のうちどれだけ使えているか」で読む
+  const span = limits ? limits.ceiling - limits.floor : NaN;
+  const spanNote = limits && Number.isFinite(span)
+    ? `到達できた幅は ${limits.floor.toFixed(3)}〜${limits.ceiling.toFixed(3)}（${span.toFixed(3)}）で、腕前で動かせるのはそのうち ${(((q4.best.mean - q4.random.mean) / (span || 1)) * 100).toFixed(0)}%。`
+    : '';
   if (q4.verdict === 'NOT_OBSERVABLE') {
-    L.push(`3. **上達を測る定規が無い。** 最良とランダムの効果量 d=${q4.d.toFixed(2)}、1戦で最良が勝つ確率 ${(q4.pSup * 100).toFixed(0)}%、有意差に要る試合数 ${nn}。レビューの指摘は実測で裏付けられた。`);
+    L.push(`3. **上達を測る定規が無い。** 最良とランダムの効果量 d=${q4.d.toFixed(2)}、1戦で最良が勝つ確率 ${(q4.pSup * 100).toFixed(0)}%、有意差に要る試合数 ${nn}。${spanNote}レビューの指摘は実測で裏付けられた。`);
   } else {
-    L.push(`3. 上手い下手は${q4.verdict === 'CLEAR' ? 'はっきり' : '薄いが'}出る（d=${q4.d.toFixed(2)}、1戦で最良が勝つ確率 ${(q4.pSup * 100).toFixed(0)}%）。ただし有意に分けるには ${nn} 要る${q4.nNeeded > 20 ? '＝1セッションでは体感できない' : ''}。`);
+    L.push(`3. 上手い下手は${q4.verdict === 'CLEAR' ? 'はっきり' : '薄いが'}出る（d=${q4.d.toFixed(2)}、1戦で最良が勝つ確率 ${(q4.pSup * 100).toFixed(0)}%）。有意に分けるには ${nn} 要る${q4.nNeeded > 20 ? '＝1セッションでは体感できない' : ''}。${spanNote}`);
   }
   return L;
 }
@@ -264,7 +301,16 @@ export async function judge(opts) {
   if (!o.quiet) process.stderr.write(`判定: ${policies.length}方針 × ${OPPONENTS.length}相手 × ${seeds.length}種 = ${policies.length * OPPONENTS.length * seeds.length}行\n`);
   const rows = await evaluator.run(policies, seeds, OPPONENTS);
 
+  // 評価器が「動かしても何も起きない」と申告したカードを距離・クラスタリングから外す。
+  // ここを外さないと、挙動が同一の方針が離れて見えて、勝ち筋の本数が水増しされる。
+  const evMeta = evaluator.meta() || {};
+  setInertCards(evMeta.inertCards || []);
+  if (!o.quiet && (evMeta.inertCards || []).length) {
+    process.stderr.write(`死にカード（距離から除外）: ${evMeta.inertCards.join(', ')}\n`);
+  }
+
   const t = buildTable(rows, policies, seeds, OPPONENTS, o.metric);
+  const limits = measurementLimits(t);
   if (t.missing > t.ids.length * OPPONENTS.length * seeds.length * 0.02) {
     process.stderr.write(`⚠ 欠損が多い: ${t.missing}行。評価器が一部の方針で落ちている可能性\n`);
   }
@@ -302,13 +348,15 @@ export async function judge(opts) {
     nElite: elite.length, nRandom: randoms.length, audit, eliteMeta,
     hasEval: hasRealEvaluator(), hasBest: !!loaded, bestPath: path.relative(GAME_ROOT, o.best),
     fullCost: estimateCost(o.eliteCap + o.random, o.seeds, OPPONENTS.length, o.gens),
+    evMeta, inert: getInertCards(), activeKnobs: activeKnobCount(),
+    sim: simFingerprint(),
     stamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
     argv: process.argv.slice(2),
   };
-  const ctx = { meta, t, q1, q2, q3, q4, sens, oat, robustness, tags };
+  const ctx = { meta, t, q1, q2, q3, q4, sens, oat, robustness, tags, limits };
   const stFile = path.join(HERE, 'selftest-result.json');
   if (fs.existsSync(stFile)) ctx.selftest = JSON.parse(fs.readFileSync(stFile, 'utf8'));
-  ctx.verdictLines = verdictLines(q1, q2, q3, q4, meta);
+  ctx.verdictLines = verdictLines(q1, q2, q3, q4, meta, limits);
   return ctx;
 }
 

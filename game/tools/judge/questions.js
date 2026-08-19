@@ -9,7 +9,10 @@ import {
   mean, sd, sem, median, quantile, bootstrapMeanCI, permTestPaired, cohenD,
   probSuperior, holm, RNG, fmt,
 } from './stats.js';
-import { encode, distance, FEATURE_NAMES, CARD_IDS, CATEGORICAL, perturb, N_KNOBS } from './space.js';
+import {
+  encode, encodeActive, distance, FEATURE_NAMES, CARD_IDS, CATEGORICAL, perturb,
+  N_KNOBS, isInert, getInertCards, activeKnobCount,
+} from './space.js';
 import { metricOf } from './evaluate.js';
 import {
   kmeans, gapStatistic, withinBetween, permTestClusters, identificationRate,
@@ -82,6 +85,52 @@ export function shapeNoiseFloor(t, idxs, rng, reps = 20) {
   return measureNoiseFloor(idxs, seedIdxs, f, rng, reps);
 }
 
+// ------------------------------------- 前提の点検：天井と分解能
+
+/** 指標ごとの「互角」の線。ここを超えられないなら、勝ち筋の議論より先に手の数の問題 */
+const PARITY = { winRate: 0.5, netWins: 0, power: null };
+
+/**
+ * 判定の前に、測定そのものの限界を出しておく。これを見ないと4つの答えを読み違える。
+ *
+ * 天井 … この探索空間で到達できた最良の成績。互角の線に届いていなければ、
+ *        「支配戦略が無い」のは装置が効いているからではなく、**そもそも勝てない**から。
+ *        プレイヤーの動詞が相手（rival profile）より少ないなら、それは設計の勝利ではない。
+ * 分解能 … いまの種数で分離できる最小の差。上位どうしの広がりがこれを下回るなら、
+ *        「上位N本」の順位は測れていない。
+ */
+export function measurementLimits(t, topK = 10) {
+  const rawMeans = t.ids.map((_, p) => t.overallRaw(p));
+  const top = t.order.slice(0, Math.min(topK, t.order.length));
+
+  // 分解能：対応あり・両側α=.05・検出力.8 → 必要差 ≈ 2.8 × sd(差) / √n
+  const sds = [];
+  for (let i = 0; i < top.length; i++) {
+    for (let j = i + 1; j < top.length; j++) {
+      const a = t.rawAll(top[i]), b = t.rawAll(top[j]);
+      const d = a.map((x, k) => x - b[k]).filter(Number.isFinite);
+      if (d.length > 1) sds.push(sd(d));
+    }
+  }
+  const sdDiff = sds.length ? mean(sds) : NaN;
+  const nBlocks = t.seeds.length * t.opponents.length;
+  const mddOverall = 2.8 * sdDiff / Math.sqrt(nBlocks);
+  const mddPerOpp = 2.8 * sdDiff / Math.sqrt(t.seeds.length);
+  const topSpread = Math.max(...top.map((p) => t.overallRaw(p))) - Math.min(...top.map((p) => t.overallRaw(p)));
+
+  const parity = PARITY[t.metric];
+  const best = Math.max(...rawMeans);
+  return {
+    metric: t.metric, parity,
+    ceiling: best, medianRaw: median(rawMeans), floor: Math.min(...rawMeans),
+    atParity: parity == null ? null : best >= parity * 0.9,
+    aboveParityFrac: parity == null ? null : rawMeans.filter((x) => x >= parity).length / rawMeans.length,
+    sdDiff, nBlocks, mddOverall, mddPerOpp, topSpread, topK: top.length,
+    // 上位どうしを分離できているか。できていないなら「上位N本」の順序は意味を持たない
+    topResolvable: topSpread > mddOverall,
+  };
+}
+
 // ------------------------------------------------------- 問1：支配戦略はあるか
 
 /** ブロックごとの勝ち上がり。A が B を上回ったブロックの割合 */
@@ -136,7 +185,7 @@ export function q1Dominance(t, rng, alpha = 0.05) {
   //     死んでいるカードがあると、挙動が同一の方針がパラメータ空間に散らばる。
   //     パラメータの直径で判定すると、支配戦略があるのに「複数の型」と読み違える
   //     （ダミー世界 dominant で実際にそう外した）。
-  const uEnc = universal.map((p) => encode(t.policies[p]));
+  const uEnc = universal.map((p) => encodeActive(t.policies[p]));
   let uDiameter = 0;
   for (let i = 0; i < uEnc.length; i++) {
     for (let j = i + 1; j < uEnc.length; j++) uDiameter = Math.max(uDiameter, distance(uEnc[i], uEnc[j]));
@@ -320,7 +369,7 @@ export function q2WinLines(t, rng, q1, { topFrac = 0.15, kmax = 6 } = {}) {
   const top = eliteSet(t, q1, topFrac);
   const nTop = top.length;
   const nOpp = t.opponents.length;
-  const X = top.map((p) => encode(t.policies[p]));   // パラメータ空間
+  const X = top.map((p) => encodeActive(t.policies[p]));   // パラメータ空間（死にカードは0）
   const V = top.map((p) => shapeOf(t, p));           // かたちの空間
 
   // 測定誤差の床を実測する（同じ方針を種の半分ずつで2回測って、かたちがどれだけブレるか）
@@ -384,7 +433,7 @@ export function q2WinLines(t, rng, q1, { topFrac = 0.15, kmax = 6 } = {}) {
   for (let c = 0; c < k; c++) {
     const members = top.filter((_, i) => labels[i] === c);
     if (!members.length) continue;
-    const enc = members.map((p) => encode(t.policies[p]));
+    const enc = members.map((p) => encodeActive(t.policies[p]));
     let rep = members[0], bd = Infinity;
     members.forEach((p) => { const d = distance(V[top.indexOf(p)], cents.get(c)); if (d < bd) { bd = d; rep = p; } });
     const pCent = enc[0].map((_, d) => mean(enc.map((e) => e[d])));
@@ -425,7 +474,7 @@ export function q3OpponentDependence(t, rng, { splits = 40 } = {}) {
   const best = t.opponents.map((_, o) => bestFor(o, allSeeds));
 
   // 相手間の距離行列（それぞれの最良方針どうしの隔たり）
-  const D = best.map((a) => best.map((b) => distance(encode(t.policies[a]), encode(t.policies[b]))));
+  const D = best.map((a) => best.map((b) => distance(encodeActive(t.policies[a]), encodeActive(t.policies[b]))));
   const offDiag = [];
   for (let i = 0; i < O; i++) for (let j = i + 1; j < O; j++) offDiag.push(D[i][j]);
 
@@ -436,7 +485,7 @@ export function q3OpponentDependence(t, rng, { splits = 40 } = {}) {
     const idx = rng.shuffle(allSeeds.slice());
     const A = idx.slice(0, Math.floor(S / 2)), B = idx.slice(Math.floor(S / 2));
     for (let o = 0; o < O; o++) {
-      withinDists.push(distance(encode(t.policies[bestFor(o, A)]), encode(t.policies[bestFor(o, B)])));
+      withinDists.push(distance(encodeActive(t.policies[bestFor(o, A)]), encodeActive(t.policies[bestFor(o, B)])));
     }
   }
 

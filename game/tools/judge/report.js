@@ -85,7 +85,34 @@ export function renderReport(ctx) {
   w(`| 総試行 | ${t.ids.length * t.opponents.length * t.seeds.length} 行（欠損 ${t.missing}） |`);
   w(`| 主指標 | \`${t.metric}\`${t.metric === 'winRate' ? '（絶滅=0、一度も戦わなかった国=0）' : ''} |`);
   w(`| 比較の単位 | (相手, 種) をブロックにした対応あり比較 |`);
+  w(`| 生きているつまみ | ${meta.activeKnobs ?? '?'} / 16 |`);
+  if (meta.sim) {
+    w(`| 測定時の sim | \`${meta.sim.hash}\`${meta.sim.rev ? ` / git ${meta.sim.rev}` : ''}（src/sim 最終更新 ${meta.sim.mtime}） |`);
+  }
   w();
+  if (meta.sim) {
+    w('sim の指紋を残してあるのは、**探索中に `src/sim/` が書き換わっていた**ため。');
+    w('指紋が違う測定どうしで絶対値を比べてはいけない（創世の分散が 0.14→0.16 に変わる、といった変更が入る）。');
+    w();
+  }
+  if (meta.inert && meta.inert.length) {
+    w('### 死んだ次元');
+    w();
+    w(`評価器が \`meta.inertCards\` で自己申告した「動かしても何も起きないカード」：**${meta.inert.join(', ')}**`);
+    w();
+    w('これらは**距離計算とクラスタリングから除外してある**。除外しないと、挙動が完全に同じ方針が');
+    w('パラメータ空間で離れて見え、クラスタが死にカードの上で割れて**勝ち筋の本数が水増しされる**。');
+    w();
+    if (meta.evMeta?.cardsWiredByOwner?.length) {
+      w(`なお \`${meta.evMeta.cardsWiredByOwner.join(', ')}\` は sim が直接カードを読まないが、`);
+      w('評価器のオーナー層が配線しているので効果はある。**死んでいるのは上の分だけ**で、');
+      w('「simがcardOrで読んでいない5枚」を全部死んだ扱いにするのは誤り（判定側で実測確認済み）。');
+      w();
+    }
+    w('問2のクラスタリングはもともと**挙動空間**（相手別の得意不得意）で行うので、');
+    w('この失敗モードには構造的に強い。除外が効くのは距離行列と型の記述のほう。');
+    w();
+  }
   w('### ホールドアウトの検証');
   w();
   w('「分けたつもり」を信用せず、探索側が記録した種と突き合わせて確かめる。');
@@ -109,6 +136,60 @@ export function renderReport(ctx) {
       : '- 判定と探索の相手集合は同じ。未知の相手への汎化は測れていない。');
   }
   w();
+
+  // ------------------------------------------------- 測定の限界（先に読む）
+  const lim = ctx.limits;
+  if (lim) {
+    w('---');
+    w();
+    w('## 先に：測定の天井と分解能');
+    w();
+    w('4つの答えより先にこれを見ないと、全部読み違える。');
+    w();
+    w('**天井** — この探索空間で到達できた成績');
+    w();
+    w('```');
+    const pr = lim.parity;
+    const lo = Math.min(lim.floor, pr ?? lim.floor), hi = Math.max(lim.ceiling, pr ?? lim.ceiling);
+    const at = (x) => Math.round(((x - lo) / Math.max(1e-9, hi - lo)) * 40);
+    const line = (label, x, ch) => {
+      const s = new Array(41).fill('·'); s[Math.max(0, Math.min(40, at(x)))] = ch;
+      return `${pad(label, 10)} ${padL(fmt(x), 8)}  ${s.join('')}`;
+    };
+    w(line('最悪', lim.floor, 'x'));
+    w(line('中央', lim.medianRaw, 'o'));
+    w(line('最良（天井）', lim.ceiling, '#'));
+    if (pr != null) w(line('互角の線', pr, '|'));
+    w('```');
+    if (pr != null) {
+      w();
+      w(lim.atParity === false
+        ? `**天井が互角の線 ${pr} に届いていない**（互角以上に立てた方針は全体の ${fmt(lim.aboveParityFrac * 100, 0)}%）。`
+          + '\n\nこれは判定の読み方を変える。プレイヤーが敷けるのは12枚のカードと4つの選択だけで、'
+          + '\n相手（rival profile）が持つ「粛清」「配る」「形質選好」に相当するレバーが無い。'
+          + '\n**何を敷いても勝ち越せない空間で「支配戦略が無い」ことは、収束を防ぐ装置が効いている証拠にならない。**'
+          + '\n手が足りないだけ、という説明が同じデータを説明してしまう。この2つは以下の数字では分離できない。'
+        : `天井は互角の線 ${pr} を超えている（互角以上に立てた方針は全体の ${fmt(lim.aboveParityFrac * 100, 0)}%）。`
+          + '\n「何をしても勝てないから最適解が決まらない」という対抗説明はここで消える。');
+    }
+    w();
+    w('**分解能** — いまの種数で分離できる最小の差');
+    w();
+    w('| | |');
+    w('|---|---|');
+    w(`| ブロック数（相手×種） | ${lim.nBlocks} |`);
+    w(`| 上位${lim.topK}本どうしの差のばらつき sd | ${fmt(lim.sdDiff)} |`);
+    w(`| 総合での最小検出可能差（α=.05, 検出力.8） | **${fmt(lim.mddOverall)}** |`);
+    w(`| 相手1国だけで見たときの最小検出可能差 | ${fmt(lim.mddPerOpp)} |`);
+    w(`| 実際の上位${lim.topK}本の広がり | ${fmt(lim.topSpread)} |`);
+    w();
+    w(lim.topResolvable
+      ? `→ 上位の広がり ${fmt(lim.topSpread)} > 最小検出可能差 ${fmt(lim.mddOverall)}。**上位どうしの順位は分離できている。**`
+      : `→ 上位の広がり ${fmt(lim.topSpread)} ≦ 最小検出可能差 ${fmt(lim.mddOverall)}。`
+        + '\n**上位どうしの順位は分離できていない。**「最良の方針」を1本名指しすることに意味は無く、'
+        + '\n以下で「最良」と呼んでいるものは上位ティアの中の1本にすぎない。');
+    w();
+  }
 
   // ------------------------------------------------------------- 問1
   w('---');
