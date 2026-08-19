@@ -84,7 +84,7 @@ function runWorld(api, o) {
   const TPG = api.TICKS_PER_GEN ?? 8;
   const world = api.createWorld(seed, answers);
   const rng = new RNG(((seed >>> 0) ^ 0x9e3779b9) >>> 0);
-  const obs = new Observer({ trackedMind, keepBirths });
+  const obs = new Observer({ trackedMind, keepBirths , keepZygo: o.keepZygo !== false });
   const v = new Violations();
   let ticks = 0, aborted = null;
   const genHashes = [];
@@ -221,7 +221,7 @@ function runRoster(api, seed, gens, trackedMind) {
     name: n.name ?? null,
     // 出生レコードはバッチ側で十数万件取れているのでロスターでは持たない。
     // 10国×種数ぶんの世界を全部抱えるとヒープが尽きる。
-    obs: new Observer({ trackedMind, keepBirths: false }),
+    obs: new Observer({ trackedMind, keepBirths: false, keepZygo: false }),
     violations: new Violations(),
     seed,
   }));
@@ -341,7 +341,7 @@ async function main() {
     // 全部保持するとヒープが尽きるので、先頭3本だけ残す。
     const r = runWorld(api, {
       seed: 424242 + i * 104729, gens: CONF.freqGens, trackedMind,
-      keepBirths: i < 3,
+      keepBirths: i < 3, keepZygo: i < 3,
     });
     allV.merge(r.violations);
     // 頻度依存の検査が見るのは obs.series だけ。世界の中身はもう要らない。
@@ -367,27 +367,33 @@ async function main() {
   // ===== フェーズ4：近親交配 ==============================================
   log(`[5/5] 近親交配: 閉鎖/開放/回復 各${CONF.inbreedSeeds}種 × ${CONF.inbreedGens}世代`);
   const closed = [], open = [], recovery = [];
+  // 検査が見るのは obs.series だけなので、1本走らせるたびにその場で世界を解放する。
+  // 最後にまとめて解放すると、--deep では96個の世界（と数十万の死者）が同時に生きてヒープが尽きる。
+  const inbreed = (bucket, o) => {
+    const r = runWorld(api, o);
+    allV.merge(r.violations);
+    releaseWorld(r.world);
+    bucket.push(r);
+  };
   for (let i = 0; i < CONF.inbreedSeeds; i++) {
     const s = 777001 + i * 32452843;
     // 閉鎖＝一度も外の血を入れない（戦争もしない）。開放＝戦うたびに捕虜を受け入れる。
     // fake-sim は answers のフラグで、本物の sim は「捕虜を受け入れるかどうか」で同じ状態になる。
-    closed.push(runWorld(api, {
-      seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false,
+    inbreed(closed, {
+      seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false, keepZygo: false,
       answers: { closed: true, outsideBlood: 0 },
-    }));
-    open.push(runWorld(api, {
-      seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false,
+    });
+    inbreed(open, {
+      seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false, keepZygo: false,
       answers: { closed: false, outsideBlood: 0.9 },
       war: { every: 3, captive: 'accept', axis: '総合' },
-    }));
-    recovery.push(runWorld(api, {
-      seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false,
+    });
+    inbreed(recovery, {
+      seed: s, gens: CONF.inbreedGens, trackedMind, keepBirths: false, keepZygo: false,
       answers: { closed: true, outsideBlood: 0 },
       inject: { atGen: Math.floor(CONF.inbreedGens / 2), n: 8 },
-    }));
+    });
   }
-  // 近親交配の検査も obs.series しか見ない。--deep で96本になるので都度解放する。
-  for (const r of [...closed, ...open, ...recovery]) { allV.merge(r.violations); releaseWorld(r.world); }
 
   // ===== 序盤の体験（第1フェーズ）=========================================
   // 10体到達 → 初戦 → 戦後処理 → フェーズ2 という順序と、5対5・捕虜1体・3〜4世代。

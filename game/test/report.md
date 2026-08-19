@@ -83,11 +83,11 @@ UI が呼ぶ **30個**の名前はすべて本物の sim で解決する（mock 
 | ✅ | `powerOf(ind)` | ok |
 | ✅ | `publicRank(world, ind)` | ok |
 | ✅ | `nationPower(world)` | = 2 |
-| ✅ | `chronicle(world, {genMin, kinds, limit})` | 40件 |
+| ✅ | `chronicle(world, {genMin, kinds, limit})` | 23件 |
 | ✅ | `traceUp(world, eventId)` | ok |
 | ✅ | `traceDown(world, eventId)` | ok |
 | ✅ | `canonize(world, eventId, text, {truthful})` | ok |
-| ✅ | `petitions(world, rng)` | 5件 |
+| ✅ | `petitions(world, rng)` | 6件 |
 | ✅ | `resolvePetition(world, id, approve, rng)` | ok |
 | ✅ | `createRoster(SEED)` | 10カ国 |
 | ✅ | `stepRoster(roster, rng)` | ok |
@@ -307,7 +307,6 @@ seed=96028 gen=147 人口=0 理由=extinct
       "max": 0.365,
       "fixedSeeds": 0,
       "seedsNeededToFail": 2,
-      "status": "PASS",
       "resolution": {
         "n": 3,
         "mean": 0.2855,
@@ -319,7 +318,8 @@ seed=96028 gen=147 人口=0 理由=extinct
         "outlierRate": 0,
         "chanceOfSeeingOneIn3Seeds": 0,
         "seedsNeededForPlusMinus002": 116
-      }
+      },
+      "status": "PASS"
     },
     {
       "name": "私欲",
@@ -329,7 +329,6 @@ seed=96028 gen=147 人口=0 理由=extinct
       "max": 0.589,
       "fixedSeeds": 0,
       "seedsNeededToFail": 2,
-      "status": "PASS",
       "resolution": {
         "n": 3,
         "mean": 0.5268,
@@ -341,7 +340,8 @@ seed=96028 gen=147 人口=0 理由=extinct
         "outlierRate": 0,
         "chanceOfSeeingOneIn3Seeds": 0,
         "seedsNeededForPlusMinus002": 313
-      }
+      },
+      "status": "PASS"
     },
     {
       "name": "怠惰",
@@ -351,7 +351,6 @@ seed=96028 gen=147 人口=0 理由=extinct
       "max": 0.383,
       "fixedSeeds": 0,
       "seedsNeededToFail": 2,
-      "status": "PASS",
       "resolution": {
         "n": 3,
         "mean": 0.3617,
@@ -363,7 +362,8 @@ seed=96028 gen=147 人口=0 理由=extinct
         "outlierRate": 0,
         "chanceOfSeeingOneIn3Seeds": 0,
         "seedsNeededForPlusMinus002": 9
-      }
+      },
+      "status": "PASS"
     }
   ]
 }
@@ -916,9 +916,20 @@ agrarian 頑健     |##########                    | 0.327
 
 ## 検査器の自己検証
 
-`node test/run.js --selftest` で実行する。
+fake-sim に故意のバグを注入し、対応する検査が落ちることを確認する。
 
-fake-sim に故意のバグ（腕予算を外す／練度を遺伝させる／運死を50%にする／心系を中間遺伝にする／頻度依存を外す／全プロファイルを同一挙動にする）を注入し、**対応する検査がちゃんと落ちるか**を確かめる。落ちない検査は空振りなので価値がない。
+| 注入したバグ | 落ちるべき検査 | 結果 | |
+|---|---|---|---|
+| `linkage` | linkage | WARN | ✅ 検出 |
+| `heritable-skill` | skill | FAIL | ✅ 検出 |
+| `luck50` | wardeath | FAIL | ✅ 検出 |
+| `no-recessive` | recessive | FAIL | ✅ 検出 |
+| `no-nfd` | frequency | WARN | ✅ 検出 |
+| `uniform-policy` | divergence | FAIL | ✅ 検出 |
+| `mock専用の名前` | integration | FAIL(検出) | ✅ 検出 |
+| `壊れた序盤(4対19/捕虜3体/第6世代)` | p1 | FAIL(4項目とも検出) | ✅ 検出 |
+
+
 ---
 
 ## sim に期待しているデータ契約

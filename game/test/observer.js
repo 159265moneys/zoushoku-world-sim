@@ -83,6 +83,9 @@ export class Observer {
   constructor(opts = {}) {
     this.trackedMind = opts.trackedMind ?? MIND_GENES.slice(0, 8);
     this.keepBirths = opts.keepBirths !== false;
+    // 接合状態の台帳。劣性の潜伏を辿るのに要るが、個体を全部覚えるので重い。
+    // 潜伏の検査に使わない世界（近親交配の比較など）では切る。
+    this.keepZygo = opts.keepZygo !== false;
     this.series = [];
     this.births = [];
     this.zygo = new Map();
@@ -166,7 +169,7 @@ export class Observer {
     for (const p of people) {
       if (this.seen.has(p.id)) continue;
       this.seen.add(p.id);
-      if (this.caps.geno) {
+      if (this.caps.geno && this.keepZygo) {
         this.zygo.set(p.id, {
           gen: p.born ?? world.gen, f: p.fatherId, m: p.motherId,
           code: zygCode(p, this.trackedMind),

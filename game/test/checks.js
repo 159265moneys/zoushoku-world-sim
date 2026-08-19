@@ -186,21 +186,26 @@ export function checkFrequency(runs, opts = {}) {
     overall.fixedSeeds = fixedSeeds;
     overall.seedsNeededToFail = Math.max(2, Math.ceil(runs.length / 2));
 
+    // 種ごとの末尾平均から分解能を出す。3種で見えた振れが標本不足かを切り分ける。
+    const perSeedTails = perSeed.map(a => mean(tail(a, 0.2)));
+    const res = resolution(perSeedTails, v => v > FIX_HI || v < FIX_LO);
+    overall.resolution = res;
+
+    const outlierRate = runs.length ? fixedSeeds / runs.length : 0;
     let st;
     if (tm > FIX_HI || tm < FIX_LO) { st = 'FAIL'; }                       // 全種の平均で振り切れている
     else if (fixedSeeds >= overall.seedsNeededToFail) { st = 'FAIL'; }     // 過半数の種で振り切れている
-    else if (fixedSeeds > 0) { st = 'WARN'; }                              // 一部の種だけ。報告はする
-    else if (tsd < 0.004 && Math.abs(tm - 0.5) < 0.03) { st = 'WARN'; }
+    else if (outlierRate > 0.10) { st = 'WARN'; }                          // 1割超の種で振り切れ＝漂動では説明しにくい
+    else if (fixedSeeds > 0 && runs.length < 8) { st = 'WARN'; }           // 種が少ないうちは1本でも報告する
+    // 「0.5に張り付いて動いていない」＝中立漂動しかしていない疑い。
+    // ただし種をまたいだ平均は種数を増やすほど滑らかになるので、平均の平坦さだけで
+    // 判定すると種を増やした途端に誤検出する。**種ごとのばらつき**も同時に見る。
+    else if (tsd < 0.004 && Math.abs(tm - 0.5) < 0.03 && (res.sd ?? 1) < 0.02) { st = 'WARN'; }
     else st = 'PASS';
     if (st === 'FAIL') worst = 'FAIL';
     else if (st === 'WARN' && worst !== 'FAIL') worst = 'WARN';
     overall.status = st;
     rows.push(overall);
-
-    // 種ごとの末尾平均から分解能を出す。3種で見えた振れが標本不足かを切り分ける。
-    const perSeedTails = perSeed.map(a => mean(tail(a, 0.2)));
-    const res = resolution(perSeedTails, v => v > FIX_HI || v < FIX_LO);
-    overall.resolution = res;
 
     lines.push(`### ${name}  →  ${st}`);
     lines.push('```');
@@ -232,7 +237,9 @@ export function checkFrequency(runs, opts = {}) {
         pin.map(x => `${x.name}（末尾平均 ${x.tailMean}${x.fixedSeeds ? `・${x.fixedSeeds}/${runs.length}種で振り切れ` : '・ほぼ動かず'}）`).join('、') +
         ' は注視。'
       : `${gens}世代 × ${runs.length}種で 逃走癖・私欲・怠惰 のいずれも固定しなかった。` +
-        rows.map(x => `${x.name} ${x.tailMean}`).join(' / ');
+        rows.map(x => x.resolution?.n >= 8
+          ? `${x.name} ${x.tailMean}（95%区間 ${x.resolution.ci95lo}〜${x.resolution.ci95hi}、振り切れ ${x.fixedSeeds}/${x.resolution.n}種）`
+          : `${x.name} ${x.tailMean}`).join(' / ');
   r.detail = lines.join('\n');
   return r;
 }

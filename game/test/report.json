@@ -10,13 +10,15 @@
     "rosterGens": 200,
     "inbreedSeeds": 5,
     "inbreedGens": 200,
+    "p1Seeds": 24,
+    "deep": false,
     "strict": false
   },
   "invariants": {
     "violations": {},
     "aborted": [
       {
-        "seed": 40595,
+        "seed": 96028,
         "why": "extinct"
       }
     ]
@@ -25,92 +27,128 @@
     {
       "seed": 1000,
       "ok": true,
-      "a": "791f3370",
-      "b": "791f3370"
+      "a": "90a9de3b",
+      "b": "90a9de3b"
     },
     {
       "seed": 8919,
       "ok": true,
-      "a": "b0ef88b7",
-      "b": "b0ef88b7"
+      "a": "8687046f",
+      "b": "8687046f"
     },
     {
       "seed": 16838,
       "ok": true,
-      "a": "684382f5",
-      "b": "684382f5"
+      "a": "10ab1385",
+      "b": "10ab1385"
     },
     {
       "seed": 24757,
       "ok": true,
-      "a": "1357e7d0",
-      "b": "1357e7d0"
+      "a": "a27eb7d8",
+      "b": "a27eb7d8"
     },
     {
       "seed": 32676,
       "ok": true,
-      "a": "1b3b655d",
-      "b": "1b3b655d"
+      "a": "2f8cb476",
+      "b": "2f8cb476"
     },
     {
       "seed": 40595,
       "ok": true,
-      "a": "6dbd68ce",
-      "b": "6dbd68ce"
+      "a": "a84f5eeb",
+      "b": "a84f5eeb"
     }
   ],
   "checks": [
     {
       "id": "linkage",
       "status": "PASS",
-      "summary": "76388件の出生で全ステ制覇 0件。1座位単位では平均 8/33 が親超え＝進化の余地は残っている。",
+      "summary": "80393件の出生で全ステ制覇 0件。1座位単位では平均 8/33 が親超え＝進化の余地は残っている。",
       "numbers": {
-        "births": 76388,
+        "births": 80393,
         "fullDomination": 0,
         "chromosomeDomination": 0,
         "armBudgetExemptChromosomes": [
           8
         ],
-        "maxMinMargin": -0.06349325620904511,
-        "meanGenesAboveBothParents": 8.014465622872702
+        "maxMinMargin": -0.06748763132381241,
+        "meanGenesAboveBothParents": 7.991902280049258
       }
     },
     {
       "id": "frequency",
-      "status": "WARN",
-      "summary": "固定はしていない（1001世代 × 3種）。ただし 逃走癖（末尾平均 0.5533・1/3種で振り切れ） は注視。",
+      "status": "PASS",
+      "summary": "1001世代 × 3種で 逃走癖・私欲・怠惰 のいずれも固定しなかった。逃走癖 0.2855 / 私欲 0.5268 / 怠惰 0.3617",
       "numbers": {
         "gens": 1001,
         "seeds": 3,
         "traits": [
           {
             "name": "逃走癖",
-            "tailMean": 0.5533,
-            "tailSd": 0.0104,
-            "min": 0.337,
-            "max": 0.585,
-            "fixedSeeds": 1,
+            "tailMean": 0.2855,
+            "tailSd": 0.0078,
+            "min": 0.267,
+            "max": 0.365,
+            "fixedSeeds": 0,
             "seedsNeededToFail": 2,
-            "status": "WARN"
+            "resolution": {
+              "n": 3,
+              "mean": 0.2855,
+              "sd": 0.1099,
+              "stderr": 0.0634,
+              "ci95lo": 0.1612,
+              "ci95hi": 0.4098,
+              "outlierSeeds": 0,
+              "outlierRate": 0,
+              "chanceOfSeeingOneIn3Seeds": 0,
+              "seedsNeededForPlusMinus002": 116
+            },
+            "status": "PASS"
           },
           {
             "name": "私欲",
-            "tailMean": 0.6595,
+            "tailMean": 0.5268,
             "tailSd": 0.0169,
-            "min": 0.544,
-            "max": 0.688,
+            "min": 0.438,
+            "max": 0.589,
             "fixedSeeds": 0,
             "seedsNeededToFail": 2,
+            "resolution": {
+              "n": 3,
+              "mean": 0.5268,
+              "sd": 0.1803,
+              "stderr": 0.1041,
+              "ci95lo": 0.3227,
+              "ci95hi": 0.7308,
+              "outlierSeeds": 0,
+              "outlierRate": 0,
+              "chanceOfSeeingOneIn3Seeds": 0,
+              "seedsNeededForPlusMinus002": 313
+            },
             "status": "PASS"
           },
           {
             "name": "怠惰",
-            "tailMean": 0.3824,
-            "tailSd": 0.0061,
-            "min": 0.328,
-            "max": 0.406,
+            "tailMean": 0.3617,
+            "tailSd": 0.0043,
+            "min": 0.305,
+            "max": 0.383,
             "fixedSeeds": 0,
             "seedsNeededToFail": 2,
+            "resolution": {
+              "n": 3,
+              "mean": 0.3617,
+              "sd": 0.0293,
+              "stderr": 0.0169,
+              "ci95lo": 0.3286,
+              "ci95hi": 0.3948,
+              "outlierSeeds": 0,
+              "outlierRate": 0,
+              "chanceOfSeeingOneIn3Seeds": 0,
+              "seedsNeededForPlusMinus002": 9
+            },
             "status": "PASS"
           }
         ]
@@ -119,43 +157,46 @@
     {
       "id": "recessive",
       "status": "PASS",
-      "summary": "保因者どうしの結婚による劣性発現 15784件。うち 15765件（99.9%）は2世代以上潜伏。中央値 12世代、90%点 25世代。",
+      "summary": "保因者どうしの結婚による劣性発現 18097件。うち 18078件（99.9%）は2世代以上潜伏。中央値 12世代、90%点 24世代。",
       "numbers": {
-        "homozygousRecessiveIndividualsGenes": 79526,
-        "carrierPairExpressions": 15784,
-        "latencyMean": 15.9,
+        "homozygousRecessiveIndividualsGenes": 79310,
+        "carrierPairExpressions": 18097,
+        "latencyMean": 15.35,
         "latencyMedian": 12,
-        "latencyP90": 25,
-        "latencyGE2": 15765
+        "latencyP90": 24,
+        "latencyGE2": 18078
       }
     },
     {
       "id": "inbreeding",
       "status": "PASS",
-      "summary": "閉鎖 0.158 vs 開放 0.148（+0.01）。血の濃さ（全座位ホモ率）も 0.5 vs 0.307。 外来血の注入で 0.0086 低下。",
+      "summary": "閉鎖 0.154 vs 開放 0.108（+0.046）。血の濃さ（全座位ホモ率）も 0.493 vs 0.297。 外来血の注入で 0.0231 低下。",
       "numbers": {
-        "closedHomozygosity": 0.1578,
-        "openHomozygosity": 0.148,
-        "closedValueHomozygosity": 0.5,
-        "openValueHomozygosity": 0.3072,
-        "closedPop": 86,
-        "openPop": 82.9,
-        "homozygosityBeforeInjection": 0.1487,
-        "homozygosityAfterInjection": 0.1402,
-        "injectionTook": true
+        "closedHomozygosity": 0.1535,
+        "openHomozygosity": 0.1078,
+        "closedValueHomozygosity": 0.4926,
+        "openValueHomozygosity": 0.2966,
+        "closedPop": 65.8,
+        "openPop": 69.7,
+        "homozygosityBeforeInjection": 0.1439,
+        "homozygosityAfterInjection": 0.1208,
+        "injectionTook": true,
+        "pairedSeeds": 5,
+        "pairedPositive": 4,
+        "pairedMeanDiff": 0.0457
       }
     },
     {
       "id": "divergence",
       "status": "PASS",
-      "summary": "クラスタ間 0.822 > クラスタ内 0.517（比 1.59）。識別率 85.3%（偶然 10.0%）。10国はゲノムで見分けがつく。",
+      "summary": "クラスタ間 0.858 > クラスタ内 0.497（比 1.73）。識別率 94.0%（偶然 10.0%）。10国はゲノムで見分けがつく。",
       "numbers": {
         "profiles": 10,
-        "worldsPerProfile": 6,
-        "betweenClusterMeanDistance": 0.8221,
-        "withinClusterMeanSpread": 0.5167,
-        "ratio": 1.591,
-        "nearestCentroidAccuracy": 0.853,
+        "worldsPerProfile": 10,
+        "betweenClusterMeanDistance": 0.8577,
+        "withinClusterMeanSpread": 0.4969,
+        "ratio": 1.726,
+        "nearestCentroidAccuracy": 0.94,
         "chanceLevel": 0.1,
         "accuracyMeasurable": true
       }
@@ -163,109 +204,167 @@
     {
       "id": "skill",
       "status": "PASS",
-      "summary": "73311件で 親の平均練度(平均0.241) と子の初期練度の相関 r=0、子の初期練度は全件0。",
+      "summary": "77062件で 親の平均練度(平均0.24) と子の初期練度の相関 r=0、子の初期練度は全件0。",
       "numbers": {
-        "samples": 73311,
+        "samples": 77062,
         "correlation": 0,
         "childrenBornWithNonZeroSkill": 0,
         "maxInitialChildSkill": 0,
-        "meanParentSkill": 0.2407
+        "meanParentSkill": 0.2399
       }
     },
     {
       "id": "wardeath",
       "status": "PASS",
-      "summary": "戦死 11774件：ステータス由来 10659件 (90.5%) / 運 1115件 (9.5%)。設計値 90/10 に一致。",
+      "summary": "戦死 12431件：ステータス由来 11235件 (90.4%) / 運 1196件 (9.6%)。設計値 90/10 に一致。",
       "numbers": {
-        "warDeaths": 11774,
-        "statDeaths": 10659,
-        "luckDeaths": 1115,
-        "luckShare": 0.0947,
+        "warDeaths": 12431,
+        "statDeaths": 11235,
+        "luckDeaths": 1196,
+        "luckShare": 0.0962,
         "target": 0.1
       }
     },
     {
       "id": "purist-melting",
       "status": "PASS",
-      "summary": "純血 劣性ホモ 0.156 / 全座位ホモ 0.504 に対し 融和 0.132 / 0.477。人口 79.6 vs 125.7、産出 33.4 vs 45.3。",
+      "summary": "純血 劣性ホモ 0.176 / 全座位ホモ 0.534 に対し 融和 0.113 / 0.439。人口 103.7 vs 179.1、産出 41.3 vs 42.9。",
       "numbers": {
-        "puristHomozygosity": 0.1559,
-        "meltingHomozygosity": 0.132,
-        "puristValueHomozygosity": 0.5045,
-        "meltingValueHomozygosity": 0.4774,
-        "puristPop": 79.6,
-        "meltingPop": 125.7,
+        "puristHomozygosity": 0.1765,
+        "meltingHomozygosity": 0.1127,
+        "puristValueHomozygosity": 0.5343,
+        "meltingValueHomozygosity": 0.4386,
+        "puristPop": 103.7,
+        "meltingPop": 179.1,
         "puristForeignFrac": 0.0012,
-        "meltingForeignFrac": 0.0279,
-        "puristYield": 33.38,
-        "meltingYield": 45.34
+        "meltingForeignFrac": 0.4663,
+        "puristYield": 41.27,
+        "meltingYield": 42.94
       }
     },
     {
       "id": "terror",
       "status": "WARN",
-      "summary": "粛清と謀反は明確に結びついている（terror の謀反率 0.08件/世代 vs laissez 0.001件/世代、粛清 7341件・謀反 164件）が、**遅れ0〜6世代の相関がすべて r≈0.11 で平坦**。「3世代後に返ってくる」という時間差の特異性までは実測できていない（定常的な相関と区別がつかない）。 年代記の遡行（trueCause の鎖）では実際に平均3世代前の粛清まで辿れているので、因果の鎖そのものは繋がっている。",
+      "summary": "相関のピークが lag=2（r=0.159）で、設計が想定する3世代ではない。lag3 は r=0.024。",
       "numbers": {
-        "purges": 7341,
-        "rebellions": 164,
+        "purges": 9748,
+        "rebellions": 206,
         "correlationByLag": {
-          "0": 0.1238,
-          "1": 0.0701,
-          "2": 0.0916,
-          "3": 0.1104,
-          "4": 0.0779,
-          "5": 0.0708,
-          "6": 0.129
+          "0": 0.0461,
+          "1": 0.1075,
+          "2": 0.1594,
+          "3": 0.0243,
+          "4": 0.1087,
+          "5": 0.1281,
+          "6": 0.0152
         },
-        "peakLag": 6,
-        "terrorRebellionRate": 0.0849,
-        "laissezRebellionRate": 0.001
+        "peakLag": 2,
+        "terrorRebellionRate": 0.1025,
+        "laissezRebellionRate": 0.004
       }
     },
     {
       "id": "merit-dynastic",
       "status": "PASS",
-      "summary": "上位1家系が局長を占める率は 世襲 96.6% vs 実力主義 73.0%。名家出身率は 97.5% vs 93.1%。透過率が出自分布に出ている。",
+      "summary": "上位1家系が局長を占める率は 世襲 99.4% vs 実力主義 72.4%。名家出身率は 89.2% vs 88.4%。透過率が出自分布に出ている。",
       "numbers": {
-        "meritNobleFrac": 0.9312,
-        "dynasticNobleFrac": 0.9751,
-        "meritDistinctHousesPerAppointment": 0.077,
-        "dynasticDistinctHousesPerAppointment": 0.0181,
-        "meritTopHouseShare": 0.7301,
-        "dynasticTopHouseShare": 0.9659,
-        "appointmentsPerWorld": 176,
-        "concentrationGap": 0.2358
+        "meritNobleFrac": 0.8844,
+        "dynasticNobleFrac": 0.8916,
+        "meritDistinctHousesPerAppointment": 0.0843,
+        "dynasticDistinctHousesPerAppointment": 0.0148,
+        "meritTopHouseShare": 0.724,
+        "dynasticTopHouseShare": 0.9941,
+        "appointmentsPerWorld": 168,
+        "concentrationGap": 0.2701
       }
     },
     {
       "id": "martial-agrarian",
       "status": "PASS",
-      "summary": "攻撃素質 武断 0.643 vs 農本 0.159（差 0.485、z=3.1）。戦死 28件 vs 51件。",
+      "summary": "攻撃素質 武断 0.678 vs 農本 0.189（差 0.489、z=4.4）。戦死 28件 vs 51件。",
       "numbers": {
-        "martialAttack": 0.6434,
-        "agrarianAttack": 0.1586,
-        "delta": 0.4848,
-        "betweenSeedSd": 0.1544,
-        "z": 3.14,
-        "martialWarDeaths": 28.3,
-        "agrarianWarDeaths": 50.5
+        "martialAttack": 0.6779,
+        "agrarianAttack": 0.1891,
+        "delta": 0.4888,
+        "betweenSeedSd": 0.1102,
+        "z": 4.43,
+        "martialWarDeaths": 28.2,
+        "agrarianWarDeaths": 50.7
       }
     },
     {
       "id": "chronicle",
       "status": "PASS",
-      "summary": "謀反 624件中 516件（82.7%）で原因の粛清まで遡れた。遡行の隔たりは平均 2.4世代、3世代以上のものが 175件。",
+      "summary": "謀反 536件中 466件（86.9%）で原因の粛清まで遡れた。遡行の隔たりは平均 2.6世代、3世代以上のものが 181件。",
       "numbers": {
-        "rebellions": 624,
-        "tracedToPurge": 516,
-        "meanLagGens": 2.41,
-        "lagGE3": 175
+        "rebellions": 536,
+        "tracedToPurge": 466,
+        "meanLagGens": 2.58,
+        "lagGE3": 181
+      }
+    },
+    {
+      "id": "p1-order",
+      "status": "PASS",
+      "summary": "20本すべてで初戦時点はフェーズ1（村）。戦後にフェーズ2へ上がったのは 20本。順序は 10体到達 → 初戦 → フェーズ2 になっている。",
+      "numbers": {
+        "villages": 20,
+        "phase1AtFirstContact": 20,
+        "phase2AlreadyAtFirstContact": 0,
+        "phase2AfterWar": 20
+      }
+    },
+    {
+      "id": "p1-scale",
+      "status": "PASS",
+      "summary": "初戦 20本の中央値は 自国 5体 対 相手 5体。4〜6に収まったのは 自国 20/20、相手 20/20。",
+      "numbers": {
+        "battles": 20,
+        "homeMedian": 5,
+        "homeMin": 5,
+        "homeMax": 5,
+        "awayMedian": 5,
+        "awayMin": 5,
+        "awayMax": 5,
+        "target": "4〜6",
+        "homeInRange": 20,
+        "awayInRange": 20
+      }
+    },
+    {
+      "id": "p1-captives",
+      "status": "PASS",
+      "summary": "勝った初戦 11本すべてで捕虜は1体。 `captiveOptions()` の公称とも一致。",
+      "numbers": {
+        "battles": 20,
+        "wonBattles": 11,
+        "captiveMin": 1,
+        "captiveMax": 1,
+        "captiveMedian": 1,
+        "exactlyOne": 11,
+        "target": 1,
+        "optionsCountReported": true,
+        "optionsVsActualMismatch": 0
+      }
+    },
+    {
+      "id": "p1-length",
+      "status": "PASS",
+      "summary": "10体到達までの中央値 4世代（3〜4に収まったのは 14/20本、範囲 3〜7）。",
+      "numbers": {
+        "villages": 20,
+        "medianGens": 4,
+        "min": 3,
+        "max": 7,
+        "target": "3〜4",
+        "inRange": 14,
+        "notReached": 4
       }
     }
   ],
   "integration": {
     "status": "PASS",
-    "summary": "UI が呼ぶ 29個の名前すべてが本物の sim で解決し、開幕→20世代→検索→年代記→具申→ロスター→開戦→捕虜→国境 の27手すべてが例外なく通った。",
+    "summary": "UI が呼ぶ 30個の名前すべてが本物の sim で解決し、開幕→20世代→検索→年代記→具申→ロスター→開戦→捕虜→国境 の27手すべてが例外なく通った。",
     "counts": {
       "filled": 0,
       "missing": 0,
@@ -410,6 +509,11 @@
         "alias": null
       },
       {
+        "name": "TICKS_PER_GEN",
+        "status": "bridge",
+        "alias": null
+      },
+      {
         "name": "traceDown",
         "status": "bridge",
         "alias": null
@@ -434,7 +538,7 @@
       {
         "label": "stepTick/advanceGeneration × 20世代",
         "status": "ok",
-        "note": "第20世代 人口 55"
+        "note": "第20世代 人口 12"
       },
       {
         "label": "assignRole(world, id, role)",
@@ -454,7 +558,7 @@
       {
         "label": "search(world, filters)",
         "status": "ok",
-        "note": "55件"
+        "note": "12件"
       },
       {
         "label": "powerOf(ind)",
@@ -469,12 +573,12 @@
       {
         "label": "nationPower(world)",
         "status": "ok",
-        "note": "= 8"
+        "note": "= 2"
       },
       {
         "label": "chronicle(world, {genMin, kinds, limit})",
         "status": "ok",
-        "note": "40件"
+        "note": "23件"
       },
       {
         "label": "traceUp(world, eventId)",
@@ -494,7 +598,7 @@
       {
         "label": "petitions(world, rng)",
         "status": "ok",
-        "note": "4件"
+        "note": "6件"
       },
       {
         "label": "resolvePetition(world, id, approve, rng)",
@@ -524,7 +628,7 @@
       {
         "label": "startWar(world, rng, opponent)",
         "status": "ok",
-        "note": "18対25"
+        "note": "5対5"
       },
       {
         "label": "stepBattle(battle, rng) を決着まで",
@@ -544,7 +648,7 @@
       {
         "label": "takeCaptives(world, battle, axis, rng)",
         "status": "ok",
-        "note": "4名"
+        "note": "1名"
       },
       {
         "label": "borderDecision(world, captiveId, 'accept')",
@@ -554,7 +658,7 @@
       {
         "label": "戦後に1世代進める",
         "status": "ok",
-        "note": "第21世代 人口 40"
+        "note": "第21世代 人口 11"
       }
     ]
   },
@@ -607,6 +711,13 @@
       "got": "FAIL(検出)",
       "caught": true,
       "detail": "mock 専用の 6個（AXES, SIM_KIND, dominantStrain, lifespanOf, mergeLineage, roleLabel）を mock-filled として検出できる"
+    },
+    {
+      "sabotage": "壊れた序盤(4対19/捕虜3体/第6世代)",
+      "expect": "p1",
+      "got": "FAIL(4項目とも検出)",
+      "caught": true,
+      "detail": "壊れた序盤（第6世代・フェーズ2・4対19・捕虜3体）を食わせて 4/4 項目が落ちた"
     }
   ]
 }
