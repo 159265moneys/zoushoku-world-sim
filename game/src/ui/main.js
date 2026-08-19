@@ -44,7 +44,7 @@ const state = {
   speed: 1, paused: false, selected: null, tab: 'ind',
   castPick: null, openBureau: null, search: null, chron: null,
   battle: null, rosterDebug: false, autoReport: true,
-  firstWarSeen: false, elapsedMs: 0, hadForeign: false,
+  firstWarSeen: false, elapsedMs: 0, hadForeign: false, species: null,
 };
 
 const ctx = {
@@ -64,18 +64,38 @@ const TABS = [
 ];
 
 // ------------------------------------------------------------------ 起動
-openOpening((answers, mode) => {
-  document.getElementById('app').hidden = false;
-  boot(answers, mode);
+//
+// 診断は2段に分かれる。
+//   build … 回答から世界を作る（まだ時計は回さない）。診断の最終画面が
+//           「重心から引かれた実物の2匹」を見せるために、世界がその時点で要る
+//   start … 本編へ。**世界の時計の原点はここ**。診断に何分かけても世界には入らない
+//           （完成基準7「P1が5〜10分」は診断終了時点から測る）
+openOpening({
+  build: (answers, opts) => buildWorld(answers, opts),
+  start: (mode) => startWorld(mode),
 });
 
-function boot(answers, mode) {
+function buildWorld(answers, opts = {}) {
   state.rng = new RNG(SEED);
-  state.world = api.createWorld(SEED, answers, { name: '我らのシャーレ' });
+  // sim の受け口は第2引数。`{centroid}` を渡すと「種族の重心」として読まれ、
+  // 二匹はそこから spread（sim が実測で決めた既定値）で独立に引かれる。
+  // mock は旧形式の配列しか食えないので、そのときだけ配列を渡す。
+  const spec = opts.centroid ? { centroid: opts.centroid } : answers;
+  state.world = api.createWorld(SEED, SIM_SOURCE === 'sim' ? spec : answers, {
+    name: '我らのシャーレ',
+    species: opts.species || null,
+    responses: opts.responses || null,
+  });
+  state.species = opts.species || null;
   seedCards(api, state.world);
   try { state.roster = api.createRoster ? api.createRoster(SEED) : null; }
   catch (e) { console.warn('roster 生成に失敗', e); state.roster = null; }
   registerRoster(state.roster);
+  return state.world;
+}
+
+function startWorld(mode) {
+  document.getElementById('app').hidden = false;
 
   const badge = document.getElementById('sim-badge');
   badge.textContent = SIM_SOURCE === 'sim' ? 'sim' : 'mock sim';
@@ -90,10 +110,11 @@ function boot(answers, mode) {
   document.getElementById('btn-war').onclick = () => startWarFlow();
 
   if (mode === 2) demoSetup();
+  if (state.species) toast(`種族：${state.species.name}（${state.species.code}）`, 'warn');
 
-  // 時計の原点はここ。オープニングに何分かけていても世界の時間には入れない。
+  // 時計の原点はここ。診断に何分かけていても世界の時間には入れない。
   // （`last` はモジュール評価時に置かれているので、リセットしないと初回フレームで
-  //   設問に答えていた時間ぶんの tick が一気に流れ込む）
+  //   答えていた時間ぶんの tick が一気に流れ込む）
   last = performance.now(); acc = 0; tickInGen = 0; state.elapsedMs = 0;
 
   setInterval(loop, FRAME_MS);

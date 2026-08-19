@@ -244,26 +244,114 @@ input[type=range]:disabled::-webkit-slider-thumb{background:var(--tx3)}
   margin-bottom:4px
 }
 .op .tag{text-align:center;color:var(--tx3);font-size:12px;margin-bottom:26px;letter-spacing:.08em}
-.op .qwrap{display:grid;grid-template-columns:1fr 296px;gap:22px;align-items:start}
-.qbox{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:18px}
-.qbox .qn{font-size:10px;color:var(--tx3);letter-spacing:.16em;margin-bottom:5px}
-.qbox .qt{font-size:17px;font-weight:700;margin-bottom:14px;line-height:1.5}
-.opt{
-  display:block;width:100%;text-align:left;background:#12172270;border:1px solid var(--line);
-  color:var(--tx);padding:10px 13px;border-radius:6px;cursor:pointer;margin-bottom:7px;transition:.12s
+.op .wide-card{text-align:left;margin:0 0 20px}
+.btn.lead{padding:11px 26px;font-size:15px}
+.op.cover{text-align:center}
+.op.cover .btn.lead{margin:0 auto}
+
+/* ---- 診断：1問1画面。**問い文の高さと点の位置は固定**。
+   1問ごとに点が動くと毎回狙い直しが要る。60回それをやると遅い。 ---- */
+/* 視線の移動距離＝速度。問い文と点は近く置く */
+.op.quiz{
+  width:min(720px,100%);display:flex;flex-direction:column;
+  min-height:min(430px,80vh);justify-content:flex-start
 }
-.opt:hover{border-color:var(--ac2);background:#16202a}
-.opt.on{border-color:var(--ac);background:#0f2a24}
-.opt .ol{font-size:13.5px}
-.opt .oe{font-size:10px;color:var(--tx3);margin-top:2px}
-.opt.on .oe{color:var(--ac2)}
-.gpre{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:14px}
-.gpre h4{margin:0 0 3px;font-size:11px;letter-spacing:.12em;color:var(--tx3);font-weight:600}
-.gpre .note{font-size:10px;color:var(--tx3);margin-bottom:10px;line-height:1.55}
-.dots{display:flex;gap:5px;justify-content:center;margin-top:18px}
-.dots i{width:7px;height:7px;border-radius:50%;background:#222a3c;display:block}
-.dots i.on{background:var(--ac)}
-.dots i.done{background:var(--ac2)}
+.qhead{margin-bottom:10px}
+.pbar{height:3px;background:#141a28;border-radius:2px;overflow:hidden}
+.pbar i{display:block;height:100%;width:0;background:var(--ac2);transition:width .18s}
+.qmeta{display:flex;align-items:center;justify-content:space-between;margin-top:8px;height:24px}
+.qmeta .qn{font-size:10.5px;color:var(--tx3);letter-spacing:.14em;font-variant-numeric:tabular-nums}
+
+/* 高さを固定する。1行の問いと2行の問いで点の位置が動かないように */
+.qbody{
+  flex:0 0 auto;height:150px;display:flex;align-items:center;justify-content:center;
+  padding:0 8px;text-align:center
+}
+.qbody .qt{
+  font-size:23px;line-height:1.65;font-weight:700;letter-spacing:.02em;
+  opacity:1;transform:none;transition:opacity .1s ease,transform .1s ease
+}
+.qbody .qt.in{animation:qin .16s ease-out}
+.qbody .qt.out{opacity:0;transform:translateY(-6px)}
+@keyframes qin{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+
+.scale{display:flex;align-items:center;justify-content:center;gap:2px;padding:4px 0}
+.scale .end{font-size:11px;color:var(--tx3);white-space:nowrap;letter-spacing:.06em;padding:0 8px}
+.scale .end.agree{color:var(--ac2)}
+.scale .end.oppose{color:#8a6a5c}
+/* 当たり判定は44pxの升。見えている丸の大きさとは別（小さい丸ほど押しにくい、を消す） */
+.scale .cell{
+  width:44px;height:44px;display:flex;align-items:center;justify-content:center;
+  background:transparent;border:0;padding:0;cursor:pointer;border-radius:50%;flex:0 0 auto
+}
+.scale .cell:hover{background:#ffffff08}
+.scale .dot{border-radius:50%;background:transparent;display:block;transition:background .1s,border-color .1s,transform .08s}
+.scale .dot.a{border:2px solid #2f6f61}
+.scale .dot.b{border:2px solid #6b4a3e}
+.scale .dot.mid{border:2px solid #333c52}
+.scale .cell:hover .dot{transform:scale(1.18)}
+.scale .cell:hover .dot.a,.scale .cell.on .dot.a{background:var(--ac);border-color:var(--ac)}
+.scale .cell:hover .dot.b,.scale .cell.on .dot.b{background:#d08a6a;border-color:#d08a6a}
+.scale .cell:hover .dot.mid,.scale .cell.on .dot.mid{background:#5a647d;border-color:#5a647d}
+
+/* 種族が決まっていく帯 */
+.sfoot{margin-top:auto;padding-top:18px;display:flex;flex-direction:column;gap:5px}
+.spine{display:flex;gap:6px}
+.spine .ax{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
+.spine .ax .lab{font-size:11px;color:var(--tx2);height:14px;line-height:14px}
+.spine .ax .tr{position:relative;width:100%;height:4px;background:#141a28;border-radius:2px}
+.spine .ax .tr i{position:absolute;top:0;bottom:0;border-radius:2px;transition:width .18s}
+.spine .ax .tr i.a{background:var(--ac2)}
+.spine .ax .tr i.b{background:#8a5a44}
+
+/* ---- 結果：種族 ---- */
+.op.result{width:min(760px,100%);padding-bottom:30px}
+.code{display:flex;gap:8px;justify-content:center;margin:8px 0 10px}
+.code span{
+  flex:0 0 auto;width:74px;text-align:center;background:var(--panel2);
+  border:1px solid var(--line2);border-radius:7px;padding:8px 0 6px
+}
+.code span.weak{opacity:.45}
+.code b{display:block;font-size:26px;line-height:1;color:var(--ac)}
+.code u{display:block;text-decoration:none;font-size:9.5px;color:var(--tx3);margin-top:5px}
+.sname{text-align:center;font-size:30px;font-weight:700;letter-spacing:.06em}
+.sline{text-align:center;color:var(--tx2);font-size:12px;margin:6px 0 14px}
+.danger-card{border-color:#5a2a22;background:#1a0d0b}
+.danger-card h4{color:#f0907c}
+
+.axrow{display:flex;align-items:center;gap:9px;margin-top:9px}
+.axrow.weak{opacity:.5}
+.axrow .l,.axrow .r{flex:0 0 62px;font-size:11px;color:var(--tx3)}
+.axrow .r{text-align:right}
+.axrow .l.on,.axrow .r.on{color:var(--tx);font-weight:700}
+.axrow .tr{flex:1;position:relative;height:8px;background:#141a28;border-radius:4px}
+.axrow .tr i{position:absolute;top:0;bottom:0;border-radius:4px}
+.axrow .tr i.a{background:var(--ac2)}
+.axrow .tr i.b{background:#8a5a44}
+.axrow .tr .mid{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:#39415a}
+.axrow .pc{flex:0 0 40px;text-align:right;font-size:10.5px;color:var(--tx3);font-variant-numeric:tabular-nums}
+.axdesc{font-size:10.5px;color:var(--tx3);margin:2px 0 0 71px}
+
+.ggroup{margin-top:10px}
+.ggroup .gtitle{font-size:10px;letter-spacing:.12em;color:var(--tx3);margin-bottom:4px}
+.grow{display:flex;align-items:center;gap:9px;margin-bottom:3px}
+.grow .nm{flex:0 0 108px;font-size:11px;color:var(--tx2)}
+.grow .tr{flex:1;position:relative;height:7px;background:#141a28;border-radius:4px;overflow:visible}
+.grow .tr i{position:absolute;left:0;top:0;bottom:0;background:#3a6f8f;border-radius:4px}
+.grow .tr u{position:absolute;top:-3px;width:2px;height:13px;border-radius:1px;margin-left:-1px}
+.grow .tr u.f0{background:var(--ac)}
+.grow .tr u.f1{background:var(--warn)}
+.grow .nu{flex:0 0 26px;text-align:right;font-size:10.5px;color:var(--tx3);font-variant-numeric:tabular-nums}
+
+.founders{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+.fcard{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:10px}
+.fname{font-size:14px;font-weight:700}
+.fcode{font-size:15px;letter-spacing:.14em;color:var(--ac)}
+.fcode.diff{color:var(--warn)}
+.fdev{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.fdev span{font-size:9.5px;padding:1px 5px;border-radius:3px;border:1px solid var(--line2);color:var(--tx3)}
+.fdev span.up{border-color:#2f6f61;color:#7fd6c4}
+.fdev span.down{border-color:#6b4a3e;color:#d0a08a}
 
 /* ---------- battle ---------- */
 #battlefield{width:100%;height:322px;display:block;background:#05070d;border:1px solid var(--line);border-radius:7px}
