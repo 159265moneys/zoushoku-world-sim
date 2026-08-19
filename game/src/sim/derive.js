@@ -195,15 +195,16 @@ export function produce(ind, world, landFactor = 1) {
   const diligence = clamp(0.65 + 0.70 * g.勤勉 - 0.40 * sn.怠惰, 0.20, 1.45);
   const coop = 0.85 + 0.30 * eff(ind, '共同作業適性');
   const envAgri = ind.district === DISTRICT.CENTER ? 1.10 : 0.88;
+  const motiv = motivation(ind, ind.role);   // 意欲係数。望まない役では能力の数割しか出ない
   const envHunt = ind.district === DISTRICT.FRONTIER ? 1.20 : 0.90;
   let gross = 0;
   if (ind.role === ROLE.FARM) {
     gross = C.FARM_BASE * (0.60 + 0.80 * (ind.skills.農技 ?? 0)) * (0.70 + 0.60 * eff(ind, '器用'))
-          * diligence * coop * envAgri * cond * so.産出補正 * landFactor;
+          * diligence * coop * envAgri * cond * so.産出補正 * landFactor * motiv;
   } else if (ind.role === ROLE.HUNT) {
     // 狩りだけが生産と両立する。土地には縛られないが上振れも小さい
     gross = C.HUNT_BASE * (0.60 + 0.75 * (ind.skills.狩技 ?? 0)) * (0.70 + 0.55 * eff(ind, '攻撃素質'))
-          * diligence * envHunt * cond * so.産出補正 * (0.55 + 0.45 * landFactor);
+          * diligence * envHunt * cond * so.産出補正 * (0.55 + 0.45 * landFactor) * motiv;
   }
   // 横領・隠匿：怨恨を溜めた国民は反乱の前にまず収穫を隠す
   const grudge = clamp01(ind.regimeGrudge ?? 0);
@@ -232,9 +233,24 @@ export function willingness(ind, role) {
     return clamp(0.35 + 0.4 * g.攻撃素質 + 0.25 * g.胆力 - 0.3 * g.保身, 0.15, 1.25);
   }
   if (role === ROLE.FARM) {
-    return clamp(0.4 + 0.4 * g.勤勉 + 0.2 * g.共同作業適性 - 0.2 * g.野心, 0.15, 1.25);
+    return clamp(0.4 + 0.4 * g.勤勉 + 0.2 * g.共同作業適性 - 0.2 * g.野心 - 0.07 * g.保身, 0.15, 1.25);
   }
   return 1;
+}
+
+/**
+ * 意欲係数を実効パフォーマンスの倍率にしたもの。平均的な意欲で 1.0 になるよう中心を取る。
+ *
+ * 設計文書の `実効パフォーマンス ＝ 素質 × 練度 × 意欲係数 × 受容係数` のうち、
+ * 意欲係数だけが配役の判定にしか使われておらず、性能に効いていなかった。
+ * そのため保身（責任を負いたくない）に平時のコストが一切なく、
+ * 戦争の起きない世界では逃走癖が上振れしたまま平衡していた。
+ */
+export function motivation(ind, role) {
+  // 平均的な意欲（willingness≒0.55）でちょうど1.0になるよう中心を取る。
+  // ここがずれると全個体に一律の増減が掛かり、意欲の「差」ではなく
+  // 経済全体の水準が動いてしまう（0.6+0.55x にしたとき産出が約1割落ちた）。
+  return clamp(0.60 + 0.73 * willingness(ind, role), 0.55, 1.25);
 }
 
 /** 受容係数：周囲が認めるか。実績がなければ無名の抜擢は機能しない。 */

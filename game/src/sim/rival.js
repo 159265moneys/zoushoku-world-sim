@@ -47,61 +47,61 @@ export const PROFILES = {
   martial: {
     id: 'martial', name: '武断', label: '狩り・実戦に厚く配役。武力素質を優先抜擢。降伏しない',
     roleMix: { hunt: 0.55, drill: 0.25 }, frontier: 0.55,
-    promote: 'martial', captive: 'accept', purgeThreshold: 0.88, purgeRate: 0.03,
+    promote: 'martial', captive: 'accept', purgeThreshold: 0.88, purgeRate: 0.03, purgeTrigger: 0.22,
     transparency: 0.55, surrenderAt: 0, foreignBias: 0.1, inbreedGuard: 0.2,
     fertBias: 0.95, deployTop: 0.65, warAppetite: 0.85,
-    prefer: { 攻撃素質: 2.08, 胆力: 1.30, 保身: -1.30 },
+    prefer: { 攻撃素質: 2.1, 胆力: 1.3, 保身: -1.3, 頑健: 0.9, 非情: 0.8, 好奇心: -0.7 },
     cards: { deploy_top: 70, drill: 25, hunt_ratio: 55, frontier: 55, raise_young: 45 },
   },
   agrarian: {
     id: 'agrarian', name: '農本', label: '産出優先。備蓄を厚く。戦争は最小限',
     roleMix: { hunt: 0.15, drill: 0.02 }, frontier: 0.15,
-    promote: 'agrarian', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
+    promote: 'agrarian', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0, purgeTrigger: 9,
     transparency: 0.5, surrenderAt: 0.55, foreignBias: 0.05, inbreedGuard: 0.25,
     fertBias: 1.0, deployTop: 0.22, warAppetite: 0.12,
-    prefer: { 勤勉: 1.95, 器用: 1.43, 共同作業適性: 1.04 },
+    prefer: { 勤勉: 2.0, 器用: 1.4, 共同作業適性: 1.0, 従順: 0.9, 野心: -0.9, 攻撃素質: -0.8 },
     cards: { deploy_top: 20, drill: 0, hunt_ratio: 15, stockpile: 45, frontier: 10 },
   },
   fecund: {
     id: 'fecund', name: '多産', label: '繁殖性優先。質より量。密度ストレスを許容',
     roleMix: { hunt: 0.3, drill: 0.05 }, frontier: 0.3,
-    promote: 'fecund', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
+    promote: 'fecund', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0, purgeTrigger: 9,
     transparency: 0.6, surrenderAt: 0.45, foreignBias: 0.3, inbreedGuard: 0.05,
     fertBias: 1.45, deployTop: 0.4, warAppetite: 0.3,
-    prefer: { 繁殖性: 2.60, 情愛: 1.04, 私欲: -0.78 },
+    prefer: { 繁殖性: 2.6, 情愛: 1.0, 私欲: -0.8, 生育速度: 1.1, 寿命: -0.7, 序列意識: -0.6 },
     cards: { deploy_top: 40, hunt_ratio: 30, ration_equal: 90, frontier: 30 },
   },
   purist: {
     id: 'purist', name: '純血', label: '捕虜をほぼ誅殺。自国産の血だけで回す',
     roleMix: { hunt: 0.3, drill: 0.12 }, frontier: 0.25,
-    promote: 'purist', captive: 'kill', purgeThreshold: 0.95, purgeRate: 0.03,
+    promote: 'purist', captive: 'kill', purgeThreshold: 0.95, purgeRate: 0.03, purgeTrigger: 0.2,
     transparency: 0.25, surrenderAt: 0.3, foreignBias: -0.95, inbreedGuard: 0,
     fertBias: 1.05, deployTop: 0.45, warAppetite: 0.45,
-    prefer: { 序列意識: 1.30, 頑迷: 1.17, 好奇心: -0.91 },
+    prefer: { 序列意識: 1.3, 頑迷: 1.2, 好奇心: -0.9, 信仰性: 1.0, 柔軟: -1.0, 懐疑: -0.8 },
     cards: { deploy_top: 45, hunt_ratio: 30, hereditary: 90, frontier: 20 },
   },
   melting: {
     id: 'melting', name: '融和', label: '捕虜を全部受け入れる。混血を最大化',
     roleMix: { hunt: 0.3, drill: 0.12 }, frontier: 0.3,
-    promote: 'melting', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
+    promote: 'melting', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0, purgeTrigger: 9,
     transparency: 0.8, surrenderAt: 0.4, foreignBias: 0.95, inbreedGuard: 0.6,
     fertBias: 1.05, deployTop: 0.45, warAppetite: 0.5,
-    prefer: { 柔軟: 1.56, 好奇心: 1.30, 頑迷: -1.17 },
+    prefer: { 柔軟: 1.6, 好奇心: 1.3, 頑迷: -1.2, 共同作業適性: 1.0, 誇り: -0.8, 感応: 0.9 },
     cards: { deploy_top: 45, hunt_ratio: 30, hereditary: 10, ration_equal: 80 },
   },
   terror: {
     id: 'terror', name: '恐怖', label: '怨恨を無視して粛清を多用。従順を選抜',
     roleMix: { hunt: 0.35, drill: 0.2 }, frontier: 0.4,
-    promote: 'terror', captive: 'kill', purgeThreshold: 0.72, purgeRate: 0.08,
+    promote: 'terror', captive: 'kill', purgeThreshold: 0.72, purgeRate: 0.08, purgeTrigger: 0.14,
     transparency: 0.3, surrenderAt: 0.2, foreignBias: -0.4, inbreedGuard: 0.1,
     fertBias: 1.0, deployTop: 0.55, warAppetite: 0.6,
-    prefer: { 従順: 2.34, 野心: -1.95, 誇り: -1.43 },
+    prefer: { 従順: 2.3, 野心: -1.9, 誇り: -1.4, 保身: 1.0, 統率素質: -0.9, 感受性: -0.8 },
     cards: { deploy_top: 55, drill: 20, hunt_ratio: 35, hereditary: 60 },
   },
   laissez: {
     id: 'laissez', name: '放任', label: 'ほとんど何もしない。局長に丸投げ',
     roleMix: { hunt: 0.3, drill: 0.05 }, frontier: 0.2,
-    promote: 'laissez', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
+    promote: 'laissez', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0, purgeTrigger: 9,
     transparency: 0.5, surrenderAt: 0.5, foreignBias: 0, inbreedGuard: 0.1,
     fertBias: 1.0, deployTop: 0.4, warAppetite: 0.25,
     prefer: null,
@@ -110,28 +110,28 @@ export const PROFILES = {
   pious: {
     id: 'pious', name: '信仰', label: '信仰性・団結傾向を選抜。排他的で捕虜を拒む',
     roleMix: { hunt: 0.25, drill: 0.12 }, frontier: 0.2,
-    promote: 'pious', captive: 'return', purgeThreshold: 0.85, purgeRate: 0.035,
+    promote: 'pious', captive: 'return', purgeThreshold: 0.85, purgeRate: 0.035, purgeTrigger: 0.22,
     transparency: 0.35, surrenderAt: 0.25, foreignBias: -0.7, inbreedGuard: 0.05,
     fertBias: 1.15, deployTop: 0.4, warAppetite: 0.4,
-    prefer: { 信仰性: 2.34, 団結傾向: 1.56, 懐疑: -1.56 },
+    prefer: { 信仰性: 2.3, 団結傾向: 1.5, 懐疑: -1.5, 自律: -1.0, 情愛: 0.8, 知性: -0.7 },
     cards: { deploy_top: 40, hunt_ratio: 25, hereditary: 70, ration_equal: 70 },
   },
   merit: {
     id: 'merit', name: '実力主義', label: '素質上位を抜擢。家柄を無視（透過率を最大に）',
     roleMix: { hunt: 0.35, drill: 0.15 }, frontier: 0.45,
-    promote: 'merit', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0,
+    promote: 'merit', captive: 'accept', purgeThreshold: 1.5, purgeRate: 0, purgeTrigger: 9,
     transparency: 0.95, surrenderAt: 0.45, foreignBias: 0.4, inbreedGuard: 0.5,
     fertBias: 1.0, deployTop: 0.5, warAppetite: 0.5,
-    prefer: { 知性: 1.69, 技術習得: 1.30, 野心: 0.78 },
+    prefer: { 知性: 1.7, 技術習得: 1.3, 野心: 0.8, 好奇心: 1.0, 頑迷: -1.0, 器用: 0.9 },
     cards: { deploy_top: 50, drill: 15, hunt_ratio: 35, hereditary: 0, frontier: 45 },
   },
   dynastic: {
     id: 'dynastic', name: '世襲', label: '局長の血統を固定（透過率を最小に）',
     roleMix: { hunt: 0.28, drill: 0.1 }, frontier: 0.15,
-    promote: 'dynastic', captive: 'accept', purgeThreshold: 1.1, purgeRate: 0.015,
+    promote: 'dynastic', captive: 'accept', purgeThreshold: 1.1, purgeRate: 0.015, purgeTrigger: 0.26,
     transparency: 0.05, surrenderAt: 0.5, foreignBias: -0.3, inbreedGuard: 0,
     fertBias: 1.0, deployTop: 0.35, warAppetite: 0.3,
-    prefer: { 序列意識: 1.69, 頑迷: 1.43, 柔軟: -1.17 },
+    prefer: { 序列意識: 1.7, 頑迷: 1.4, 柔軟: -1.2, 従順: 1.0, 世代間伝承意欲: 1.1, 好奇心: -0.7 },
     cards: { deploy_top: 35, hunt_ratio: 28, hereditary: 100, frontier: 10 },
   },
 };
@@ -211,15 +211,23 @@ export function runRivalTurn(world, owner, rng) {
   }
 
   // --- 殺す：粛清。これが一番強い淘汰圧になる ---
-  // ただし小国では撃たない。人口20の国から毎世代2人消すと、思想が血に出る前に国が消える
-  if (pf.purgeRate > 0 && world.people.size >= 25) {
+  // ただし小国では撃たない。人口20の国から毎世代2人消すと、思想が血に出る前に国が消える。
+  //
+  // そして毎世代コンスタントには撃たない。オーナーは日程で殺すのではなく、
+  // 「賢くて恨んでいる」が閾値を超えたときに殺す。定常的に撃っていたときは
+  // 粛清と謀反の相関が遅れ0〜6世代で平坦になり、「3世代後に返る」という
+  // 時間差そのものが測れなかった（定常な相関と区別がつかない）。
+  const danger = world.regimeGrudge + agitatorShare(world);
+  const armed = danger > pf.purgeTrigger && (world.gen - (owner.lastPurgeGen ?? -99)) >= 3;
+  if (pf.purgeRate > 0 && world.people.size >= 25 && armed) {
+    owner.lastPurgeGen = world.gen;
     const scorer = PURGE_SCORE[pf.id] || (() => 0);
     const cands = [...world.people.values()]
       .filter((p) => p.age >= C.ADULT_AGE && !p.founder)
       .map((p) => [p, scorer(p, world)])
       .filter(([, s]) => s >= pf.purgeThreshold)
       .sort((a, b) => b[1] - a[1]);
-    const cap = Math.max(1, Math.round(world.people.size * pf.purgeRate));
+    const cap = Math.max(1, Math.round(world.people.size * pf.purgeRate * 3));
     for (let i = 0; i < Math.min(cap, cands.length); i++) {
       const ev = purge(world, cands[i][0].id, rng, '粛清');
       if (ev) { events.push(ev); owner.purged++; }
@@ -233,6 +241,21 @@ export function runRivalTurn(world, owner, rng) {
     else if (world.cards.deploy_top?.on) setCard(world, 'deploy_top', true, pf.cards.deploy_top ?? 40);
   }
   return events;
+}
+
+/**
+ * 危険な層の割合。高感受性 × 高知性 × 怨恨＝扇動者。
+ * オーナーには「賢くて恨んでいる」が数字で見えるが、証拠はない。
+ * 疑わしいだけで撃てる——その引き金がこれ。
+ */
+function agitatorShare(world) {
+  const pop = world.people.size;
+  if (!pop) return 0;
+  let n = 0;
+  for (const p of world.people.values()) {
+    if (p.genes.感受性 > 0.55 && p.genes.知性 > 0.5 && p.regimeGrudge > 0.35) n++;
+  }
+  return n / pop;
 }
 
 function pickChief(world, pf, bkey, rng) {

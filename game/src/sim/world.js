@@ -551,8 +551,16 @@ function chooseMate(w, mother, males, rng) {
     if (bias < 0) s *= same ? 1 : Math.max(0.02, 1 + bias * 1.2);
     // 個人怨恨は結ばれない
     if (mother.grudges[m.id] > 0.4 || m.grudges[mother.id] > 0.4) s *= 0.15;
-    // 近親を避けるガード（既定0＝避けない。閉じた血統は劣性ホモが溜まって腐る）
-    if (w.mating.inbreedGuard > 0 && related(w, m, mother)) s *= Math.max(0.05, 1 - w.mating.inbreedGuard);
+    // 村は狭い。近い血ほど結ばれやすく、その結果として劣性ホモが溜まる。
+    // inbreedGuard（融和・実力主義が高く、純血・世襲がゼロ）だけがこれを抑える。
+    // 村（P1）では相手が数人しかいないので、そもそも選びようがない。効かせるのはP2から
+    const kin = w.phase === PHASE.VILLAGE ? 0 : kinship(w, m, mother);
+    if (kin > 0) {
+      // guard=0 なら近い血を好み、0.5 で中立、1 なら同じ強さで避ける。
+      // 線形の減衰にすると「避けているはずの融和国が実は近親を好む」状態になる
+      const guard = clamp01(w.mating.inbreedGuard ?? 0);
+      s *= Math.pow(1 + C.ENDOGAMY * kin, 1 - 2 * guard);
+    }
     s = Math.max(0.001, s);
     scored.push([m, s]); total += s;
   }
@@ -577,12 +585,37 @@ function preferenceMatch(w, ind) {
   return clamp(m, 0.04, 12);
 }
 
-function related(w, a, b) {
-  if (!a.fatherId && !b.fatherId) return false;
-  if (a.fatherId && (a.fatherId === b.fatherId || a.fatherId === b.id)) return true;
-  if (a.motherId && (a.motherId === b.motherId || a.motherId === b.id)) return true;
-  if (b.fatherId === a.id || b.motherId === a.id) return true;
-  return false;
+/**
+ * 血の近さ。1.0＝親子・兄弟、0.5＝いとこ（祖父母を共有）、0＝他人。
+ *
+ * これが要る理由：成人男性が50人いる村で交配相手を能力だけで選ぶと、
+ * 事実上のランダム交配になり、劣性ホモ率が理論下限（q²）から動かない。
+ * 実測で閉鎖世界の劣性ホモ率が0.136、外交ありの下限が0.1225——
+ * つまり**閉じても腐っていなかった**。腐っていないものは治らないので、
+ * 雑種強勢も測れなかった。
+ * 村は狭く、人は近くで結ばれる。その局所性こそが近親交配の実体である。
+ */
+function kinship(w, a, b) {
+  if (a.id === b.id) return 1;
+  const near = [a.id, a.fatherId, a.motherId].filter((x) => x != null);
+  const nearB = new Set([b.id, b.fatherId, b.motherId].filter((x) => x != null));
+  for (const x of near) if (nearB.has(x)) return 1;
+  const grand = (ind) => {
+    const s = [];
+    for (const pid of [ind.fatherId, ind.motherId]) {
+      if (pid == null) continue;
+      const p = w.people.get(pid) ?? w.dead.get(pid);
+      if (!p) continue;
+      if (p.fatherId != null) s.push(p.fatherId);
+      if (p.motherId != null) s.push(p.motherId);
+    }
+    return s;
+  };
+  const gb = new Set(grand(b));
+  for (const x of grand(a)) if (gb.has(x)) return 0.5;
+  // 同じ家（父系の氏族）は、系図では辿れなくても近い血である
+  if (a.house && a.house === b.house) return 0.35;
+  return 0;
 }
 
 function birth(w, father, mother, rng, pFemale = 0.5) {
@@ -593,7 +626,7 @@ function birth(w, father, mother, rng, pFemale = 0.5) {
     fatherId: father.id, motherId: mother.id,
     lineage,
     district: rng.bool(0.5) ? father.district : mother.district,
-    origin: rng.bool(0.5) ? father.origin : mother.origin,
+    origin: dominantOrigin(lineage, w.originKey),
     house: father.house,                                  // 家系は父系で継ぐ
     noble: !!(father.noble || mother.noble || father.bureau || mother.bureau),
   });
@@ -629,6 +662,14 @@ function birth(w, father, mother, rng, pFemale = 0.5) {
     }
   }
   return ev;
+}
+
+/** 血統の最大成分をその個体の出自とする。コイン投げで継ぐと外来の系統が
+ *  遺伝子を残したままラベルだけランダムウォークで消える（実測で16世代で0になった）。 */
+function dominantOrigin(lineage, fallback) {
+  let best = fallback, bv = -1;
+  for (const k in lineage) if (lineage[k] > bv) { bv = lineage[k]; best = k; }
+  return best;
 }
 
 function mixLineage(a, b, fallback = 'home') {
