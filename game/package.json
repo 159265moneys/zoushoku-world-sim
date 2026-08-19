@@ -1,0 +1,11 @@
+{
+  "name": "zoushoku",
+  "private": true,
+  "type": "module",
+  "description": "増殖 v2。ブラウザは素のESモジュールで動く。このファイルは node からも同じ src/ を import するために必要（type:module）。",
+  "scripts": {
+    "test": "node test/run.js",
+    "test:quick": "node test/run.js --quick",
+    "serve": "python3 -m http.server 8000"
+  }
+}
