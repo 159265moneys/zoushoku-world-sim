@@ -18,7 +18,7 @@ export { petitions, resolvePetition, STAKE } from './petitions.js';
 export {
   makeGhost, startWar, stepBattle, runBattle, surrender,
   captiveOptions, takeCaptives, borderDecision, publicRank,
-  settleWar, applyRout, selectDeployment, rankNation, CAPTIVE_AXES,
+  settleWar, applyRout, selectDeployment, rankNation, injectOutsideBlood, CAPTIVE_AXES,
 } from './battle.js';
 
 export {

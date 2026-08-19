@@ -449,6 +449,11 @@ export function captiveOptions(battle) {
  * @param mySide 自分がどちら側か（ライバル国どうしの戦では 'away' 側も引く）
  */
 export function takeCaptives(world, battle, axis, rng, mySide = 'home') {
+  // 互換：戦闘を経由せずに外来血だけを入れたい呼び出し
+  // （近親交配からの回復を測るときなど）。第2引数が battle ではなく RNG のとき。
+  if (battle && typeof battle.next === 'function') {
+    return injectOutsideBlood(world, battle, axis ?? 1);
+  }
   const cacheKey = 'captives_' + mySide;
   if (battle[cacheKey]) return battle[cacheKey];
   const otherSide = mySide === 'home' ? 'away' : 'home';
@@ -488,6 +493,28 @@ export function takeCaptives(world, battle, axis, rng, mySide = 'home') {
     text: `${fromName}から${out.length}名を国境まで連れ帰った`,
     trueCause: battle.startEvent?.id ?? null,
   });
+  return out;
+}
+
+/**
+ * 外来血をn体入れる。戦争を経ずに雑種強勢だけを見たいときの入口。
+ * 遺伝子は無関係な国から引くので、劣性ホモがヘテロに戻って荷重が隠れる。
+ */
+export function injectOutsideBlood(world, rng, n = 1) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const ghost = makeGhost((rng.int(1e9) ^ (world.gen * 2654435761)) >>> 0, world.phase, 1);
+    const donor = ghost.people[rng.int(ghost.people.length)];
+    if (!donor) continue;
+    const cap = { ...donor };
+    cap.fromNation = ghost.name;
+    cap.grudgeBrought = clamp01((donor.regimeGrudge ?? 0) + 0.35);
+    cap.ledger = [];
+    world.border.set(cap.id, cap);
+    world.foreign.set(cap.id, cap);
+    borderDecision(world, cap.id, 'accept');
+    out.push(cap);
+  }
   return out;
 }
 
