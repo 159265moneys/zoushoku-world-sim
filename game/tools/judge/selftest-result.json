@@ -1,0 +1,103 @@
+{
+  "stamp": "2026-08-19 18:27:21",
+  "pass": true,
+  "fail": 0,
+  "worlds": [
+    {
+      "world": "plural",
+      "checks": [
+        {
+          "name": "問1 支配戦略",
+          "want": "支配戦略なし（NONE か MULTI_UNIVERSAL）",
+          "got": "NONE",
+          "ok": true
+        },
+        {
+          "name": "問2 型の数",
+          "want": "型が2本以上",
+          "got": "3",
+          "ok": true
+        },
+        {
+          "name": "問3 相手依存",
+          "want": "相手依存",
+          "got": "OPPONENT_DEPENDENT",
+          "ok": true
+        },
+        {
+          "name": "問4 上達",
+          "want": "上達が観測できる",
+          "got": "WEAK",
+          "ok": true
+        }
+      ],
+      "d": 0.6228871092482922,
+      "clusterRatio": 2.8109528814235114,
+      "oppRatio": 2.0997322605885547
+    },
+    {
+      "world": "dominant",
+      "checks": [
+        {
+          "name": "問1 支配戦略",
+          "want": "支配戦略あり",
+          "got": "DOMINANT_TYPE",
+          "ok": true
+        },
+        {
+          "name": "問2 型の数",
+          "want": "（不問）",
+          "got": "1",
+          "ok": true
+        },
+        {
+          "name": "問3 相手依存",
+          "want": "相手依存なし",
+          "got": "INDISTINGUISHABLE_FROM_NOISE",
+          "ok": true
+        },
+        {
+          "name": "問4 上達",
+          "want": "上達が観測できる",
+          "got": "CLEAR",
+          "ok": true
+        }
+      ],
+      "d": 1.2969845951966068,
+      "clusterRatio": 1.2802681117463328,
+      "oppRatio": 0.6955570487541309
+    },
+    {
+      "world": "noise",
+      "checks": [
+        {
+          "name": "問1 支配戦略",
+          "want": "判定不能と自己申告する",
+          "got": "NO_SIGNAL",
+          "ok": true
+        },
+        {
+          "name": "問2 型の数",
+          "want": "（不問）",
+          "got": "1",
+          "ok": true
+        },
+        {
+          "name": "問3 相手依存",
+          "want": "相手依存を誤検出しない",
+          "got": "INDISTINGUISHABLE_FROM_NOISE",
+          "ok": true
+        },
+        {
+          "name": "問4 上達",
+          "want": "上達の定規が無いと判定",
+          "got": "NOT_OBSERVABLE",
+          "ok": true
+        }
+      ],
+      "d": 0.14090280991075343,
+      "clusterRatio": 1.1299136082545318,
+      "oppRatio": 1.011421135510351
+    }
+  ]
+}
