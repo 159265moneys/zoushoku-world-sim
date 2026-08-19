@@ -21,6 +21,55 @@ const R = (id, title, claim) => ({ id, title, claim, status: 'SKIP', summary: ''
  * 「歴史が足りないので測れなかった」を FAIL に混ぜないための唯一の入口。
  * 戻り値が null なら、その検査は INCONCLUSIVE として確定済み。
  */
+/**
+ * 種ごとの値のばらつきから「その結論が何本の種で安定するか」を出す。
+ *
+ * 閾値付近の項目は、種が3本しかないと乱数列だけで PASS/WARN が入れ替わる。
+ * 「係数をいじって緑にする」のはノイズへの過適合なので、まず
+ * **見えているブレが本物の効果なのか標本不足なのか**を数字で切り分ける。
+ *
+ * @param values 種ごとの観測値
+ * @param isOutlier 値 -> その種が「振り切れた」と判定されるか
+ */
+export function resolution(values, isOutlier) {
+  const n = values.length;
+  if (n < 2) return { n, note: '種が1本以下では分解能を出せない' };
+  const m = mean(values), s = sd(values);
+  const se = s / Math.sqrt(n);
+  const ci95 = 1.96 * se;
+  const outliers = isOutlier ? values.filter(isOutlier).length : 0;
+  const pOut = n ? outliers / n : 0;
+  // 3本しか引かなかったとき、少なくとも1本が振り切れて見える確率
+  const pFlukeIn3 = 1 - Math.pow(1 - pOut, 3);
+  // 平均を ±0.02 の精度で言うのに要る種数
+  const needFor02 = s > 0 ? Math.ceil(Math.pow(1.96 * s / 0.02, 2)) : 1;
+  return {
+    n, mean: round(m, 4), sd: round(s, 4), stderr: round(se, 4),
+    ci95lo: round(m - ci95, 4), ci95hi: round(m + ci95, 4),
+    outlierSeeds: outliers, outlierRate: round(pOut, 4),
+    chanceOfSeeingOneIn3Seeds: round(pFlukeIn3, 3),
+    seedsNeededForPlusMinus002: needFor02,
+  };
+}
+
+function resolutionNote(res, label) {
+  if (!res || res.n < 2) return '';
+  const lines = [
+    `**${label} の分解能（種 ${res.n}本）**`,
+    '',
+    `- 種ごとの平均 ${res.mean} ± ${res.sd}（標準偏差）、平均の95%区間 ${res.ci95lo}〜${res.ci95hi}`,
+    `- 振り切れた種 ${res.outlierSeeds}/${res.n}（${pct(res.outlierRate)}）`,
+    `- **種を3本しか引かなければ、${pct(res.chanceOfSeeingOneIn3Seeds)} の確率で「1/3種が振り切れ」が見える**`,
+    `- 平均を ±0.02 の精度で言うには ${res.seedsNeededForPlusMinus002}本の種が要る`,
+  ];
+  if (res.chanceOfSeeingOneIn3Seeds >= 0.2) {
+    lines.push('', '→ 3種で見えていた振れは**標本不足で普通に起きる範囲**。係数を動かす根拠にはならない。');
+  } else if (res.outlierRate > 0) {
+    lines.push('', '→ 種数を増やしても振り切れが残る。標本不足では説明できないので、機構側を見る価値がある。');
+  }
+  return lines.join('\n');
+}
+
 function gate(r, runs, opts = {}) {
   const need = opts.min ?? 1;
   const v = viableOnly(runs);
@@ -148,11 +197,27 @@ export function checkFrequency(runs, opts = {}) {
     overall.status = st;
     rows.push(overall);
 
+    // 種ごとの末尾平均から分解能を出す。3種で見えた振れが標本不足かを切り分ける。
+    const perSeedTails = perSeed.map(a => mean(tail(a, 0.2)));
+    const res = resolution(perSeedTails, v => v > FIX_HI || v < FIX_LO);
+    overall.resolution = res;
+
     lines.push(`### ${name}  →  ${st}`);
     lines.push('```');
     lines.push(lineChart(avg, { width: 68, height: 10, lo: 0, hi: 1, xlabel: `gen 0 .. ${L}` }));
     lines.push('```');
-    lines.push(`末尾20%平均=${round(tm, 3)} 標準偏差=${round(tsd, 4)} 全期間 min=${overall.min} max=${overall.max} / 固定した種 ${fixedSeeds}/${runs.length}`);
+    lines.push(`末尾20%平均=${round(tm, 3)} 標準偏差=${round(tsd, 4)} 全期間 min=${overall.min} max=${overall.max} / 振り切れた種 ${fixedSeeds}/${runs.length}`);
+    lines.push('');
+    if (runs.length >= 8) {
+      lines.push(resolutionNote(res, name));
+      lines.push('');
+      lines.push('種ごとの末尾平均:');
+      lines.push('```');
+      lines.push(histogram(perSeedTails, { bins: 10, lo: 0, hi: 1, width: 30 }));
+      lines.push('```');
+    } else {
+      lines.push(`> 種が ${runs.length}本しかないので、この値が本物かノイズかは判定できない。\`node test/run.js --deep\` で種数を増やして確かめること。`);
+    }
     lines.push('');
   }
 
@@ -290,6 +355,16 @@ export function checkInbreeding(closedRuns, openRuns, recoveryRuns) {
   const cL = mean(loadOf(closedRuns)), oL = mean(loadOf(openRuns));
   const cP = mean(popOf(closedRuns)), oP = mean(popOf(openRuns));
 
+  // 閉鎖と開放は同じ種から作っているので、**種ごとに対にして**差を見る。
+  // 群平均どうしの比較より遥かに感度が高く、「綱引きか標本不足か」もこれで分かる。
+  const bySeed = new Map();
+  for (const x of closedRuns) bySeed.set(x.seed, { closed: mean(tail(seriesOf(x.obs, s => s.homo), 0.25)) });
+  for (const x of openRuns) { const e = bySeed.get(x.seed); if (e) e.open = mean(tail(seriesOf(x.obs, s => s.homo), 0.25)); }
+  const paired = [...bySeed.values()].filter(e => e.closed != null && e.open != null);
+  const diffs = paired.map(e => e.closed - e.open);
+  const positive = diffs.filter(d => d > 0).length;
+  const pairRes = diffs.length >= 2 ? resolution(diffs, d => d <= 0) : null;
+
   r.numbers = {
     closedHomozygosity: round(cH, 4), openHomozygosity: round(oH, 4),
     closedValueHomozygosity: round(cL, 4), openValueHomozygosity: round(oL, 4),
@@ -353,6 +428,28 @@ export function checkInbreeding(closedRuns, openRuns, recoveryRuns) {
     r.summary = `閉鎖 ${round(cH, 3)} vs 開放 ${round(oH, 3)}（+${round(rise, 3)}）。血の濃さ（全座位ホモ率）も ${round(cL, 3)} vs ${round(oL, 3)}。` +
       (recovered != null ? ` 外来血の注入で ${round(recovered, 4)} 低下。` : '');
   }
+  r.numbers.pairedSeeds = diffs.length;
+  r.numbers.pairedPositive = positive;
+  r.numbers.pairedMeanDiff = diffs.length ? round(mean(diffs), 4) : null;
+
+  const pairLines = [];
+  if (diffs.length >= 2) {
+    pairLines.push('');
+    pairLines.push(`**同じ種で対にした比較（${diffs.length}組）** — 群平均どうしより感度が高い`);
+    pairLines.push('');
+    pairLines.push(`- 閉鎖のほうが劣性ホモが高かった種: **${positive}/${diffs.length}**（${pct(positive / diffs.length)}）`);
+    pairLines.push(`- 差の平均 ${round(mean(diffs), 4)}、95%区間 ${pairRes.ci95lo}〜${pairRes.ci95hi}`);
+    if (pairRes.ci95lo > 0) pairLines.push('- 95%区間が0を跨いでいない＝**近親交配ペナルティは標本のブレでは説明できない**');
+    else pairLines.push('- 95%区間が0を跨いでいる＝この種数では効果の有無を言い切れない');
+    if (diffs.length >= 8) { pairLines.push(''); pairLines.push(resolutionNote(pairRes, '閉鎖−開放の差')); }
+    else pairLines.push(`\n> 種が ${diffs.length}組しかない。\`node test/run.js --deep\` で確かめること。`);
+    pairLines.push('');
+    pairLines.push('種ごとの差（閉鎖 − 開放、正なら設計どおり）:');
+    pairLines.push('```');
+    pairLines.push(histogram(diffs, { bins: 9, lo: Math.min(-0.05, minOf(diffs)), hi: Math.max(0.15, maxOf(diffs)), width: 30 }));
+    pairLines.push('```');
+  }
+
   r.detail = [
     '```',
     barChart([
@@ -361,6 +458,7 @@ export function checkInbreeding(closedRuns, openRuns, recoveryRuns) {
     ], { width: 36 }),
     '```',
     `平均人口: 閉鎖 ${round(cP, 1)} / 開放 ${round(oP, 1)}`,
+    ...pairLines,
     ...recLines,
   ].join('\n');
   return r;

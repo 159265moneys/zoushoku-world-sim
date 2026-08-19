@@ -112,6 +112,9 @@ function refreshWarReady(w) {
   const enough = w.people.size >= 10;
   const cooled = (w.gen - (w.lastWarGen ?? -99)) >= 2;
   const idle = !(w.borderQueue && w.borderQueue.length);
+  // 初戦だけは不応期を無視する。sim は 10体に達すると pendingFirstWar を立てて
+  // フェーズ移行を止めるので、ここで戦えないと世界が10体で止まったままになる。
+  if (w.pendingFirstWar && idle) { w.warReady = true; return; }
   w.warReady = !!(enough && cooled && idle);
 }
 
@@ -177,7 +180,9 @@ function projectBattle(view) {
     const dst = view[uiKey];
     const base = side.c0 || 1;
     dst.cohesion = clamp((side.cohesion ?? 0) / base);
-    dst.name = side.name || dst.name;
+    // 名前は開戦時に決めたものを使う。sim は home を一律 '自国' と呼ぶので、
+    // 上書きすると団結バーとモーダルの見出しから国の名前が消える。
+    if (!dst.name) dst.name = side.name;
 
     side.units.forEach((u, i) => {
       let f = dst.fighters[i];
@@ -345,11 +350,20 @@ export function makeAdapter(sim) {
 
   A.advanceGeneration = (w, rng) => {
     const res = sim.advanceGeneration(w, rng);
+    // 世代境界で sim が mating を書き直すことがあるので、adapter が肩代わりして
+    // いるカードの値はここで必ず戻す（戻さないと置いたカードが1世代で消える）。
+    A._applyMix(w);
     refreshWarReady(w);
     // sim は {events, ...} を返す。UI は配列を回す。
     if (Array.isArray(res)) return res;
     return (res && res.events) || [];
   };
+
+  // 世代の長さは core/model.js の GEN_MS（実時間）と、sim の TICKS_PER_GEN
+  // （1世代が何tickか）の2つで決まる。後者は sim の経済がその粒度で調律されて
+  // いる数なので、画面が勝手な数を使ってはいけない（120刻みで回していたときは
+  // 1世代あたり10倍の産出と練度が入っていた）。
+  A.TICKS_PER_GEN = (sim.SIM_CONST && sim.SIM_CONST.TICKS_PER_GEN) || 12;
 
   A.createRoster = (seed) => sim.createRoster(seed);
   A.stepRoster = (roster, rng) => (sim.advanceRoster || sim.stepRoster)?.(roster, rng);
@@ -437,15 +451,30 @@ export function makeAdapter(sim) {
   A.captiveOptions = (view) => {
     const o = sim.captiveOptions(view._sim) || {};
     const axes = (o.axes || []).map(a => (typeof a === 'string' ? { key: a, label: a } : a));
+    // 何体引けるかは sim の captiveOptions が返さない（takeCaptives が
+    // CAPTIVE_COUNT[開戦時のフェーズ] から乱数で決める）。
+    // 画面が「1体」と言い切って3体来る、という食い違いを起こさないよう、
+    // ここで同じ定数から幅を出して、幅のまま出す。
+    const [lo, hi] = captiveRange(view._sim);
     return {
       won: o.winner ?? (view.outcome === 'win'),
       axes,
-      count: o.count ?? 1,
+      count: lo,
+      countMax: hi,
+      countLabel: lo === hi ? `${lo} 体` : `${lo}〜${hi} 体`,
       poolSize: o.survivors ?? o.poolSize ?? 0,
       pool: o.pool && Array.isArray(o.pool) ? o.pool : [],
       note: o.note || '',
     };
   };
+
+  /** 開戦時のフェーズで決まる捕虜の人数の幅。P1は[1,1]、P2は[1,5]。 */
+  function captiveRange(simBattle) {
+    const table = (sim.SIM_CONST && sim.SIM_CONST.CAPTIVE_COUNT) || { 1: [1, 1], 2: [1, 5] };
+    const phase = (simBattle && simBattle.phase) || 1;
+    const r = table[phase] || table[1] || [1, 1];
+    return [r[0], r[1]];
+  }
 
   A.takeCaptives = (w, view, axis, rng) => {
     const got = sim.takeCaptives(w, view._sim, axis, rng) || [];
@@ -461,8 +490,14 @@ export function makeAdapter(sim) {
     return list;
   };
 
+  // 国境の3択。画面の語彙は 受け入れ／誅殺／送還 で、sim が読むのは
+  // accept / kill / return。'execute' は sim の分岐に無く、既定の accept に
+  // 落ちていた——**誅殺を押すと入国していた**。ここで必ず写す。
+  const BORDER_DECISION = { accept: 'accept', execute: 'kill', kill: 'kill', return: 'return' };
+
   A.borderDecision = (w, id, decision) => {
-    const e = sim.borderDecision(w, id, decision);
+    const d = BORDER_DECISION[decision] || 'accept';
+    const e = sim.borderDecision(w, id, d);
     refreshWarReady(w);
     return e;
   };
@@ -471,6 +506,10 @@ export function makeAdapter(sim) {
     const sb = view && view._sim ? view._sim : view;
     const rng = (view && view._rng) || null;
     const r = sim.settleWar && sb && rng ? sim.settleWar(w, sb, rng) : null;
+    // 初戦を終えた印。これが立たないとフェーズ2の条件が永遠に満たされず、
+    // 10体の村で足踏みし続ける（クリックで最後まで通せない＝行き止まり）。
+    // sim が自分で立てるなら二重に立てても同じ値なので害はない。
+    if (sb && sb.firstWar) w.firstWarDone = true;
     refreshWarReady(w);
     return r;
   };
@@ -520,27 +559,40 @@ export function makeAdapter(sim) {
   A.rankForeign = (people) => (sim.rankNation ? sim.rankNation(people) : people);
 
   // sim は world.mating.foreignBias（-1 隔離 … +1 融和）を交配で読んでいるが、
-  // それを動かすカードが sim 側に無く、既定 0 のまま動かない。
+  // それを動かすカードが sim 側に無いあいだは既定 0 のまま動かない。
   // 「100体の段階で融和か優生かを選ばされる」はフェーズ2の中心なので、
   // 画面から置けるカードとして足す（sim のコードは触らず、sim が読む値を書くだけ）。
-  // ※ 本来は src/sim/cards.js に居るべきカード。sim 側に入ったらここは消す。
+  //
+  // ※ 本来は src/sim/cards.js に居るべきカード。**sim 側の CARDS に入った瞬間、
+  //   この分岐は自動的に死ぬ**（下の own フラグが false になり、素通しになる）。
+  //   sim の作業中に手で消す必要はない。消し忘れて二重に置く事故のほうが高くつく。
   const MIX_CARD = {
     id: 'mix_policy', bureau: 'civil', name: '外来の血を混ぜる',
     desc: '高いほど混血が進み、色の境界が溶ける。低いままだと斑が固定される。',
     unit: '%', min: 0, max: 100, step: 10, def: 60, on: true, flagship: true,
   };
   const CARDS = adaptCards(sim.CARDS) || [];
-  A.CARDS = [...CARDS, MIX_CARD];
+  const simHasMix = CARDS.some(c => c.id === MIX_CARD.id);
+  A.CARDS = simHasMix ? CARDS : [...CARDS, MIX_CARD];
+
+  /** adapter が肩代わりしているあいだだけ、sim が読む値を書く。 */
+  function applyMix(w) {
+    if (simHasMix || !w || !w.cards) return;
+    const slot = w.cards[MIX_CARD.id];
+    if (!slot) return;
+    w.mating = w.mating || { foreignBias: 0, inbreedGuard: 0, prefer: null };
+    // 0% = 隔離(-1) / 50% = 中立(0) / 100% = 融和(+1)
+    w.mating.foreignBias = slot.on ? clamp((slot.value - 50) / 50, -1, 1) : 0;
+    // 融和路線は近親も避ける方向に寄る
+    w.mating.inbreedGuard = slot.on ? clamp(Math.max(0, (slot.value - 50) / 100), 0, 1) : 0;
+  }
+  A._applyMix = applyMix;
 
   A.setCard = (w, id, on, value) => {
-    if (id === MIX_CARD.id) {
+    if (!simHasMix && id === MIX_CARD.id) {
       w.cards = w.cards || {};
       w.cards[id] = { on: !!on, value: Number.isFinite(value) ? value : MIX_CARD.def };
-      // 0% = 隔離(-1) / 50% = 中立(0) / 100% = 融和(+1)
-      w.mating = w.mating || { foreignBias: 0, inbreedGuard: 0, prefer: null };
-      w.mating.foreignBias = on ? clamp((w.cards[id].value - 50) / 50, -1, 1) : 0;
-      // 融和路線は近親も避ける方向に寄る
-      w.mating.inbreedGuard = on ? clamp(Math.max(0, (w.cards[id].value - 50) / 100), 0, 1) : 0;
+      applyMix(w);
       return w.cards[id];
     }
     return sim.setCard(w, id, on, value);

@@ -42,7 +42,9 @@ export function openBorder(ctx, battle) {
     body.appendChild(el('button', {
       class: 'btn primary block', style: { marginTop: '12px' }, disabled: !axis,
       onclick: () => { phase = 'draw'; render(); },
-    }, axis ? `${opt.axes.find(a => a.key === axis).label} 上位から ${opt.count} 体を引く` : '軸を選ぶ'));
+    }, axis
+      ? `${opt.axes.find(a => a.key === axis).label} 上位から ${opt.countLabel || opt.count + ' 体'}を引く`
+      : '軸を選ぶ'));
   }
 
   function renderDraw() {

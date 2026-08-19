@@ -3,8 +3,8 @@
 
 import { api, SIM_SOURCE, registerRoster } from './api.js';
 import { RNG } from '../core/rng.js';
-import { PHASE, ROLE, BUREAU_LABEL } from '../core/model.js';
-import { el, clear, num, pct, toast } from './dom.js';
+import { PHASE, ROLE, BUREAU_LABEL, GEN_MS } from '../core/model.js';
+import { el, clear, num, pct, toast, modal, mount } from './dom.js';
 import { seedCards } from './cards.js';
 import { Dish } from './dish.js';
 import { swatchColor, strainName, lineageHue } from './color.js';
@@ -20,8 +20,23 @@ import { openReport } from './panels/report.js';
 import { openOpponents } from './panels/opponents.js';
 import { openBattle } from './panels/battle.js';
 
-const TICK_MS = 220;
-const TICKS_PER_GEN = 120;
+// ------------------------------------------------------------------ 世代の尺
+//
+// 世代の長さは2つの数の積で決まる。画面が勝手に決めてよいのは**片方もない**。
+//
+//   TICKS_PER_GEN … 1世代が何tickか。sim の経済（産出・練度の伸び）はこの粒度で
+//                   調律されている。画面が独自に120刻みで回していたときは、
+//                   1世代あたり10倍の産出と練度が入っていた。api 越しに sim から引く。
+//   GEN_MS        … 1世代が実時間で何ミリ秒か。core/model.js の設計値。
+//                   P1=2分／世代、P2=60分／世代。
+//
+// 倍速ボタン（×1/×2/×4/×8）は **この尺に対する倍率**。×1 が設計値そのもの。
+// sim の実測では10体到達が3〜4世代なので、×1 で 6〜8分。完成基準7（P1が5〜10分）は
+// ここが繋がって初めて測れる。
+const TICKS_PER_GEN = api.TICKS_PER_GEN ?? 12;
+const genMs = (w) => GEN_MS[w ? w.phase : 1] ?? GEN_MS[1];
+const tickMs = (w) => genMs(w) / TICKS_PER_GEN;
+
 const SEED = 20260819;
 
 const state = {
@@ -29,6 +44,7 @@ const state = {
   speed: 1, paused: false, selected: null, tab: 'ind',
   castPick: null, openBureau: null, search: null, chron: null,
   battle: null, rosterDebug: false, autoReport: true,
+  firstWarSeen: false, elapsedMs: 0,
 };
 
 const ctx = {
@@ -85,19 +101,26 @@ function boot(answers, mode) {
 // ここで使う実時間は描画とtickの間隔だけで、シミュレーションの状態には入らない。
 // 歴史の再現性は RNG と tick 数が担保しているので決定性は壊れない。
 const FRAME_MS = 33;
+// 裏タブでは setInterval が約1秒に絞られる。ここで dt を 160ms に切っていたときは、
+// タブを裏に回した瞬間に世界の時計が実時間の6分の1になっていた（止まりはしないが、
+// 「1世代＝2分」が裏では12分になる）。1フレーム分の上限は絞りの周期より広く取る。
+// スリープ復帰で世界が飛ぶのを防ぐ上限としては、これで十分に効く。
+const MAX_FRAME_MS = 1200;
 let last = performance.now(), acc = 0, tickInGen = 0, dockAcc = 0;
 
 function loop() {
   const now = performance.now();
-  const dt = Math.min(160, now - last); last = now;
+  const dt = Math.min(MAX_FRAME_MS, now - last); last = now;
   const w = state.world;
   if (!w) return;
+  state.elapsedMs += dt;
 
   if (!state.paused && state.speed > 0) {
     acc += dt * state.speed;
+    const step = tickMs(w);
     let guard = 0;
-    while (acc >= TICK_MS && guard++ < 12) {
-      acc -= TICK_MS;
+    while (acc >= step && guard++ < TICKS_PER_GEN) {
+      acc -= step;
       api.stepTick(w, state.rng);
       tickInGen++;
       if (tickInGen >= TICKS_PER_GEN) { tickInGen = 0; onGeneration(); }
@@ -110,28 +133,129 @@ function loop() {
   state.dish.draw(w);
 
   dockAcc += dt;
-  if (dockAcc > 450) { dockAcc = 0; renderTop(); renderStrains(); }
+  if (dockAcc > 250) { dockAcc = 0; renderTop(); renderStrains(); }
+  paintGenBar(w);
 }
 
 function onGeneration() {
   const w = state.world;
+  const wasPhase = w.phase;
   const evs = api.advanceGeneration(w, state.rng) || [];
   try { if (api.stepRoster) api.stepRoster(state.roster, state.rng); } catch (e) { /* ロスターは無くても続く */ }
 
+  // 死亡は世代あたり複数出る。1件ずつ流すとトーストが埋まって他が読めないので束ねる。
+  const dead = [];
   for (const e of evs) {
-    // 叩き起こされる条件：局長の死・空位／フェーズ転換／産出が消費を下回った
-    if (e.kind === 'フェーズ' || e.kind === '接触') toast(e.text, 'warn');
-    else if (e.kind === '空位') toast(e.text, 'bad');
-    else if (e.kind === '死亡') toast(e.text, 'bad');
-    else if (e.kind === '発現') toast(e.text);
+    switch (e.kind) {
+      case '死亡': dead.push(e); break;
+      case '一揆': case '粛清': case '空位': toast(e.text, 'bad'); break;
+      case '発現': case '潜伏形質の発現': toast(e.text); break;
+      case '帰化': case '任命': toast(e.text, 'warn'); break;
+      // 初戦の予兆とフェーズ移行はトーストでは足りない。下でモーダルにする。
+      default: break;
+    }
   }
-  if (w.warReady && !w.borderQueue.length) document.getElementById('btn-war').hidden = false;
+  if (dead.length === 1) toast(dead[0].text, 'bad');
+  else if (dead.length > 1) toast(`この世代で ${dead.length} 体が死んだ。`, 'bad');
+
   if (w.collapsing) toast('産出率が消費を下回っている。', 'bad');
 
   refresh();
+
+  // 村が部族になった瞬間。ここで配役の画面が消える。
+  if (wasPhase === PHASE.VILLAGE && w.phase !== PHASE.VILLAGE) { announcePhase2(); return; }
+
+  // 10体に達した。sim はここでフェーズ移行を止めて初戦を待っている。
+  if (w.pendingFirstWar && !state.firstWarSeen) { state.firstWarSeen = true; announceFirstWar(); return; }
+
   // フェーズ1に報告は存在しない（全個体が画面にいるので自分で見ている）。
   // 世代境界で止めるのは、統治が人づてになるフェーズ2から。
   if (state.autoReport && w.phase !== PHASE.VILLAGE && w.gen > 0 && !document.querySelector('.scrim')) showReport();
+}
+
+// ------------------------------------------------------------------ 節目
+//
+// 「10体 → 初戦 → 捕虜1体 → フェーズ2」はこのゲームのビートシート。
+// 通り過ぎさせないために、この2つだけはモーダルで止める。
+
+function announceFirstWar() {
+  const wasPaused = state.paused;
+  state.paused = true;
+  const body = el('div');
+  mount(body,
+    el('div', { class: 'card' },
+      el('h4', {}, '村は10体で止まる'),
+      el('p', {}, 'ここから先へ進む道は戦しかない。増えるだけでは部族にならない。'
+        + '部族の幕を開けるのは人口ではなく、外から入ってくる血のほうだ。'),
+    ),
+    el('div', { class: 'kv' },
+      el('div', { class: 'k' }, '規模'), el('div', { class: 'v' }, '5 対 5'),
+      el('div', { class: 'k' }, '派遣'), el('div', { class: 'v' }, '初戦は派遣カードが効かない（同数・上位から）'),
+      el('div', { class: 'k' }, '取り分'), el('div', { class: 'v' }, '勝っても負けても捕虜は1体'),
+    ),
+    el('p', { class: 'hint' },
+      '5対5なら1体ずつ見える。攻撃素質が高い個体が、恐怖で固まったまま死ぬことがある。'
+      + '素質と練度は別物だという話は、ここで一度だけ目で確認できる。'),
+  );
+  const m = modal({
+    title: '10体になった', sub: '隣のシャーレが見えている',
+    body, dismissable: false,
+    footer: [
+      el('button', {
+        class: 'btn ghost', onclick: () => {
+          m.close(); state.paused = wasPaused;
+          toast('「隣のシャーレ」はいつでも押せる。押すまで村は10体のまま。', 'warn');
+          refresh();
+        },
+      }, 'もう少し村を見る'),
+      el('div', { style: { flex: 1 } }),
+      el('button', {
+        class: 'btn primary', onclick: () => { m.close(); startWarFlow(); },
+      }, '隣のシャーレを見る'),
+    ],
+  });
+  return m;
+}
+
+function announcePhase2() {
+  const w = state.world;
+  state.paused = true;
+  const body = el('div');
+  mount(body,
+    el('div', { class: 'card' },
+      el('h4', {}, '一体ずつ置く画面は、いま消えた'),
+      el('p', {}, '外から血が1体入り、村は部族になった。'
+        + '100体は手で置けない。誰をどこへ置くかは、これから局長が決める。'),
+    ),
+    // 何が奪われたのかを、タブそのものの形で見せる
+    el('div', { class: 'ctl', style: { justifyContent: 'center', gap: '10px', margin: '12px 0' } },
+      el('span', { class: 'tag bad', style: { textDecoration: 'line-through', opacity: '.7' } }, '配役'),
+      el('span', { class: 'mut' }, '→'),
+      el('span', { class: 'tag ac' }, '人事'),
+    ),
+    el('div', { class: 'kv' },
+      el('div', { class: 'k' }, '残った手'), el('div', { class: 'v' }, '誰を局長に据えるか（人事）'),
+      el('div', { class: 'k' }, '失った手'), el('div', { class: 'v' }, '一体ずつの配役・居住区の指定'),
+      el('div', { class: 'k' }, 'これから'), el('div', { class: 'v' }, '報告は人づてになる。事実は正確に届くが、原因と帰属は歪む'),
+    ),
+    el('p', { class: 'hint' },
+      'これは解禁ではなく喪失。この先も、増えるたびに手は1つずつ剥がされていく。'),
+  );
+  const m = modal({
+    title: '村が部族になった', sub: `第 ${w.gen} 世代 ・ ${w.people.size} 体`,
+    body, dismissable: false,
+    footer: [
+      el('div', { style: { flex: 1 } }),
+      el('button', {
+        class: 'btn primary', onclick: () => {
+          m.close(); state.paused = false; state.tab = 'roles';
+          toast('局長を任命するまで、誰も報告してこない。', 'warn');
+          refresh();
+        },
+      }, '手を離す'),
+    ],
+  });
+  return m;
 }
 
 // ------------------------------------------------------------------ トップバー
@@ -155,6 +279,37 @@ function renderTop() {
       el('div', { class: 'k' }, k), el('div', { class: 'v' }, v)));
   }
   document.getElementById('btn-war').hidden = !(w.warReady && !w.borderQueue.length);
+  renderClock(w);
+}
+
+// 世代の尺を画面に出す。倍速がこの尺の倍率であることが読めないと、
+// 「1世代＝2分」という設計値が画面のどこにも無いのと同じになる。
+function renderClock(w) {
+  const box = document.getElementById('clock');
+  if (!box) return;
+  const effective = state.speed > 0 ? genMs(w) / state.speed : 0;
+  clear(box);
+  mount(box,
+    el('b', {}, '経過 ' + mmss(state.elapsedMs)),
+    el('span', {}, state.speed > 0
+      ? `1世代 ${mmss(effective)}（設計値 ${mmss(genMs(w))} ×${state.speed}）`
+      : `停止中（設計値 1世代 ${mmss(genMs(w))}）`),
+  );
+}
+
+// 世代の進み。tick は P1 で10秒に1回しか来ないので、これが無いと
+// 「動いているのに何も起きない2分間」がフリーズと区別できない。
+function paintGenBar(w) {
+  const bar = document.getElementById('genbar');
+  if (!bar || !bar.firstChild) return;
+  const withinTick = state.speed > 0 ? Math.min(1, acc / tickMs(w)) : 0;
+  const p = (tickInGen + withinTick) / TICKS_PER_GEN;
+  bar.firstChild.style.width = Math.max(0, Math.min(1, p)) * 100 + '%';
+}
+
+function mmss(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 function renderStrains() {
@@ -185,7 +340,8 @@ function buildSpeed() {
   for (const s of [0, 1, 2, 4, 8]) {
     box.appendChild(el('button', {
       class: state.speed === s ? 'on' : '',
-      onclick: () => { state.speed = s; buildSpeed(); },
+      title: s === 0 ? '止める' : `設計値の${s}倍（1世代 ${mmss(genMs(state.world) / s)}）`,
+      onclick: () => { state.speed = s; buildSpeed(); if (state.world) renderClock(state.world); },
     }, s === 0 ? '⏸' : '×' + s));
   }
 }
@@ -228,9 +384,11 @@ function showReport() {
 // ------------------------------------------------------------------ 戦争
 function startWarFlow() {
   state.paused = true;
-  openOpponents(ctx, (opponent) => {
-    openBattle(ctx, opponent);
-  });
+  openOpponents(ctx,
+    (opponent) => { openBattle(ctx, opponent); },
+    // 相手を選ばずに閉じたときに止まったままにしない。
+    // 世界が動かないのに理由が画面に出ていない状態は、行き止まりと区別がつかない。
+    () => { state.paused = false; refresh(); });
 }
 
 function afterBorder() {
@@ -248,6 +406,7 @@ function afterBorder() {
 // 「斑（まだら）→ 混色」を最初から見せるための開発用セットアップ。
 function demoSetup() {
   const w = state.world, rng = state.rng;
+  state.firstWarSeen = true;   // 初戦はこの中で済ませるので、あとから予兆を出さない
 
   // フェーズ1のあいだはオーナー（＝この関数）が配役する。放っておくと産出が止まる。
   const cast = () => {
@@ -257,6 +416,8 @@ function demoSetup() {
       p.role = (i % 5 < 3) ? ROLE.FARM : (i % 5 === 3 ? ROLE.HUNT : ROLE.DRILL);
     });
   };
+  // 実時間は待たない。tick数だけ sim と同じ粒度で回す（advanceGeneration は
+  // 足りない分を自分で埋めるので、ここで多く回してはいけない）。
   const runGens = (n) => {
     for (let g = 0; g < n; g++) {
       cast();

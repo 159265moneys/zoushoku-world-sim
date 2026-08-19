@@ -27,6 +27,7 @@ import { Observer } from './observer.js';
 import { Violations, checkWorld, worldHash, eventHash, POP_CEILING, TICK_LIMIT } from './invariants.js';
 import * as C from './checks.js';
 import { runIntegration, renderIntegration, selfCheckIntegration } from './integration.js';
+import { playP1, checkP1, selfCheckP1 } from './p1.js';
 import { viabilityOf, corpusSummary, viableOnly, MIN_BREEDING_GENS, BREEDING_POP, EARLY_DEATH_GENS } from './viability.js';
 import { mean, sd, round, pct, lineChart, barChart, histogram, maxOf, minOf, padTo, strWidth } from './lib/util.js';
 
@@ -53,15 +54,21 @@ const ARG = parseArgs(process.argv.slice(2));
 const num = (k, d) => (ARG[k] !== undefined ? Number(ARG[k]) : d);
 
 const QUICK = !!ARG.quick;
+// --deep : 閾値付近で PASS/WARN が入れ替わる項目（頻度依存・近親交配）の種数を増やす。
+//          「本当に綱引きなのか、単に種が足りないのか」を判定するための分解能。
+//          標準の run は重くしたくないので、増やすのはこのフラグのときだけ。
+const DEEP = !!ARG.deep;
 const CONF = {
   seeds:       num('seeds',       QUICK ? 8   : 24),   // 不変条件バッチの本数
   gens:        num('gens',        QUICK ? 120 : 200),  // 1本あたりの世代数
-  freqSeeds:   num('freq-seeds',  QUICK ? 2   : 3),
-  freqGens:    num('freq-gens',   QUICK ? 300 : 1000), // AAA-3 は1000世代
+  freqSeeds:   num('freq-seeds',  QUICK ? 2   : (DEEP ? 32 : 3)),
+  freqGens:    num('freq-gens',   QUICK ? 300 : (DEEP ? 600 : 1000)), // AAA-3 は1000世代
   rosterSeeds: num('roster-seeds',QUICK ? 2   : 10),
   rosterGens:  num('roster-gens', QUICK ? 120 : 200),
-  inbreedSeeds:num('inbreed-seeds',QUICK ? 3  : 5),
+  inbreedSeeds:num('inbreed-seeds',QUICK ? 3  : (DEEP ? 32 : 5)),
   inbreedGens: num('inbreed-gens', QUICK ? 120 : 200),
+  p1Seeds:     num('p1-seeds',    QUICK ? 8   : 24),    // 序盤の体験は種ごとのばらつきが大きい
+  deep:        DEEP,
   strict:      !!ARG.strict,                            // 毎tick全件検査
 };
 
@@ -330,8 +337,16 @@ async function main() {
   log(`[3/5] 頻度依存: ${CONF.freqSeeds}種 × ${CONF.freqGens}世代`);
   const freq = [];
   for (let i = 0; i < CONF.freqSeeds; i++) {
-    freq.push(runWorld(api, { seed: 424242 + i * 104729, gens: CONF.freqGens, trackedMind, keepBirths: true }));
-    for (const r of freq) allV.merge(r.violations);
+    // 出生レコードはバッチ側で十分に取れている。--deep で32本回すときに
+    // 全部保持するとヒープが尽きるので、先頭3本だけ残す。
+    const r = runWorld(api, {
+      seed: 424242 + i * 104729, gens: CONF.freqGens, trackedMind,
+      keepBirths: i < 3,
+    });
+    allV.merge(r.violations);
+    // 頻度依存の検査が見るのは obs.series だけ。世界の中身はもう要らない。
+    releaseWorld(r.world);
+    freq.push(r);
   }
 
   // ===== フェーズ3：10国ロスター ==========================================
@@ -371,7 +386,18 @@ async function main() {
       inject: { atGen: Math.floor(CONF.inbreedGens / 2), n: 8 },
     }));
   }
-  for (const r of [...closed, ...open, ...recovery]) allV.merge(r.violations);
+  // 近親交配の検査も obs.series しか見ない。--deep で96本になるので都度解放する。
+  for (const r of [...closed, ...open, ...recovery]) { allV.merge(r.violations); releaseWorld(r.world); }
+
+  // ===== 序盤の体験（第1フェーズ）=========================================
+  // 10体到達 → 初戦 → 戦後処理 → フェーズ2 という順序と、5対5・捕虜1体・3〜4世代。
+  // バランスの数字ではなく「体験の形」なので、崩れたら看板の場面が成立しなくなる。
+  log(`[P1] 始まりの村: ${CONF.p1Seeds}種を10体到達＋初戦まで`);
+  const p1Runs = [];
+  for (let i = 0; i < CONF.p1Seeds; i++) {
+    p1Runs.push(playP1(api, 31337 + i * 6151, { maxGens: 40 }));
+  }
+  const p1Checks = checkP1(p1Runs);
 
   // ===== 設計主張の検証 ===================================================
   const allRuns = [...batch, ...freq];
@@ -389,6 +415,7 @@ async function main() {
     C.checkMeritVsDynastic(byProfile),
     C.checkMartialVsAgrarian(byProfile),
     C.checkChronicleTrace(rosterFlat.length ? rosterFlat : allRuns, api),
+    ...p1Checks,
   ];
 
   // ===== 統合スモーク：UI と sim の継ぎ目 ==================================
@@ -420,6 +447,13 @@ async function main() {
       got: ic.ok === null ? 'N/A' : (ic.ok ? 'FAIL(検出)' : 'PASS(見逃し)'),
       caught: ic.ok !== false,
       detail: ic.note,
+    });
+    // P1 の検査も、壊れた序盤を捏造して落ちることを確かめる
+    const pc = selfCheckP1();
+    selftest.push({
+      sabotage: '壊れた序盤(4対19/捕虜3体/第6世代)', expect: 'p1',
+      got: pc.ok ? 'FAIL(4項目とも検出)' : `見逃し ${JSON.stringify(pc.statuses)}`,
+      caught: pc.ok, detail: pc.note,
     });
   }
 

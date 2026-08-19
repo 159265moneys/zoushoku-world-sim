@@ -6,10 +6,12 @@
 import { el, clear, modal, num, mount } from '../dom.js';
 import { lineageHue, swatchColor, strainName, homeHue } from '../color.js';
 
-export function openOpponents(ctx, onPick) {
+export function openOpponents(ctx, onPick, onCancel) {
   const { world, api, state } = ctx;
   const body = el('div');
   const dbg = () => !!state.rosterDebug;
+  let picked = false;
+  const pick = (o) => { picked = true; m.close(); onPick(o); };
 
   const mine = api.nationPower ? api.nationPower(world) : 0;
   const list = api.listOpponents ? api.listOpponents(state.roster) : [];
@@ -39,7 +41,7 @@ export function openOpponents(ctx, onPick) {
     if (!list.length) {
       body.appendChild(el('div', { class: 'empty' }, 'ロスターが無い。ゴースト（乱数生成の相手）と戦う。'));
       body.appendChild(el('button', {
-        class: 'btn primary block', onclick: () => { m.close(); onPick(null); },
+        class: 'btn primary block', onclick: () => pick(null),
       }, 'ゴーストに宣戦布告する'));
       return;
     }
@@ -62,7 +64,7 @@ export function openOpponents(ctx, onPick) {
           el('div', { class: 'mut', style: { fontSize: '10px' } }, '国力'),
           el('div', { class: 'rank' }, o.power),
           el('span', { class: 'tag ' + cls }, label)),
-        el('button', { class: 'btn', onclick: () => { m.close(); onPick(o); } }, '宣戦布告'),
+        el('button', { class: 'btn', onclick: () => pick(o) }, '宣戦布告'),
       ));
 
       // 混ざるとどうなるかを色で見せる
@@ -107,7 +109,11 @@ export function openOpponents(ctx, onPick) {
       '国力はマッチングの目安であって、戦闘の入力ではない。国力が上でも、編成と派遣を間違えれば負ける。'));
   };
 
-  const m = modal({ title: '隣のシャーレ', sub: '相手を選ぶ', body, cls: 'wide' });
+  const m = modal({
+    title: '隣のシャーレ', sub: '相手を選ぶ', body, cls: 'wide',
+    // 選ばずに閉じた場合だけ呼ぶ。呼び出し側は止めた時計をここで戻す。
+    onClose: () => { if (!picked && onCancel) onCancel(); },
+  });
   render();
   return m;
 }

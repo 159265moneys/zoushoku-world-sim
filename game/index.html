@@ -18,8 +18,12 @@
     <div class="topright">
       <button class="btn ghost" id="btn-report">帰還報告</button>
       <button class="btn war" id="btn-war" hidden>隣のシャーレ</button>
+      <div class="clock" id="clock"></div>
       <div class="speed" id="speed"></div>
     </div>
+
+    <!-- 世代の進み。P1では10秒に1tickしか来ないので、これが無いと停止と区別できない -->
+    <div id="genbar"><i></i></div>
   </header>
 
   <main>
