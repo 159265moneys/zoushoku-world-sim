@@ -7,6 +7,7 @@
 //   node test/run.js --seeds 300     不変条件バッチを300種で回す
 //   node test/run.js --gens 1000     1世界あたりの世代数
 //   node test/run.js --selftest      検査器が「空振りでない」ことを故意のバグで証明する
+//   node test/run.js --deep          頻度依存・近親交配の種数を大幅に増やす（分解能を上げる）
 //   node test/run.js --json          test/report.json も出す
 //   node test/run.js --out path.md   レポートの出力先
 //
