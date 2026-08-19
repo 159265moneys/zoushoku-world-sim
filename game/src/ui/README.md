@@ -115,7 +115,14 @@
 ### 検証環境の注意
 
 - 素の `python3 -m http.server` は ES モジュールを強くキャッシュする。
-  **ファイルを直したのに画面が変わらないときはポートを変えて開き直す**（`.claude/launch.json`）
+  **ファイルを直したのに画面が変わらないときはポートを変えて開き直す**（`.claude/launch.json`）。
+  実行中のモジュールが古いかどうかは
+  `import('/game/src/ui/panels/xxx.js').then(m => m.関数名.toString())` で中身を見れば分かる
+- **裏タブでスクリーンショットを撮ると Canvas が真っ黒に写る。** これは不具合ではなく、
+  隠れたタブが新しいフレームを合成しないため。撮る直前に
+  `window['増殖'].state.dish.draw(world)` を単独で呼ぶと正しく写る
+- ブラウザは裏タブの `setInterval` を約1秒に絞るので、裏で放置すると進行が実時間より遅い。
+  世代を進めたいだけなら `api.stepTick` / `api.advanceGeneration` を直接叩くほうが速い
 
 ---
 
