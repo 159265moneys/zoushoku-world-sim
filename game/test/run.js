@@ -26,6 +26,7 @@ import { loadSim } from './sim-adapter.js';
 import { Observer } from './observer.js';
 import { Violations, checkWorld, worldHash, eventHash, POP_CEILING, TICK_LIMIT } from './invariants.js';
 import * as C from './checks.js';
+import { runIntegration, renderIntegration, selfCheckIntegration } from './integration.js';
 import { viabilityOf, corpusSummary, viableOnly, MIN_BREEDING_GENS, BREEDING_POP, EARLY_DEATH_GENS } from './viability.js';
 import { mean, sd, round, pct, lineChart, barChart, histogram, maxOf, minOf, padTo, strWidth } from './lib/util.js';
 
@@ -86,13 +87,28 @@ function runWorld(api, o) {
 
   for (let g = 0; g < gens; g++) {
     for (let t = 0; t < TPG; t++) {
-      api.stepTick(world, rng);
+      try {
+        api.stepTick(world, rng);
+      } catch (e) {
+        aborted = 'sim-threw';
+        v.add('sim-threw', `stepTick が例外: ${e?.message ?? e}`,
+          { where: 'tick', gen: world.gen, tick: world.tick, stack: firstFrames(e) });
+        break;
+      }
       ticks++;
       if (ticks > TICK_LIMIT) { aborted = 'tick-limit'; break; }
       if (collectViolations) checkWorld(world, v, 'tick', { light: !CONF.strict });
     }
     if (aborted) break;
-    api.advanceGeneration(world, rng);
+    try {
+      api.advanceGeneration(world, rng);
+    } catch (e) {
+      // sim が例外を投げたらランナーごと止まるのではなく、赤い実測として記録する。
+      aborted = 'sim-threw';
+      v.add('sim-threw', `advanceGeneration が例外: ${e?.message ?? e}`,
+        { where: 'gen', gen: world.gen, tick: world.tick, stack: firstFrames(e) });
+      break;
+    }
     if (collectViolations) checkWorld(world, v, 'gen');
     obs.observe(world);
     genHashes.push(worldHash(world));
@@ -152,6 +168,13 @@ function injectForeignBlood(api, world, rng, n) {
   world.closed = false; world.outsideBlood = 0.9;     // fake-sim のレバー
 }
 
+/** 例外の発生箇所を数フレームだけ。レポートに貼れる長さに畳む。 */
+function firstFrames(e, n = 3) {
+  return String(e?.stack ?? '').split('\n').slice(1, 1 + n)
+    .map(s => s.trim().replace(process.cwd() + '/', '').replace(/file:\/\/\S*?game\//, ''))
+    .join(' / ');
+}
+
 function hashList(list) {
   // 世代ごとのハッシュをさらに畳む
   let h = 0x811c9dc5;
@@ -201,16 +224,26 @@ function runRoster(api, seed, gens, trackedMind) {
   // 自前で stepTick/advanceGeneration を回すと runRivalTurn（＝10の経営思想そのもの）を
   // 素通りしてしまい、「オーナーごとに分化しない」という嘘の実測が出る。
   const useRoster = typeof api.advanceRoster === 'function';
+  let rosterThrew = null;
   for (let g = 0; g < gens; g++) {
-    if (useRoster) {
-      api.advanceRoster(roster, rng, 1);
-    } else {
-      for (const p of per) {
-        if (!p.world.people.size) continue;
-        for (let t = 0; t < TPG; t++) api.stepTick(p.world, rng);
-        api.advanceGeneration(p.world, rng);
+    try {
+      if (useRoster) {
+        api.advanceRoster(roster, rng, 1);
+      } else {
+        for (const p of per) {
+          if (!p.world.people.size) continue;
+          for (let t = 0; t < TPG; t++) api.stepTick(p.world, rng);
+          api.advanceGeneration(p.world, rng);
+        }
+        roster.gen++;
       }
-      roster.gen++;
+    } catch (e) {
+      // ロスターが落ちてもランナーは止めない。赤い実測として残して次へ進む。
+      rosterThrew = { gen: g, msg: e?.message ?? String(e), stack: firstFrames(e) };
+      per[0]?.violations.add('sim-threw',
+        `advanceRoster が第${g}世代で例外: ${rosterThrew.msg}`,
+        { where: 'roster', gen: g, tick: 0, stack: rosterThrew.stack });
+      break;
     }
     for (const p of per) {
       checkWorld(p.world, p.violations, 'gen');
@@ -224,7 +257,7 @@ function runRoster(api, seed, gens, trackedMind) {
     p.viability = viabilityOf(p.obs, gens);
     releaseWorld(p.world);
   }
-  return { roster, per, drivenByRoster: useRoster };
+  return { roster, per, drivenByRoster: useRoster, rosterThrew };
 }
 
 /**
@@ -358,6 +391,19 @@ async function main() {
     C.checkChronicleTrace(rosterFlat.length ? rosterFlat : allRuns, api),
   ];
 
+  // ===== 統合スモーク：UI と sim の継ぎ目 ==================================
+  // sim単体とUI単体が両方緑でも、繋いだ状態は誰も見ていない。ここがその1本。
+  log(`[統合] UI が呼ぶ名前の突き合わせ + 導線のヘッドレス一周`);
+  let integration = null;
+  try {
+    integration = await runIntegration(sim, { seed: 20250819, gens: 20 });
+  } catch (e) {
+    integration = {
+      status: 'FAIL', summary: `統合スモーク自体が落ちた: ${e.message}`,
+      audit: { rows: [] }, walk: { steps: [] }, counts: {},
+    };
+  }
+
   // ===== 検査器の自己検証（--selftest）====================================
   let selftest = null;
   if (ARG.selftest) {
@@ -367,12 +413,20 @@ async function main() {
     log(`[+] selftest: 参照実装に故意のバグを入れて、検査がちゃんと落ちるか確かめる`);
     const fakeSim = await loadSim('fake');
     selftest = await runSelfTest(fakeSim.api, fakeSim.api.TRACKED_MIND ?? trackedMind);
+    // 統合スモークが空振りでないことも同じ場で確かめる
+    const ic = await selfCheckIntegration(sim);
+    selftest.push({
+      sabotage: 'mock専用の名前', expect: 'integration',
+      got: ic.ok === null ? 'N/A' : (ic.ok ? 'FAIL(検出)' : 'PASS(見逃し)'),
+      caught: ic.ok !== false,
+      detail: ic.note,
+    });
   }
 
   // ===== レポート =========================================================
   const md = renderReport({
     sim, conf: CONF, batch, allV, aborted, det, distinct, freq,
-    byProfile, opponents, closed, open, recovery, checks, selftest, api,
+    byProfile, opponents, closed, open, recovery, checks, selftest, api, integration,
   });
   const out = ARG.out ? resolve(String(ARG.out)) : join(HERE, 'report.md');
   writeFileSync(out, md, 'utf8');
@@ -385,6 +439,11 @@ async function main() {
       invariants: { violations: Object.fromEntries(allV.counts), aborted: aborted.map(r => ({ seed: r.seed, why: r.aborted })) },
       determinism: det.map(d => ({ seed: d.seed, ok: d.ok, a: d.a, b: d.b })),
       checks: checks.map(c => ({ id: c.id, status: c.status, summary: c.summary, numbers: c.numbers })),
+      integration: integration && {
+        status: integration.status, summary: integration.summary, counts: integration.counts,
+        symbols: integration.audit.rows.map(r => ({ name: r.name, status: r.status, alias: r.alias })),
+        steps: integration.walk.steps.map(s => ({ label: s.label, status: s.status, note: s.note })),
+      },
       selftest,
     }, null, 2), 'utf8');
     log(`JSON:      ${jsonOut}`);
@@ -404,6 +463,7 @@ async function main() {
   console.log(line(earlyOk ? 'PASS' : 'FAIL',
     `不変条件b 即死しない  ${EARLY_DEATH_GENS}世代以内の絶滅=${corpus.earlyDeaths}/${corpus.worlds} (${pct(corpus.earlyDeathRate)})`));
   console.log(line(det.every(d => d.ok) ? 'PASS' : 'FAIL', `決定性 (${det.length}種を2周)  異なる歴史=${distinct}/${batch.length}`));
+  if (integration) console.log(line(integration.status, `統合 UI↔sim — ${oneLine(integration.summary)}`));
   console.log(line(corpus.viableWorlds ? 'INFO' : 'BLOCKED',
     `判定可能な世界 ${corpus.viableWorlds}/${corpus.worlds}（絶滅 ${corpus.extinctWorlds}／平均繁殖可能 ${corpus.meanBreedingGens}世代）`));
   console.log('');
@@ -421,7 +481,8 @@ async function main() {
   // 終了コード：設計主張の INCONCLUSIVE では落とさない（測れていないだけ）。
   // 落とすのは 不変条件・決定性・実測で否定された主張・検査器の空振り。
   const hardFail = !hardOk || !earlyOk || det.some(d => !d.ok)
-    || checks.some(c => c.status === 'FAIL') || (selftest ?? []).some(s => !s.caught);
+    || checks.some(c => c.status === 'FAIL') || (selftest ?? []).some(s => !s.caught)
+    || (integration && integration.status === 'FAIL');
   process.exitCode = hardFail ? 1 : 0;
 }
 
@@ -518,7 +579,7 @@ const SHORT = { PASS: '✅', FAIL: '❌', WARN: '⚠️', SKIP: '⏭', INCONCLUS
 
 function renderReport(d) {
   const { sim, conf, batch, allV, aborted, det, distinct, freq, byProfile, opponents,
-          closed, open, recovery, checks, selftest, api } = d;
+          closed, open, recovery, checks, selftest, api, integration } = d;
   const L = [];
   const P = s => L.push(s);
 
@@ -571,6 +632,7 @@ function renderReport(d) {
   P('');
   P('| | 検査 | 結果 |');
   P('|---|---|---|');
+  if (integration) P(`| 統合 | UI↔sim の継ぎ目（名前の突き合わせ＋導線1周） | ${BADGE[integration.status]} |`);
   P(`| AAA-1 | 決定性（同じ種＝同じ歴史） | ${BADGE[detOk ? 'PASS' : 'FAIL']} |`);
   P(`| AAA-2a | 不変条件（NaN・0..1逸脱・負値・人口爆発・無限ループ） | ${BADGE[hardOk ? 'PASS' : 'FAIL']} |`);
   P(`| AAA-2b | 即死しない（${EARLY_DEATH_GENS}世代以内の絶滅が1割以下） | ${BADGE[earlyOk ? 'PASS' : 'FAIL']}　${corpus.earlyDeaths}/${corpus.worlds} = ${pct(corpus.earlyDeathRate)} |`);
@@ -605,6 +667,20 @@ function renderReport(d) {
     P('### ⏭ sim が必要な情報を出していない');
     P('');
     for (const c of skips) P(`- **${c.title}** — ${oneLine(c.summary)}`);
+    P('');
+  }
+
+  // ---- 統合スモーク ----
+  if (integration) {
+    P('---');
+    P('');
+    P(`## 統合スモーク（UI ↔ sim の継ぎ目） — ${BADGE[integration.status]}`);
+    P('');
+    P('sim単体もUI単体も緑なのに、繋いだ瞬間に落ちる。その穴を塞ぐための検査。');
+    P('');
+    P(integration.summary);
+    P('');
+    P(renderIntegration(integration));
     P('');
   }
 
