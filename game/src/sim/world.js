@@ -13,7 +13,7 @@ import { NameGiver } from '../core/names.js';
 import { GENE_NAMES } from '../core/genes.js';
 import * as C from './constants.js';
 import {
-  foundingGenome, answersToTargets, breedGenome, phenotype,
+  foundingGenome, answersToTargets, specToTargets, projectCentroid, breedGenome, phenotype,
   enforceNoUniversalSuperiority, enforceChromosomeCeiling,
   homozygosity, recessiveHomo, carriers, geneticLoad, vitalityOf,
 } from './genetics.js';
@@ -34,6 +34,7 @@ const SEG_OF_ROLE = {
 // ---------------------------------------------------------------------------
 
 /**
+ * @param opts.name       世界の呼び名（UIの表示用）
  * @param opts.foundSeed 創世個体の遺伝子だけを別の種から引く。
  *   ロスター（10国の対照実験）が「同じ元手を10人のオーナーに渡す」形になるために要る。
  *   プレイヤーの世界では使わない。
@@ -41,6 +42,7 @@ const SEG_OF_ROLE = {
 export function createWorld(seed, answers = [], opts = {}) {
   const w = makeVillage();
   w.seed = seed >>> 0;
+  w.name = opts.name ?? '我らのシャーレ';
   w.originKey = 'home';
   w.origins = new Map([['home', { key: 'home', name: '自国', hue: (w.seed % 360) / 360 }]]);
   w.cards = defaultCards();
@@ -78,11 +80,14 @@ export function createWorld(seed, answers = [], opts = {}) {
   w.giver = new NameGiver(new RNG((w.seed ^ 0x9e3779b9) >>> 0));
   const rng = new RNG((((opts.foundSeed ?? w.seed) >>> 0) ^ 0x85ebca6b) >>> 0);
 
-  const targets = answersToTargets(answers);
+  // 回答＝種族の重心。二匹はそこから独立に引いたサンプル
+  const spec = specToTargets(answers);
+  const targets = spec.targets;
+  w.spec = { mode: spec.mode, spread: spec.spread, centroid: projectCentroid(targets) };
   const founders = ['アダム', 'イザナミ'];
   const genesis = record(w, '創世', { text: '世界が始まった' });
   for (let i = 0; i < 2; i++) {
-    const hap = foundingGenome(targets, rng, 0.14);
+    const hap = foundingGenome(targets, rng, spec.spread);
     const ind = spawn(w, founders[i], hap, { sex: i, age: 2, born: 0, lineage: { home: 1 } });
     ind.expressed = { war: true, prod: true }; // 創世の二匹だけは両方開いている
     ind.role = i === 0 ? ROLE.HUNT : ROLE.FARM;

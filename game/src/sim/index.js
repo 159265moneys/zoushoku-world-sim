@@ -30,7 +30,8 @@ export {
 
 export {
   phenotype, carriers, recessiveHomo, homozygosity, gamete, breedGenome,
-  foundingGenome, answersToTargets, enforceNoUniversalSuperiority,
+  foundingGenome, answersToTargets, specToTargets, projectCentroid,
+  enforceNoUniversalSuperiority,
 } from './genetics.js';
 
 export { PROFILES, makeRivalOwner, runRivalTurn } from './rival.js';

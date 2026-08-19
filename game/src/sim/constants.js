@@ -29,6 +29,14 @@ export const CROSSOVER_MAX = 0.45;   // 可塑1のときの交叉率
 export const MUT_RATE = 0.004;       // 座位あたりの突然変異率
 export const MUT_DOMINANCE_FLIP = 0.30;
 export const BODY_JITTER = 0.045;    // 中間遺伝のゆらぎ
+// 創世のばらつき。回答＝種族の重心、アダムとイザナミはそこから引いた2サンプル。
+// 小さすぎると二匹がほぼ同じで交叉しても何も出ず、大きすぎると回答が薄まって
+// 「自分の種族」に見えなくなる。実測で決めた値（README の「創世の spread」を参照）。
+export const FOUND_SPREAD = 0.16;
+// 体系（代謝・頑健・攻撃素質…）は性格診断の対象外なので、心系の spread に
+// 連動させず固定幅で振る。回答の解像度を上げても体格が揃ってしまわないように。
+export const BODY_FOUND_SPREAD = 0.22;
+
 export const RECESSIVE_P = 0.35;     // 創世時に劣性対立遺伝子を引く確率
 export const DRIFT_PULL = 0.02;      // 制約のない座位（可塑）の中央回帰
 

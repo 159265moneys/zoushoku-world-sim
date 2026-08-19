@@ -23,6 +23,7 @@ export const LOCUS_ORDER = (() => {
 })();
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
+const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
 const mean = (a) => (a.length ? a.reduce((s, x) => s + x, 0) / a.length : 0);
 
 /**
@@ -272,7 +273,12 @@ export function enforceChromosomeCeiling(childGenes, fGenes, mGenes) {
 }
 
 /** 創世個体のゲノム。心系は answers（性格診断）で狙い値を与え、劣性は自由に振る。 */
-export function foundingGenome(targets, rng, spread = 0.14) {
+/**
+ * 創世個体1体のゲノム。
+ * @param spread 心系のばらつき（＝種族の重心からどれだけ散るか）。
+ *   体系は診断の対象外なので、この値には連動させず固定幅で振る（設計どおり「別枠」）。
+ */
+export function foundingGenome(targets, rng, spread = C.FOUND_SPREAD) {
   const hap = {};
   for (const ch of CH_LIST) {
     hap[ch] = [{}, {}];
@@ -290,7 +296,7 @@ export function foundingGenome(targets, rng, spread = 0.14) {
           const load = dominant ? 0 : (rng.next() < C.LOAD_P ? rng.range(0.20, 0.95) : 0);
           hap[ch][h][name] = { v, d: dominant, load };
         } else {
-          hap[ch][h][name] = { v: clamp01(t + rng.normal(0, spread + 0.08)), d: true, load: 0 };
+          hap[ch][h][name] = { v: clamp01(t + rng.normal(0, C.BODY_FOUND_SPREAD)), d: true, load: 0 };
         }
       }
     }
@@ -299,6 +305,55 @@ export function foundingGenome(targets, rng, spread = 0.14) {
 }
 
 /** 性格診断の回答配列 → 心系遺伝子の狙い値。数値なら何が来ても0..1に均す。 */
+/**
+ * オープニングの入力を「創世の狙い値」に変換する。
+ *
+ * 作るのは個体ではなく**種族**である。回答は種族の重心で、
+ * アダムとイザナミはそこから独立に引いた2つのサンプルにすぎない。
+ *
+ * 受け付ける形は3つ（tools/ と ui/ の切り替え時期がずれるので後方互換を保つ）：
+ *   1. { centroid: {心系遺伝子: 0..1}, spread }  … 本格診断（50〜60問）
+ *   2. [0.8, 0.2, ...]                          … 旧・回答の配列
+ *   3. null / {} / その他                        … すべて0.5の平凡な種族
+ *
+ * centroid は心系のみ。体系（代謝・頑健・攻撃素質…）は従来どおり別枠で振る。
+ */
+export function specToTargets(spec) {
+  if (spec && !Array.isArray(spec) && typeof spec === 'object' && spec.centroid) {
+    const t = {};
+    for (const g of MIND_GENES) {
+      const v = spec.centroid[g];
+      t[g] = Number.isFinite(v) ? clamp01(v) : 0.5;
+    }
+    const s = Number.isFinite(spec.spread) ? clamp(spec.spread, 0.02, 0.45) : C.FOUND_SPREAD;
+    return { targets: t, spread: s, mode: 'centroid' };
+  }
+  return {
+    targets: answersToTargets(spec),
+    spread: C.FOUND_SPREAD,
+    mode: Array.isArray(spec) && spec.length ? 'answers' : 'default',
+  };
+}
+
+/**
+ * 要求された重心のうち、実際に成立する分を返す。
+ *
+ * 対抗アームの予算（mean(A)+mean(B)=1.0）は構造的な制約なので、
+ * 「誇りも序列意識も高い種族」（5番の両アーム）は要求しても作れない。
+ * 診断の結果をそのまま表示すると嘘になるので、UIはこちらを見せること。
+ */
+export function projectCentroid(centroid) {
+  const g = {};
+  for (const n of GENE_NAMES) {
+    const v = centroid ? centroid[n] : undefined;
+    g[n] = Number.isFinite(v) ? clamp01(v) : 0.5;
+  }
+  normalizePhenotype(g);
+  const out = {};
+  for (const n of MIND_GENES) out[n] = g[n];
+  return out;
+}
+
 export function answersToTargets(answers) {
   const t = {};
   const arr = Array.isArray(answers) ? answers : [];
