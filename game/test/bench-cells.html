@@ -1,0 +1,330 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>細胞方式の描画ベンチ（A-4/A-5）</title>
+<!--
+  docs/v3/15-設計-描画.md §1 の数字はこれで取った。
+  bench-draw.html は「円＋目2つ」の旧記号を測る台。こちらは A-4 の新記号
+  （膜＋年輪＋細胞の粒）を測る台。旧台は消していない（比較の基準として要る）。
+
+  使い方： cd game && python3 -m http.server 8777
+          → http://localhost:8777/test/bench-cells.html
+
+  【重要】Canvas2D は遅延実行なので、1px 読み戻して同期を強制しないと
+  「コマンドを記録する時間」しか測れない（実測で 6倍ちがう）。
+  各計測は必ず getImageData(0,0,1,1) を挟んでいる。この行を消すと数字は全部無意味。
+-->
+<body style="margin:0;background:#05060c;color:#9fb;font:12px/1.7 ui-monospace,monospace">
+<div id="host" style="position:relative;width:900px;height:744px"></div>
+<pre id="out" style="white-space:pre-wrap;padding:12px"></pre>
+<script type="module">
+const out = document.getElementById('out');
+const rows = [];
+const log = (s) => { out.textContent += s + '\n'; rows.push(s); console.log(s); };
+const W = 900, H = 744;                       // X-06 の裁定（ドック380px → 盤面 900×744）
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+const host = document.getElementById('host');
+
+function mk(w, h, dpr, attach) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  c.style.cssText = `position:absolute;inset:0;width:${w}px;height:${h}px`;
+  if (attach) host.appendChild(c);
+  return c;
+}
+function timed(label, fn, iters, flushCtx) {
+  fn(); fn();
+  if (flushCtx) flushCtx.getImageData(0, 0, 1, 1);
+  const t0 = performance.now();
+  for (let i = 0; i < iters; i++) { fn(); if (flushCtx) flushCtx.getImageData(0, 0, 1, 1); }
+  const per = (performance.now() - t0) / iters;
+  log('  ' + label.padEnd(52) + per.toFixed(3) + ' ms');
+  return per;
+}
+
+// ---------------------------------------------------------------- 幾何
+// 円の中に n 個の等円を詰めたときの半径比（既知の最密解）。ここは実測ではなく定数。
+const PACK  = [0, 1, 0.5000, 0.4641, 0.4142, 0.3702, 0.3333, 0.3333];
+// 中心からの距離（PACK から出る）。n=7 だけ中心に1個置く。
+const RINGD = [0, 0,  0.5000, 0.5359, 0.5858, 0.6298, 0.6667, 0.6667];
+const GAP = 0.86;                              // 粒どうしを触れさせない係数
+
+/** n 個の細胞の単位座標（核の半径を 1 とする） */
+function cellUnits(n) {
+  const a = [];
+  if (n >= 7) a.push([0, 0]);
+  const ring = n >= 7 ? 6 : n;
+  if (ring === 1) { a.push([0, 0]); return a; }
+  for (let i = 0; i < ring; i++) {
+    const th = -Math.PI / 2 + (i / ring) * Math.PI * 2;
+    a.push([Math.cos(th) * RINGD[n], Math.sin(th) * RINGD[n]]);
+  }
+  return a;
+}
+const UNITS = []; for (let n = 1; n <= 7; n++) UNITS[n] = cellUnits(n);
+
+const CORE = 0.55;    // 核（細胞が入る領域）の半径 = R * CORE
+const BAND_IN = 0.60, BAND_OUT = 0.96;   // 年輪の帯
+
+/** A-4 の個体を直接パスで描く。膜1 + 年輪 nRing + 細胞 nCell。 */
+function drawCellsDirect(g, x, y, R, nRing, nCell, fill, edge) {
+  g.beginPath(); g.arc(x, y, R, 0, 6.283); g.fillStyle = fill; g.fill();
+  if (nRing > 0) {
+    g.strokeStyle = edge; g.lineWidth = 0.8;
+    const bIn = R * BAND_IN, bOut = R * BAND_OUT;
+    const step = nRing > 1 ? (bOut - bIn) / (nRing - 1) : 0;
+    for (let i = 0; i < nRing; i++) { g.beginPath(); g.arc(x, y, bIn + step * i, 0, 6.283); g.stroke(); }
+  }
+  const Rc = R * CORE, rc = Rc * PACK[nCell] * GAP;
+  g.fillStyle = edge;
+  for (const [ux, uy] of UNITS[nCell]) {
+    g.beginPath(); g.arc(x + ux * Rc, y + uy * Rc, rc, 0, 6.283); g.fill();
+  }
+}
+
+/** 弱り（明度）を、焼いた絵の上から黒い円で落とす。キャッシュキーに入れないための手 */
+function dim(g, x, y, R, frailty) {
+  if (frailty <= 0) return;
+  g.beginPath(); g.arc(x, y, R, 0, 6.283);
+  g.fillStyle = `rgba(0,0,0,${(0.55 * frailty).toFixed(3)})`; g.fill();
+}
+
+// ---------------------------------------------------------------- 焼く（オフスクリーン）
+const PAD = 2;
+function bakeOne(R, nRing, nCell, fill, edge) {
+  const s = Math.ceil((R + PAD) * 2);
+  const c = mk(s, s, DPR, false);
+  const g = c.getContext('2d');
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  drawCellsDirect(g, s / 2, s / 2, R, nRing, nCell, fill, edge);
+  return { c, s };
+}
+
+// ---------------------------------------------------------------- 母集団
+function makePeople(n) {
+  const a = [];
+  for (let i = 0; i < n; i++) a.push({
+    id: i + 1,
+    x: 40 + ((i * 97) % (W - 80)), y: 40 + ((i * 61) % (H - 80)),
+    nRing: i % 7, nCell: 1 + (i % 7),
+    frailty: (i % 5) / 5,
+    fill: `hsl(${(i * 37) % 360} 62% 58%)`, edge: `hsl(${(i * 37) % 360} 62% 24%)`,
+  });
+  return a;
+}
+
+const lay = mk(W, H, DPR, true), L = lay.getContext('2d');
+const clear = () => { L.setTransform(DPR, 0, 0, DPR, 0, 0); L.clearRect(0, 0, W, H); };
+
+log(`DPR=${DPR}  論理 ${W}x${H} -> 実 ${lay.width}x${lay.height}`);
+log(`1枚あたりのVRAM ≈ ${(lay.width * lay.height * 4 / 1048576).toFixed(1)} MB`);
+log(`予算：1フレーム 16.6ms のうち actors に 4.0ms。人口150なら 1体 26.7μs、人口400なら 10.0μs`);
+
+// ============================================================ 1. 直接パス
+log('\n■ 1. 直接パスで描く（膜1 + 年輪n + 細胞n）  R=9');
+for (const N of [150, 400]) {
+  const ppl = makePeople(N);
+  log(`  --- 人口 ${N} ---`);
+  timed('clear のみ', () => { clear(); }, 200, L);
+  for (const [nr, nc] of [[0, 1], [1, 2], [2, 4], [3, 7], [6, 7]]) {
+    const arcs = 1 + nr + nc;
+    const t = timed(`年輪${nr} 細胞${nc}（弧 ${arcs}本/体）`, () => {
+      clear();
+      for (const p of ppl) drawCellsDirect(L, p.x, p.y, 9, nr, nc, p.fill, p.edge);
+    }, 120, L);
+    log(`      → 1体 ${((t / N) * 1000).toFixed(2)} μs   総弧数 ${arcs * N}`);
+  }
+  const t2 = timed('年輪3 細胞7 ＋ 弱りの黒円（弧 12本/体）', () => {
+    clear();
+    for (const p of ppl) { drawCellsDirect(L, p.x, p.y, 9, 3, 7, p.fill, p.edge); dim(L, p.x, p.y, 9, p.frailty); }
+  }, 120, L);
+  log(`      → 1体 ${((t2 / N) * 1000).toFixed(2)} μs`);
+}
+
+// ============================================================ 2. 焼いて貼る
+log('\n■ 2. 焼いた絵を drawImage する（オフスクリーン。画像ファイルではない）');
+for (const R of [9, 13]) {
+  log(`  --- 描画半径 R=${R} ---`);
+  const t1 = timed(`1体ぶんを焼く（年輪3 細胞7）`, () => bakeOne(R, 3, 7, '#8ab', '#245'), 300, null);
+  log(`      → 焼き1回 ${(t1 * 1000).toFixed(1)} μs。150体まとめて焼くと ${(t1 * 150).toFixed(1)} ms`);
+  for (const N of [150, 400]) {
+    const ppl = makePeople(N);
+    const sprites = ppl.map(p => bakeOne(R, p.nRing, p.nCell, p.fill, p.edge));
+    const t = timed(`drawImage ×${N}（R=${R}）`, () => {
+      clear();
+      for (let i = 0; i < N; i++) {
+        const s = sprites[i], p = ppl[i];
+        L.drawImage(s.c, p.x - s.s / 2, p.y - s.s / 2, s.s, s.s);
+      }
+    }, 200, L);
+    log(`      → 1体 ${((t / N) * 1000).toFixed(2)} μs`);
+    const td = timed(`drawImage ＋ 弱りの黒円 ×${N}（R=${R}）`, () => {
+      clear();
+      for (let i = 0; i < N; i++) {
+        const s = sprites[i], p = ppl[i];
+        L.drawImage(s.c, p.x - s.s / 2, p.y - s.s / 2, s.s, s.s);
+        dim(L, p.x, p.y, R, p.frailty);
+      }
+    }, 200, L);
+    log(`      → 1体 ${((td / N) * 1000).toFixed(2)} μs`);
+  }
+}
+
+// ============================================================ 2b. 副パスをまとめる
+/** 同じ色のものを1つのパスにまとめる。fill()/stroke() の回数を 11 → 3 に落とす */
+function drawCellsBatched(g, x, y, R, nRing, nCell, fill, edge) {
+  g.beginPath(); g.arc(x, y, R, 0, 6.283); g.fillStyle = fill; g.fill();
+  if (nRing > 0) {
+    const bIn = R * BAND_IN, bOut = R * BAND_OUT;
+    const step = nRing > 1 ? (bOut - bIn) / (nRing - 1) : 0;
+    g.beginPath();
+    for (let i = 0; i < nRing; i++) {
+      const rr = bIn + step * i;
+      g.moveTo(x + rr, y); g.arc(x, y, rr, 0, 6.283);   // moveTo しないと輪どうしが線でつながる
+    }
+    g.strokeStyle = edge; g.lineWidth = 0.8; g.stroke();
+  }
+  const Rc = R * CORE, rc = Rc * PACK[nCell] * GAP;
+  g.beginPath();
+  for (const [ux, uy] of UNITS[nCell]) {
+    const px = x + ux * Rc, py = y + uy * Rc;
+    g.moveTo(px + rc, py); g.arc(px, py, rc, 0, 6.283);
+  }
+  g.fillStyle = edge; g.fill();
+}
+
+log('\n■ 2b. 副パスをまとめる（fill/stroke の回数を 11 → 3 に）');
+for (const N of [10, 100, 150, 400]) {
+  const ppl = makePeople(N);
+  log(`  --- 人口 ${N} ---`);
+  const ta = timed(`まとめない 年輪3 細胞7 ×${N}`, () => {
+    clear(); for (const p of ppl) drawCellsDirect(L, p.x, p.y, 9, 3, 7, p.fill, p.edge);
+  }, 120, L);
+  log(`      → 1体 ${((ta / N) * 1000).toFixed(2)} μs`);
+  const tb = timed(`まとめる  年輪3 細胞7 ×${N}`, () => {
+    clear(); for (const p of ppl) drawCellsBatched(L, p.x, p.y, 9, 3, 7, p.fill, p.edge);
+  }, 120, L);
+  log(`      → 1体 ${((tb / N) * 1000).toFixed(2)} μs   （まとめない比 ${(tb / ta * 100).toFixed(0)}%）`);
+  const tc = timed(`まとめる ＋ 弱りの黒円 ×${N}`, () => {
+    clear();
+    for (const p of ppl) { drawCellsBatched(L, p.x, p.y, 9, 3, 7, p.fill, p.edge); dim(L, p.x, p.y, 9, p.frailty); }
+  }, 120, L);
+  log(`      → 1体 ${((tc / N) * 1000).toFixed(2)} μs`);
+}
+
+// ============================================================ 2c. drawImage の内訳
+log('\n■ 2c. drawImage が遅いのは「texture の枚数」か「呼び出し」か');
+{
+  const ppl = makePeople(150);
+  const many = ppl.map(p => bakeOne(9, p.nRing, p.nCell, p.fill, p.edge));   // 150枚バラバラ
+  const few = [];
+  for (let i = 0; i < 8; i++) few.push(bakeOne(9, i % 7, 1 + (i % 7), `hsl(${i * 45} 62% 58%)`, '#245'));
+  timed('drawImage ×150（150枚バラバラの texture）', () => {
+    clear(); for (let i = 0; i < 150; i++) { const s = many[i], p = ppl[i]; L.drawImage(s.c, p.x - s.s / 2, p.y - s.s / 2, s.s, s.s); }
+  }, 200, L);
+  timed('drawImage ×150（8枚を使い回す）', () => {
+    clear(); for (let i = 0; i < 150; i++) { const s = few[i & 7], p = ppl[i]; L.drawImage(s.c, p.x - s.s / 2, p.y - s.s / 2, s.s, s.s); }
+  }, 200, L);
+}
+
+// ============================================================ 2d. ★これは「わざと間違った測り方」
+// 「毎回 getImageData するとGPUのパイプラインが切れて不公平だから、K回まとめて最後に1回だけ
+//  同期すればいい」と考えたくなる。やってみると 1.27μs/体 のような桁違いに小さい値が出る。
+//  それは嘘である。捨てられるフレームの塗りは GPU が省略するので、
+//  ここで測れるのは「JS がコマンドを記録する時間」だけになる（実際の 1/10）。
+// 比較の基準として残してあるが、docs/v3/15 に引用してよいのは timed()（毎フレーム同期）のほう。
+function timedThroughput(label, fn, iters, flushCtx) {
+  fn(); fn(); if (flushCtx) flushCtx.getImageData(0, 0, 1, 1);
+  const t0 = performance.now();
+  for (let i = 0; i < iters; i++) fn();
+  if (flushCtx) flushCtx.getImageData(0, 0, 1, 1);
+  const per = (performance.now() - t0) / iters;
+  log('  ' + label.padEnd(52) + per.toFixed(3) + ' ms');
+  return per;
+}
+log('\n■ 2d. 同期を最後に1回だけにして測り直す（3回続けて回し、ぶれを見る）');
+for (let pass = 1; pass <= 3; pass++) {
+  log(`  --- ${pass}回目 ---`);
+  for (const N of [150, 400]) {
+    const ppl = makePeople(N);
+    const sprites = ppl.map(p => bakeOne(9, p.nRing, p.nCell, p.fill, p.edge));
+    const td = timedThroughput(`直接パス 年輪3 細胞7 ×${N}`, () => {
+      clear(); for (const p of ppl) drawCellsDirect(L, p.x, p.y, 9, 3, 7, p.fill, p.edge);
+    }, 200, L);
+    log(`      → 1体 ${((td / N) * 1000).toFixed(2)} μs`);
+    const tb = timedThroughput(`焼いて drawImage ×${N}`, () => {
+      clear(); for (let i = 0; i < N; i++) { const s = sprites[i], p = ppl[i]; L.drawImage(s.c, p.x - s.s / 2, p.y - s.s / 2, s.s, s.s); }
+    }, 200, L);
+    log(`      → 1体 ${((tb / N) * 1000).toFixed(2)} μs   （直接パス比 ${(tb / td * 100).toFixed(0)}%）`);
+  }
+}
+
+// ============================================================ 3. 目安：旧記号との比較
+log('\n■ 3. 比較用：旧記号（円＋楕円2つ＝弧3本）');
+for (const N of [150, 400]) {
+  const ppl = makePeople(N);
+  const t = timed(`円＋目2つ ×${N}`, () => {
+    clear();
+    for (const p of ppl) {
+      L.beginPath(); L.arc(p.x, p.y, 9, 0, 6.283); L.fillStyle = p.fill; L.fill();
+      L.fillStyle = '#111';
+      for (const s of [-1, 1]) { L.beginPath(); L.ellipse(p.x + s * 3, p.y - 0.5, 1.5, 3.1, 0, 0, 6.283); L.fill(); }
+    }
+  }, 200, L);
+  log(`      → 1体 ${((t / N) * 1000).toFixed(2)} μs`);
+}
+
+// ============================================================ 3b. 実勢（sim の実測分布どおりに混ぜる）
+// 年輪・細胞の出現率は test/ の40種×40世代の実測（docs/v3/15 §1-4 の表）。
+// 累積割合で引く。乱数は使わない（決定的にするため）。
+const RING_MIX = [0.259, 0.247, 0.319, 0.174];              // 0,1,2,3本（4本は3本に頭打ち）
+const CELL_MIX = [0.384, 0.131, 0.018, 0.119, 0.124, 0.093, 0.131]; // 1..7個
+function pickBy(mix, u) { let a = 0; for (let i = 0; i < mix.length; i++) { a += mix[i]; if (u < a) return i; } return mix.length - 1; }
+log('\n■ 3b. 実勢：sim の実測分布どおりに年輪・細胞を混ぜる');
+for (const R of [9, 10, 11, 13]) {
+  for (const N of [100, 150]) {
+    const ppl = makePeople(N);
+    let arcs = 0;
+    for (let i = 0; i < N; i++) {
+      const p = ppl[i];
+      p.nRing = pickBy(RING_MIX, ((i * 0.6180339887) % 1));
+      p.nCell = 1 + pickBy(CELL_MIX, ((i * 0.7548776662) % 1));
+      p.frailty = (i % 10) < 3 ? 0.3 + (i % 3) * 0.2 : 0;
+      arcs += 1 + p.nRing + p.nCell + (p.frailty > 0 ? 1 : 0);
+    }
+    const t = timed(`R=${R} 人口${N}（総弧数 ${arcs}／平均 ${(arcs / N).toFixed(2)}本）`, () => {
+      clear();
+      for (const p of ppl) { drawCellsDirect(L, p.x, p.y, R, p.nRing, p.nCell, p.fill, p.edge); dim(L, p.x, p.y, R, p.frailty); }
+    }, 150, L);
+    log(`      → 1体 ${((t / N) * 1000).toFixed(2)} μs ／ 1弧 ${((t / arcs) * 1000).toFixed(2)} μs`);
+  }
+}
+
+// ============================================================ 4. 粒が潰れない下限
+log('\n■ 4. 細胞1個の半径（rc = R×0.55×PACK[n]×0.86）。論理px');
+log('    R \\ n |' + [1, 2, 3, 4, 5, 6, 7].map(n => String(n).padStart(6)).join(''));
+for (const R of [2.9, 4.0, 4.7, 5.5, 5.6, 7.0, 9.0, 11.0, 13.0, 26.0]) {
+  log('    ' + R.toFixed(1).padStart(5) + ' |' +
+    [1, 2, 3, 4, 5, 6, 7].map(n => (R * CORE * PACK[n] * GAP).toFixed(2).padStart(6)).join(''));
+}
+log('    ※ dpr=2 のとき rc=1.10 は実画素で直径 4.4px。ここを下限に取る');
+
+// ============================================================ 5. Path2D が SVG の d を食えるか
+log('\n■ 5. アイコン：SVG の d 文字列をそのまま Canvas の Path2D に渡せるか');
+try {
+  const d = 'M12 3 L21 20 L3 20 Z';
+  const p2 = new Path2D(d);
+  clear(); L.fillStyle = '#9fb'; L.fill(p2);
+  const px = L.getImageData(Math.round(12 * DPR), Math.round(16 * DPR), 1, 1).data;
+  log(`  new Path2D('${d}') → 描けた。中心画素 rgba(${px[0]},${px[1]},${px[2]},${px[3]})`);
+  const t = timed('Path2D を毎回 new する ×150', () => {
+    clear(); for (let i = 0; i < 150; i++) { const q = new Path2D(d); L.fill(q); }
+  }, 120, L);
+  const cached = new Path2D(d);
+  timed('Path2D を1回作って使い回す ×150', () => {
+    clear(); for (let i = 0; i < 150; i++) L.fill(cached);
+  }, 120, L);
+} catch (e) { log('  Path2D(d) が使えない: ' + e.message); }
+
+log('\nDONE');
+window.__bench = rows.join('\n');
+</script>

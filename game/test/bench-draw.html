@@ -1,0 +1,226 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>描画ベンチ</title>
+<!--
+  描画の実測台。docs/v3/15-設計-描画.md の数字はこれで取った。
+  使い方：  cd game && python3 -m http.server 8777
+            → http://localhost:8777/test/bench-draw.html
+
+  【重要】Canvas2D は遅延実行なので、描画コマンドの記録時間だけを測ると
+  実際の 1/5〜1/10 の値が出る。1px 読み戻して同期フラッシュを強制すること。
+  （実測：同じ絵が flush 無しで 0.13ms、flush 有りで 0.79ms）
+-->
+<body style="margin:0;background:#05060c;color:#9fb;font:12px/1.7 ui-monospace,monospace">
+<div id="host" style="position:relative;width:1000px;height:760px"></div>
+<pre id="out" style="white-space:pre-wrap;padding:12px"></pre>
+<script type="module">
+import { drawIndividual, bodyColor, portrait } from '../src/ui/color.js';
+
+const out = document.getElementById('out');
+const log = (s) => { out.textContent += s + '\n'; console.log(s); };
+const W = 1000, H = 760, DPR = Math.min(2, window.devicePixelRatio || 1);
+const host = document.getElementById('host');
+
+function mk(w, h, dpr, attach) {
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  c.style.cssText = `position:absolute;inset:0;width:${w}px;height:${h}px`;
+  if (attach) host.appendChild(c);
+  return c;
+}
+
+/** flush を強制して測る。flushCtx を渡さない＝純粋なJS計算の計測。 */
+function timed(label, fn, iters, flushCtx) {
+  fn(); fn();
+  if (flushCtx) flushCtx.getImageData(0, 0, 1, 1);
+  const t0 = performance.now();
+  for (let i = 0; i < iters; i++) { fn(); if (flushCtx) flushCtx.getImageData(0, 0, 1, 1); }
+  const per = (performance.now() - t0) / iters;
+  log('  ' + label.padEnd(48) + per.toFixed(3) + ' ms');
+  return per;
+}
+
+const world = { people: new Map(), strains: { self: { hue: 0 }, a: { hue: 200 } }, food: 90, morale: 0.6 };
+function makePeople(n) {
+  const a = [];
+  for (let i = 0; i < n; i++) a.push({
+    id: i + 1, name: 'ナントカ' + i, age: 1 + (i % 30), alive: true,
+    wounded: i % 9 === 0, fatigue: (i % 7) / 7,
+    genes: { 寿命: (i % 11) / 11, 頑健: (i % 5) / 5, 感応: (i % 13) / 13, 胆力: (i % 3) / 3 },
+    skills: { 恐怖耐性: (i%4)/4, 統率: (i%6)/6, 戦技: (i%8)/8, 農技: (i%5)/5, 狩技: (i%9)/9 },
+    lineage: i % 4 === 0 ? { self: 0.6, a: 0.4 } : { self: 1 },
+    bureau: i < 3 ? 'military' : null,
+    x: 40 + Math.random() * (W - 80), y: 40 + Math.random() * (H - 80),
+  });
+  return a;
+}
+
+// 「本気のマップ」＝ 村mapを実際に描いたらこれくらいにはなる想定。
+// 放射グラデ5枚 / 畝のストローク400本 / 木や岩のパス300個 / ラベル
+function mapRich(g, w, h) {
+  g.clearRect(0, 0, w, h);
+  const cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.46;
+  for (let i = 0; i < 5; i++) {
+    const gr = g.createRadialGradient(cx, cy, R * 0.1 * i, cx, cy, R * (0.3 + 0.18 * i));
+    gr.addColorStop(0, 'rgba(40,60,40,0.35)'); gr.addColorStop(1, 'rgba(10,14,20,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, w, h);
+  }
+  g.lineWidth = 1.2; g.strokeStyle = 'rgba(150,190,140,0.13)';
+  for (let i = 0; i < 400; i++) {
+    const a = Math.random() * 6.283, r = R * (0.3 + Math.random() * 0.5);
+    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 10, y + 3); g.stroke();
+  }
+  for (let i = 0; i < 300; i++) {
+    const a = Math.random() * 6.283, r = R * (0.35 + Math.random() * 0.55);
+    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+    g.beginPath(); g.moveTo(x, y - 6); g.quadraticCurveTo(x + 5, y, x, y + 5);
+    g.quadraticCurveTo(x - 5, y, x, y - 6); g.closePath();
+    g.fillStyle = 'rgba(70,110,70,0.30)'; g.fill();
+  }
+  g.font = '13px sans-serif'; g.fillStyle = 'rgba(200,215,255,0.5)';
+  for (const [t, a] of [['畑', 0.8], ['狩り場', 2.2], ['訓練場', 3.9], ['広場', 5.4]])
+    g.fillText(t, cx + Math.cos(a) * R * 0.62, cy + Math.sin(a) * R * 0.62);
+}
+
+/** キャラ班が絵を濃くしたときの上限見積り用 */
+function drawRich(g, p, x, y, r) {
+  g.beginPath(); g.arc(x, y + 1.5, r * 1.05, 0, 6.283);
+  g.fillStyle = 'rgba(0,0,0,0.35)'; g.fill();
+  g.beginPath(); g.arc(x, y, r, 0, 6.283); g.fillStyle = bodyColor(world, p); g.fill();
+  g.lineWidth = 1.2; g.strokeStyle = 'rgba(255,255,255,0.28)'; g.stroke();
+  const ew = Math.max(0.9, r * 0.17), eh = r * 0.34, dx = r * 0.34;
+  g.fillStyle = 'rgba(10,11,17,0.92)';
+  for (const s of [-1, 1]) { g.beginPath(); g.ellipse(x + s * dx, y - r * 0.06, ew, eh, 0, 0, 6.283); g.fill(); }
+  g.beginPath(); g.moveTo(x, y - r - 4); g.lineTo(x + 3, y - r + 1); g.lineTo(x - 3, y - r + 1);
+  g.closePath(); g.fillStyle = 'rgba(232,178,74,0.8)'; g.fill();
+  g.beginPath(); g.arc(x, y, r + 3, -1.2, 1.0); g.lineWidth = 1.6;
+  g.strokeStyle = 'rgba(95,227,196,0.7)'; g.stroke();
+}
+
+// ---------------------------------------------------------------- 走らせる
+const single = mk(W, H, DPR, true), s1 = single.getContext('2d');
+const bake = mk(W, H, DPR, false), bk = bake.getContext('2d');
+const layer0 = mk(W, H, DPR, false), l0 = layer0.getContext('2d');
+const layer1 = mk(W, H, DPR, false), l1 = layer1.getContext('2d');
+
+log(`DPR=${DPR}  論理 ${W}x${H} -> 実 ${single.width}x${single.height}`);
+log(`1枚あたりのVRAM ≈ ${(single.width * single.height * 4 / 1048576).toFixed(1)} MB`);
+
+log('\n■ 背景マップをどう出すか（人口150で比較）');
+bk.setTransform(DPR, 0, 0, DPR, 0, 0); mapRich(bk, W, H);
+l0.setTransform(DPR, 0, 0, DPR, 0, 0); mapRich(l0, W, H);
+const ppl150 = makePeople(150);
+world.people = new Map(ppl150.map(p => [p.id, p]));
+const drawP = (g, ppl) => { for (const p of ppl) drawIndividual(g, world, p, p.x, p.y, 9, { fear: 0.2 }); };
+
+timed('A 毎フレーム手描き（＝現在のdish.jsの発想）', () => {
+  s1.setTransform(DPR, 0, 0, DPR, 0, 0); s1.clearRect(0, 0, W, H); mapRich(s1, W, H); drawP(s1, ppl150);
+}, 20, s1);
+timed('B 焼いた背景を毎フレーム drawImage', () => {
+  s1.setTransform(1, 0, 0, 1, 0, 0); s1.clearRect(0, 0, single.width, single.height); s1.drawImage(bake, 0, 0);
+  s1.setTransform(DPR, 0, 0, DPR, 0, 0); drawP(s1, ppl150);
+}, 120, s1);
+timed('C canvasを重ねて上の1枚だけ描き直す ★採用', () => {
+  l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H); drawP(l1, ppl150);
+}, 200, l1);
+timed('（参考）マップを1回焼く：リサイズ時だけ払う', () => {
+  bk.setTransform(DPR, 0, 0, DPR, 0, 0); mapRich(bk, W, H); bk.getImageData(0, 0, 1, 1);
+}, 20, null);
+
+log('\n■ 個体レイヤの中身（clear込み）');
+for (const N of [10, 50, 150, 400]) {
+  const ppl = makePeople(N);
+  world.people = new Map(ppl.map(p => [p.id, p]));
+  log(`  --- 人口 ${N} ---`);
+  timed('clear のみ', () => {
+    l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H);
+  }, 200, l1);
+  timed('いまの個体（円＋目2つ）', () => {
+    l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H); drawP(l1, ppl);
+  }, 200, l1);
+  timed('濃い個体（影＋輪郭＋役印＋体力弧）', () => {
+    l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H);
+    for (const p of ppl) drawRich(l1, p, p.x, p.y, 9);
+  }, 120, l1);
+  timed('全員に名前ラベル fillText×N', () => {
+    l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H);
+    l1.font = '11px sans-serif'; l1.fillStyle = '#c9d2e4';
+    for (const p of ppl) l1.fillText(p.name, p.x + 10, p.y);
+  }, 120, l1);
+  const pos = new Map(ppl.map(p => [p.id, { x: p.x, y: p.y }]));
+  timed('ばね更新×N（JSのみ）', () => {
+    let i = 0;
+    for (const s of pos.values()) {
+      const tx = W / 2 + Math.cos(i) * 200, ty = H / 2 + Math.sin(i++) * 200;
+      s.vx = (s.vx || 0) + (tx - s.x) * 0.0026; s.vy = (s.vy || 0) + (ty - s.y) * 0.0026;
+      s.vx *= 0.9; s.vy *= 0.9; s.x += s.vx; s.y += s.vy;
+    }
+  }, 500, null);
+  timed('ヒットテスト 線形走査×N（JSのみ）', () => {
+    const mx = Math.random() * W, my = Math.random() * H;
+    let best = null, bd = 22 * 22;
+    for (const [id, s] of pos) { const d = (s.x - mx) ** 2 + (s.y - my) ** 2; if (d < bd) { bd = d; best = id; } }
+    return best;
+  }, 2000, null);
+}
+
+// 色バケットごとに焼いたスプライト（LOD案の検証用）
+const SPRITES = [];
+for (let i = 0; i < 16; i++) {
+  const c = mk(24, 24, DPR, false), cg = c.getContext('2d');
+  cg.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cg.beginPath(); cg.arc(12, 12, 9, 0, 6.283);
+  cg.fillStyle = `hsl(${i * 22} 70% 50%)`; cg.fill();
+  cg.fillStyle = '#111';
+  for (const s of [-1, 1]) { cg.beginPath(); cg.ellipse(12 + s * 3, 11.5, 1.6, 3.1, 0, 0, 6.283); cg.fill(); }
+  SPRITES.push(c);
+}
+
+log('\n■ 高い技（人口150）');
+world.people = new Map(ppl150.map(p => [p.id, p]));
+timed('shadowBlur で発光 ×150（禁止）', () => {
+  l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H);
+  l1.shadowBlur = 8; l1.shadowColor = 'rgba(95,227,196,0.6)';
+  for (const p of ppl150) { l1.beginPath(); l1.arc(p.x, p.y, 9, 0, 6.283); l1.fillStyle = '#5fe3c4'; l1.fill(); }
+  l1.shadowBlur = 0;
+}, 40, l1);
+timed('個体ごとに放射グラデを作る ×150（禁止）', () => {
+  l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H);
+  for (const p of ppl150) {
+    const gr = l1.createRadialGradient(p.x - 3, p.y - 3, 1, p.x, p.y, 9);
+    gr.addColorStop(0, '#9ff'); gr.addColorStop(1, '#277');
+    l1.beginPath(); l1.arc(p.x, p.y, 9, 0, 6.283); l1.fillStyle = gr; l1.fill();
+  }
+}, 60, l1);
+timed('個体ごとに save/restore ×150', () => {
+  l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H);
+  for (const p of ppl150) {
+    l1.save(); l1.translate(p.x, p.y); l1.rotate(0.3);
+    l1.beginPath(); l1.arc(0, 0, 9, 0, 6.283); l1.fillStyle = '#5fe3c4'; l1.fill(); l1.restore();
+  }
+}, 120, l1);
+timed('スプライト16枚をキャッシュして drawImage ×150', () => {
+  l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H);
+  for (let i = 0; i < ppl150.length; i++) {
+    const sp = SPRITES[i & 15]; l1.drawImage(sp, ppl150[i].x - 12, ppl150[i].y - 12, 24, 24);
+  }
+}, 200, l1);
+timed('同じ絵を2重円で出す ×150（代替）', () => {
+  l1.setTransform(DPR, 0, 0, DPR, 0, 0); l1.clearRect(0, 0, W, H);
+  for (const p of ppl150) {
+    l1.beginPath(); l1.arc(p.x, p.y, 13, 0, 6.283); l1.fillStyle = 'rgba(95,227,196,0.25)'; l1.fill();
+    l1.beginPath(); l1.arc(p.x, p.y, 9, 0, 6.283); l1.fillStyle = '#5fe3c4'; l1.fill();
+  }
+}, 120, l1);
+
+log('\n■ DOM側（毎フレームではない。パネル再描画のたびに払う）');
+timed('portrait() を150個作る（検索一覧1画面）', () => {
+  const r = []; for (const p of ppl150) r.push(portrait(world, p, 26)); return r;
+}, 20, null);
+timed('portrait() を26個作る（ドック1画面）', () => {
+  const r = []; for (let i = 0; i < 26; i++) r.push(portrait(world, ppl150[i], 26)); return r;
+}, 60, null);
+
+log('\nDONE');
+</script>
