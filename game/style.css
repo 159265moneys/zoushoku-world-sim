@@ -18,6 +18,8 @@
   --panel3:#212736;
   --line:#2b3244;
   --line2:#3c4457;
+  /* 説明のある語に引く点線。**文字ではなく線**なので3段目にしてよい */
+  --dot:#6b7690;
 
   /* 文字は2段だけ。3段目を作ると必ずそこに逃げて読めない文字が生える */
   --tx:#eef2f9;      /* 本文・数値 */
@@ -285,15 +287,84 @@ h3.sec small{font-size:12.5px;color:var(--tx2);font-weight:400;margin-left:8px;l
 .tag.bad{color:#ff9c86;border-color:#7a3a2c;background:#2a1310}
 .tag.warn{color:#ffd68a;border-color:#6a5722;background:#2a2210}
 
+/* ============================================================ ホバー説明
+ * 説明のある語には点線の下線を引く。**目印が無いツールチップは存在しないのと同じ。**
+ * 色では区別しない（色相は血すじ専用。A-5 の絶対規則）。
+ */
+[data-term]{
+  border-bottom:1px dotted var(--dot);
+  cursor:help;
+}
+[data-term]:hover{border-bottom-color:var(--ac)}
+/* バーのラベルは幅が詰まっているので、下線を文字だけに掛ける */
+.bar .nm[data-term]{border-bottom:0}
+.bar .nm[data-term] span.u{border-bottom:1px dotted var(--dot)}
+.bar .nm[data-term]:hover span.u{border-bottom-color:var(--ac)}
+/* タイルと上帯は見出しの語に掛ける */
+.tile .k[data-term], .stat .k[data-term]{border-bottom:0}
+.tile .k[data-term] span.u, .stat .k[data-term] span.u{border-bottom:1px dotted var(--dot)}
+.tile .k[data-term]:hover span.u, .stat .k[data-term]:hover span.u{border-bottom-color:var(--ac)}
+
+.tipcard{
+  position:fixed;z-index:120;pointer-events:auto;
+  background:#f2f5fb;color:#10141d;
+  border:1px solid #cbd3e2;border-radius:8px;
+  box-shadow:0 10px 30px #000a;
+  padding:10px 12px 11px;font-size:13.5px;line-height:1.65;
+}
+.tipcard.pinned{border-color:#39b394;box-shadow:0 10px 30px #000a,0 0 0 2px #39b39455}
+.tipcard .hd{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:4px}
+.tipcard .hd b{font-size:15px;font-weight:700}
+.tipcard .hd i{font-style:normal;font-size:12px;color:#5b6478;white-space:nowrap}
+.tipcard .one{margin:0;font-size:13.5px;color:#232a38}
+.tipcard .dead{
+  margin:6px 0 0;padding:4px 7px;border-radius:4px;
+  background:#e3e7ef;color:#3a4152;font-size:12.5px;border-left:3px solid #9aa3b6
+}
+.tipcard .sep{height:1px;background:#d5dce9;margin:8px 0}
+.tipcard .tr{display:flex;gap:8px;align-items:baseline;margin:3px 0}
+.tipcard .tr b{flex:0 0 30px;font-weight:700;font-size:12.5px;color:#5b6478}
+.tipcard .tr span{flex:1;font-size:13px}
+.tipcard .tr.now b{color:#1d6d59}
+.tipcard .tr.now span{font-weight:700;font-variant-numeric:tabular-nums;font-size:15px}
+.tipcard .note{margin:7px 0 0;font-size:12.5px;color:#4a5265}
+.tipcard .devkey{margin-top:7px;font-size:11.5px;color:#8a92a4;font-family:ui-monospace,monospace}
+
+/* 辞書に穴が空いていることを開発時だけ知らせる（本番では出ない） */
+.termbad{background:#4a1410 !important;outline:1px solid #ff7a63}
+#dictwarn{
+  position:fixed;right:12px;bottom:12px;z-index:130;
+  background:#2a1310;border:1px solid #7a3a2c;color:#ff9c86;
+  padding:6px 11px;border-radius:6px;font-size:13px;font-weight:700
+}
+
 /* バー。数値は必ず横に出す。バーだけだと読めない */
 .bar{display:flex;align-items:center;gap:9px;padding:2.5px 0}
 .bar .nm{flex:0 0 116px;font-size:13.5px;color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 行の右端の1文字の印（畑・戦・増・心・血）。色は付けない */
+.bar .nm i.tg{
+  font-style:normal;font-size:11px;color:var(--tx2);margin-left:5px;
+  border:1px solid var(--line2);border-radius:3px;padding:0 3px;vertical-align:1px
+}
 .bar .nm em{font-style:normal;color:var(--tx2);font-size:12.5px;margin-left:4px}
 .bar .tr{flex:1;height:9px;background:#232a3a;border-radius:5px;position:relative;overflow:hidden}
 .bar .fl{position:absolute;left:0;top:0;bottom:0;background:var(--ac2);border-radius:5px;transition:width .25s}
 .bar .fl.rng{background:repeating-linear-gradient(45deg,#4a5470,#4a5470 4px,#39415a 4px,#39415a 8px)}
 .bar .nu{flex:0 0 40px;text-align:right;font-size:14px;color:var(--tx);font-variant-numeric:tabular-nums;font-weight:700}
 .bar.dim .nu{color:var(--tx2)}
+
+/* バーのまとまりの見出し（よく効く／効く／長にしたときだけ効く） */
+.grph{
+  display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;
+  font-size:13.5px;font-weight:700;color:var(--tx);margin:14px 0 4px
+}
+.grph small{font-size:12.5px;font-weight:400;color:var(--tx2)}
+
+/* 効かない座位。消さずに畳んでおく。開けば全部読める */
+.deadbox{margin:14px 0 4px;border:1px solid var(--line);border-radius:7px;padding:7px 10px;background:var(--panel2)}
+.deadbox summary{cursor:pointer;font-size:13.5px;font-weight:700;color:var(--tx2);list-style:revert}
+.deadbox[open] summary{margin-bottom:5px}
+.deadbox .bar .nm{color:var(--tx2)}
 
 /* 個体チップ */
 .chip{

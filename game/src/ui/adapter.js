@@ -651,11 +651,16 @@ export function makeAdapter(sim) {
     const p = sim.citizenPower(ind);
     const all = [...w.people.values()].map(sim.citizenPower).sort((a, b) => b - a);
     const idx = all.findIndex(v => v <= p);
-    const r = all.length ? clamp((idx < 0 ? all.length : idx) / all.length) : 0.5;
+    const at = (idx < 0 ? all.length : idx) + 1;      // 何番目か（1始まり）
+    const of = all.length;                            // 母数
+    const r = of ? clamp((at - 1) / of) : 0.5;
     const pct = r <= 0.01 ? 1 : Math.max(10, Math.ceil(r * 10) * 10);
     // citizenPower は clamp01（0..1）。そのまま Math.round すると
     // **全個体が 0 と表示される**（実測 0.02〜0.23）。100点満点に伸ばして見せる。
-    return { pct, label: `上位 ${pct}%`, value: Math.round(p * 100) };
+    //
+    // 母数（at / of）も返す。人口2で「上位1%」と出るのは意味を成さないので、
+    // 画面は小さい母数のとき「2体中1番目」と書き換える（N-7）。
+    return { pct, at, of, label: `上位 ${pct}%`, value: Math.round(p * 100) };
   };
 
   // sim の petitions() は「読む」関数ではなく **「湧かせる」関数** で、呼ぶたびに
