@@ -188,6 +188,11 @@ export function combatStats(ind) {
  * @param landFactor 規模の逓減（働き手が土地を超えると1人あたりが落ちる）。world 側が渡す。
  */
 export function produce(ind, world, landFactor = 1) {
+  // 配給を傾ければ、取り分の多い者ほどよく働く（誘因）。平等ならこの項は消える
+  const tilt = world?.rationTilt ?? 0;
+  const incentive = tilt > 0
+    ? clamp(1 + tilt * (citizenPower(ind) - 0.45) * 0.9, 0.75, 1.35)
+    : 1;
   const g = ind.genes;
   const sn = sins(ind);
   const so = sinOutputs(sn);
@@ -200,11 +205,11 @@ export function produce(ind, world, landFactor = 1) {
   let gross = 0;
   if (ind.role === ROLE.FARM) {
     gross = C.FARM_BASE * (0.60 + 0.80 * (ind.skills.農技 ?? 0)) * (0.70 + 0.60 * eff(ind, '器用'))
-          * diligence * coop * envAgri * cond * so.産出補正 * landFactor * motiv;
+          * diligence * coop * envAgri * cond * so.産出補正 * landFactor * motiv * incentive;
   } else if (ind.role === ROLE.HUNT) {
     // 狩りだけが生産と両立する。土地には縛られないが上振れも小さい
     gross = C.HUNT_BASE * (0.60 + 0.75 * (ind.skills.狩技 ?? 0)) * (0.70 + 0.55 * eff(ind, '攻撃素質'))
-          * diligence * envHunt * cond * so.産出補正 * (0.55 + 0.45 * landFactor) * motiv;
+          * diligence * envHunt * cond * so.産出補正 * (0.55 + 0.45 * landFactor) * motiv * incentive;
   }
   // 横領・隠匿：怨恨を溜めた国民は反乱の前にまず収穫を隠す
   const grudge = clamp01(ind.regimeGrudge ?? 0);

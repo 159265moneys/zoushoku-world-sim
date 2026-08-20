@@ -10,7 +10,7 @@ import { RNG } from '../core/rng.js';
 import { ROLE, DISTRICT, PHASE, blankSkills, makeIndividual } from '../core/model.js';
 import { GENE_NAMES } from '../core/genes.js';
 import * as C from './constants.js';
-import { foundingGenome, phenotype, homozygosity } from './genetics.js';
+import { foundingGenome, phenotype, homozygosity, geneticLoad, carriedLoad, vitalityOf } from './genetics.js';
 import { combatStats, citizenPower, eff, sins, clamp, clamp01 } from './derive.js';
 import { record, applyDelta } from './chronicle.js';
 import { spawn, kill } from './world.js';
@@ -40,9 +40,17 @@ export function makeGhost(seed, phase = 1, power = 1) {
   // 国ごとに遺伝子の狙いを振る＝国の性格。同じ相手ばかりにならない
   const targets = {};
   for (const g of GENE_NAMES) targets[g] = clamp01(rng.range(0.2, 0.8));
-  const people = [];
-  for (let i = 0; i < n; i++) {
-    const hap = foundingGenome(targets, rng, 0.18);
+  // 候補を多めに作り、遺伝的荷重の軽い順に n 体だけ残す。
+  //
+  // 「戦場で会う相手は、その国で成人まで生き延びた者」——実在の集団は
+  // 常に淘汰を通過している。ゴーストだけを創始者と同じ新規生成にしていたため、
+  // 移民の保有荷重が自国民の2.18倍という状態になっていた（自国民は60世代の
+  // 純化淘汰を経ているのに対し、ゴーストは無淘汰）。
+  // その結果、捕虜を受け入れると雑種強勢の利得より欠陥の輸入が勝ってしまい、
+  // 実測で人口−30%・産出−28%。設計の「捕虜が薬になる」が逆転していた。
+  const draft = [];
+  for (let i = 0; i < Math.ceil(n * C.GHOST_OVERDRAW); i++) {
+    const hap = foundingGenome(targets, rng, 0.18, C.GHOST_LOAD_P);
     const genes = phenotype(hap);
     // 年齢は本人の寿命と整合させる。
     //
@@ -64,6 +72,9 @@ export function makeGhost(seed, phase = 1, power = 1) {
     ind.origin = key;
     ind.homeName = name;
     ind.homozygosity = homozygosity(hap);
+    ind.load = geneticLoad(hap);
+    ind.vitality = vitalityOf(ind.load);
+    ind.carriedLoad = carriedLoad(hap);
     ind.regimeGrudge = clamp01(rng.range(0, 0.35));
     ind.ledger = [];
     ind.motive = {};
@@ -75,8 +86,11 @@ export function makeGhost(seed, phase = 1, power = 1) {
     const skillCap = village ? 0.30 : 0.55;
     for (const s of Object.keys(ind.skills)) ind.skills[s] = clamp01(rng.range(0, skillCap) * power);
     ind.power = citizenPower(ind);
-    people.push(ind);
+    draft.push(ind);
   }
+  draft.sort((a, b) => (a.carriedLoad ?? 0) - (b.carriedLoad ?? 0));
+  const people = draft.slice(0, n);
+  people.forEach((p, i) => { p.id = `${key}#${i}`; });
   rankNation(people);
   const strength = people.reduce((s, p) => s + p.power, 0);
   return {
@@ -186,6 +200,8 @@ export function startWar(world, rng, opponent) {
     // 開戦時のフェーズを持っておく。捕虜の人数はこれで決まるので、
     // 戦後にフェーズが上がっても captiveOptions と takeCaptives が食い違わない
     phase: world.phase, firstWar,
+    // 降伏条件は開戦時に確定する（戦闘中にカードを差し替えられない）
+    surrenderAt: (() => { const v = cardOr(world, 'surrender_at', null); return v == null || v <= 0 ? null : v / 100; })(),
     opponentKey: opponent.key, opponentName: opponent.name,
     sides: { home, away },
     round: 0, over: false, outcome: null, pursuit: false,
@@ -312,6 +328,16 @@ export function stepBattle(battle, rng) {
     const gain = cmd ? 0.07 * cmd.stats.lead : 0;
     const drop = (side.deadThis / n0) * 1.25 + (side.fledThis / n0) * 1.85 + 0.018;
     side.cohesion = clamp(side.cohesion - drop + gain, -1, side.c0 * 1.15);
+  }
+
+  // 「団結がN%を切ったら降伏具申」。事前に置いた条件が戦闘中に発火する。
+  // 戦闘中の操作はできないが、条件はカードに畳める（応戦方針・降伏条件は敷くの管轄）
+  if (!battle.surrenderOffered && battle.surrenderAt != null) {
+    if (home.cohesion / home.c0 < battle.surrenderAt) {
+      const o = surrender(battle);
+      out.push({ round: battle.round, kind: '降伏具申', accepted: !!(o && o.accepted), severity: o?.severity ?? null });
+      if (battle.over) return out;
+    }
   }
 
   battle.log.push({

@@ -1,0 +1,200 @@
+{
+  "meta": {
+    "generated": "2026-08-20 05:29:50",
+    "evaluator": "node /Users/shabutarou/Desktop/増殖/game/tools/eval.js --workers 4",
+    "gens": 200,
+    "opponents": [
+      "martial",
+      "agrarian"
+    ],
+    "search_seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24
+    ],
+    "holdout_seeds": [
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123,
+      124,
+      125,
+      126,
+      127,
+      128,
+      129,
+      130
+    ],
+    "evaluations_runs": 4224,
+    "evaluator_calls": 10,
+    "evaluator_restarts": 0,
+    "wall_seconds": 2990.1,
+    "extinct_gate": 0.25,
+    "sim_version": "3ad83064",
+    "sim_versions_seen": [
+      "3ad83064"
+    ],
+    "frozen_cards": {}
+  },
+  "q1": {
+    "dominant_by_rank": false,
+    "n_first_place_policies": 2
+  },
+  "q1_significance": {
+    "martial": {
+      "mean": 688.9333333333333,
+      "ci": [
+        -1790.7266666666665,
+        3189.556666666667
+      ],
+      "significant": false
+    },
+    "agrarian": {
+      "mean": 3303.8,
+      "ci": [
+        -1065.3908333333331,
+        7895.493333333335
+      ],
+      "significant": false
+    }
+  },
+  "q2": {
+    "clusters": 5,
+    "sizes": [
+      2,
+      2,
+      2,
+      1,
+      1
+    ]
+  },
+  "q3": {
+    "distinct_best": 2,
+    "rank_swap_rate": 0.35714285714285715
+  },
+  "q4_auc": {
+    "unpaired": 0.89,
+    "paired": 0.9
+  },
+  "q4": {
+    "best": 11119.716666666667,
+    "best_median": 9060.25,
+    "default": 2081.7166666666667,
+    "random_mean": 2249.8875,
+    "seed_sd": 8317.675978167206,
+    "gap_vs_random": 8869.829166666666,
+    "gap_vs_default": 9038.0
+  },
+  "sensitivity": {
+    "r2": 0.45352602879886506,
+    "cards": [
+      {
+        "card": "frontier",
+        "amp": 2115.9049315955963,
+        "argmax": 1.0
+      },
+      {
+        "card": "ration_equal",
+        "amp": 2032.9471788054395,
+        "argmax": 1.0
+      },
+      {
+        "card": "hereditary",
+        "amp": 1611.808189027868,
+        "argmax": 0.0
+      },
+      {
+        "card": "surrender_at",
+        "amp": 889.9841287969318,
+        "argmax": 1.0
+      },
+      {
+        "card": "hunt_ratio",
+        "amp": 709.5739156597162,
+        "argmax": 1.0
+      },
+      {
+        "card": "mix_policy",
+        "amp": 687.9916108256757,
+        "argmax": 0.0
+      },
+      {
+        "card": "spare_old",
+        "amp": 682.717303218822,
+        "argmax": 0.4
+      },
+      {
+        "card": "raise_young",
+        "amp": 488.61166392123505,
+        "argmax": 0.35000000000000003
+      },
+      {
+        "card": "stockpile",
+        "amp": 442.804365743858,
+        "argmax": 0.7000000000000001
+      },
+      {
+        "card": "guards",
+        "amp": 300.12989240525235,
+        "argmax": 1.0
+      },
+      {
+        "card": "drill",
+        "amp": 285.088604267267,
+        "argmax": 0.30000000000000004
+      },
+      {
+        "card": "deploy_top",
+        "amp": 250.6409773804897,
+        "argmax": 0.1
+      }
+    ]
+  },
+  "per_opponent": {
+    "opponents": [
+      "agrarian",
+      "martial"
+    ],
+    "mean_shift": 0.2625
+  }
+}

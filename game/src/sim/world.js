@@ -197,6 +197,18 @@ export function stepTick(w, rng) {
 
   const net = gross - hidden;
   w.yieldRate = net;
+
+  // 「備蓄をN日分確保」。目標を割ると配給を絞る＝食い延ばせるが不満が溜まる。
+  // 蔵に何日分あるかがそのまま飢饉への耐性になり、代価は民心で払う
+  const days = readCard(w, 'stockpile');
+  w.rationCut = 0;
+  if (days != null && days > 0 && eat > 0) {
+    const target = days * eat;
+    if (w.food < target) {
+      w.rationCut = clamp(1 - w.food / target, 0, 1) * 0.40;
+      eat *= 1 - w.rationCut;
+    }
+  }
   w.consumption = eat;
   w.food = clamp(w.food + net - eat, -20, C.FOOD_CAP_BASE + pop * C.FOOD_CAP_PER_HEAD);
 
@@ -222,10 +234,14 @@ export function stepTick(w, rng) {
     // 餓死は「不足の深さ」に比例させる。定率にすると、わずかな不作でも
     // 小さい村が丸ごと消えて、崩壊が読めない事故になる
     const deficit = clamp((eat - net) / Math.max(0.01, eat), 0, 1);
+    // 配給の傾斜。平等なら誰もが等しく飢え、傾斜させれば力のない者から先に死ぬ
+    const equal = readCard(w, 'ration_equal');
+    const tilt = equal == null ? 0 : clamp(1 - equal / 100, 0, 1);
     for (const p of [...w.people.values()]) {
       if (isProtectedFounder(w, p) || isFragileVillage(w)) continue;
       const so = sinOutputs(sins(p));
-      const pDie = 0.05 * deficit * (1 - clamp01(so.飢餓耐性)) * (1 + density);
+      const rank = tilt > 0 ? clamp(1 + tilt * (0.6 - citizenPower(p)) * 2.2, 0.35, 2.0) : 1;
+      const pDie = 0.05 * deficit * (1 - clamp01(so.飢餓耐性)) * (1 + density) * rank;
       if (rng.bool(pDie)) {
         const ev = kill(w, p, '餓死', null);
         events.push(ev);
@@ -282,6 +298,32 @@ function gainSkills(w, p, rng) {
  * 世界が始まる前に終わる。設計文書が創世の個体を特別扱いしている
  * （神を直接見た2体／その子孫は文化ミームを持つ）ので、そこに乗せる。
  */
+/**
+ * 「N%の家系を辺境へ」。環境係数＝練度の伸びに直結するので、
+ * これはオーナーが持つ育成レバーの本体（粛清より安く、人事より広く、数世代効く）。
+ */
+export function applyDistrictPolicy(w, rng) {
+  const want = readCard(w, 'frontier');
+  if (want == null) return;
+  const people = [...w.people.values()];
+  if (!people.length) return;
+  const target = Math.round(people.length * clamp(want / 100, 0, 1));
+  const inFrontier = people.filter((p) => p.district === DISTRICT.FRONTIER);
+  const inCenter = people.filter((p) => p.district === DISTRICT.CENTER);
+  const move = (src, to, n) => {
+    rng.shuffle(src);
+    for (let i = 0; i < n && i < src.length; i++) {
+      if (src[i].districtLocked) continue;
+      src[i].district = to;
+    }
+  };
+  const gap = target - inFrontier.length;
+  // 一度に動かすのは人口の2割まで。移住は一手であって瞬間移動ではない
+  const cap = Math.max(1, Math.round(people.length * 0.2));
+  if (gap > 0) move(inCenter, DISTRICT.FRONTIER, Math.min(gap, cap));
+  else if (gap < -2) move(inFrontier, DISTRICT.CENTER, Math.min(-gap, cap));
+}
+
 function isProtectedFounder(w, p) {
   return !!p.founder && w.people.size < 6;
 }
@@ -431,10 +473,50 @@ export function advanceGeneration(w, rng) {
     }
   }
 
-  // 「敷く」：融和か隔離か。カードがオンのときだけオーナーの数字が通る
-  //（ライバル国はカードを使わず profile が直接 foreignBias を持つので干渉しない）
+  // 「敷く」：カードを世界の状態に流し込む。オンのカードだけが効く
   const mix = readCard(w, 'mix_policy');
   if (mix != null) w.mating.foreignBias = clamp((mix - 50) / 50, -1, 1);
+
+  // 世襲を尊重する ＝ 透過率を下げる。設計の「実力主義 vs 世襲」の軸そのもの
+  const her = readCard(w, 'hereditary');
+  if (her != null) w.transparency = clamp(1 - her / 100, 0.05, 0.95);
+
+  // 塞がれた才能は損失ではなく謀反の入力になる。
+  // 透過率が低い国では、実力があるのに家柄で登用されない個体が怨恨を溜める
+  if (w.transparency < 0.5) {
+    const adults = [...w.people.values()].filter((p) => p.age >= C.ADULT_AGE && !p.bureau && !p.noble);
+    if (adults.length >= 4) {
+      const ranked = adults.map((p) => [p, citizenPower(p)]).sort((a, b) => b[1] - a[1]);
+      const top = ranked.slice(0, Math.max(1, Math.round(ranked.length * 0.25)));
+      for (const [p] of top) {
+        const d = 0.08 * (0.5 - w.transparency) * 2 * (0.4 + p.genes.野心);
+        p.regimeGrudge = clamp01(p.regimeGrudge + d);
+      }
+    }
+  }
+
+  // 配給の傾斜。傾ければ産出は上がるが、下位層に怨恨が積む。
+  // 平等にすれば怨恨は消えるが誘因も消える——どちらに振っても何かを失う
+  const equalCard = readCard(w, 'ration_equal');
+  w.rationTilt = equalCard == null ? 0 : clamp(1 - equalCard / 100, 0, 1);
+  if (w.rationTilt > 0) {
+    for (const p of w.people.values()) {
+      if (p.age < C.ADULT_AGE) continue;
+      const short = clamp(0.55 - citizenPower(p), 0, 0.55);
+      if (short <= 0) continue;
+      const d = 0.10 * w.rationTilt * short * (0.5 + p.genes.序列意識);
+      p.regimeGrudge = clamp01(p.regimeGrudge + d);
+    }
+  }
+  // 配給を絞っている国は、絞っているぶんだけ不満が溜まる
+  if (w.rationCut > 0) {
+    for (const p of w.people.values()) {
+      p.regimeGrudge = clamp01(p.regimeGrudge + 0.06 * w.rationCut * (0.4 + p.genes.感受性));
+    }
+  }
+
+  // 居住区の配分。辺境は練度が伸びるが死にやすい
+  applyDistrictPolicy(w, rng);
 
   // 9. 世代ログの確定。粛清は世代の途中（具申の裁定やライバル国の手番）でも起きるので
   //    カウンタに溜めておき、ここで新しい世代の目盛りに書き込む
@@ -486,19 +568,38 @@ function autoAssign(w, rng, events) {
   const drillShare = w.phase === PHASE.VILLAGE ? 0 : cardOr(w, 'drill', 0) / 100;
   const adults = [...w.people.values()].filter((p) => p.age >= C.ADULT_AGE);
   const needFood = w.food < w.people.size * 2.5;
+  // 透過率 ＝ 制度の緩さ × 測定精度。
+  // 低い国では「タダで手に入る信号は出自だけ」なので、子は親の役をそのまま継ぐ。
+  // 高い国は適性で配る。能力主義は制度ではなく、測定コストを払った国だけが到達できる状態。
+  const transparency = clamp(w.transparency ?? 0.5, 0, 1);
   for (const p of adults) {
     if (p.roleLocked) continue;              // オーナーが名指しで置いた個体は動かさない
     if (p.role === ROLE.WAR) p.role = ROLE.IDLE;
     if (p.role !== ROLE.CHILD && p.role !== ROLE.IDLE && rng.bool(0.72)) continue;
+
+    // 世襲：測れない国では家柄しか手掛かりがない
+    const dad = w.people.get(p.fatherId) ?? w.dead.get(p.fatherId);
+    if (dad && (dad.role === ROLE.FARM || dad.role === ROLE.HUNT || dad.role === ROLE.DRILL)
+        && rng.next() > transparency) {
+      p.role = dad.role;
+      continue;
+    }
+
     const r = rng.next();
     let role;
     if (needFood) role = r < 0.62 ? ROLE.FARM : (r < 0.62 + huntShare ? ROLE.HUNT : ROLE.FARM);
     else if (r < drillShare) role = ROLE.DRILL;
     else if (r < drillShare + huntShare) role = ROLE.HUNT;
     else role = ROLE.FARM;
-    // 意欲係数：本人が望まない役は性能が出ないので、望む方へ弱く引く
-    if (willingness(p, role) < 0.5 && rng.bool(0.5)) {
-      role = willingness(p, ROLE.HUNT) > willingness(p, ROLE.FARM) ? ROLE.HUNT : ROLE.FARM;
+
+    // 適性による配役。透過率が高いほど強く効く（測定に投資した国の利得）
+    if (role !== ROLE.DRILL) {
+      const fitFarm = willingness(p, ROLE.FARM) * (0.5 + p.genes.器用 + 0.5 * p.genes.勤勉);
+      const fitHunt = willingness(p, ROLE.HUNT) * (0.5 + p.genes.攻撃素質 + 0.5 * p.genes.胆力);
+      if (rng.next() < transparency) role = fitFarm >= fitHunt ? ROLE.FARM : ROLE.HUNT;
+      else if (willingness(p, role) < 0.5 && rng.bool(0.5)) {
+        role = fitHunt > fitFarm ? ROLE.HUNT : ROLE.FARM;
+      }
     }
     p.role = role;
   }

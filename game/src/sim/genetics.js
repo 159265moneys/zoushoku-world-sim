@@ -138,6 +138,16 @@ export function geneticLoad(hap) {
   return sum;
 }
 
+/** 保有荷重：接合状態に関わらず持っている欠陥の総量。子孫に伝わるのはこちら。 */
+export function carriedLoad(hap) {
+  let sum = 0;
+  for (const name of MIND_GENES) {
+    const ch = GENES[name].ch;
+    sum += (hap[ch][0][name].load || 0) + (hap[ch][1][name].load || 0);
+  }
+  return sum;
+}
+
 /** 荷重から出る生存力。産出・繁殖・戦闘・寿命の全部に掛かる。 */
 export function vitalityOf(load) {
   const v = 1 - C.LOAD_WEIGHT * load;
@@ -277,8 +287,11 @@ export function enforceChromosomeCeiling(childGenes, fGenes, mGenes) {
  * 創世個体1体のゲノム。
  * @param spread 心系のばらつき（＝種族の重心からどれだけ散るか）。
  *   体系は診断の対象外なので、この値には連動させず固定幅で振る（設計どおり「別枠」）。
+ * @param loadP  劣性が欠陥を抱えている確率。
+ *   創世（無から2体を作る）と、既に何世代も走っている国から個体を引くのとでは
+ *   前提が違う。後者は突然変異と淘汰が釣り合った水準にいるので低い値を渡す。
  */
-export function foundingGenome(targets, rng, spread = C.FOUND_SPREAD) {
+export function foundingGenome(targets, rng, spread = C.FOUND_SPREAD, loadP = C.LOAD_P) {
   const hap = {};
   for (const ch of CH_LIST) {
     hap[ch] = [{}, {}];
@@ -293,7 +306,7 @@ export function foundingGenome(targets, rng, spread = C.FOUND_SPREAD) {
             ? clamp01(t + rng.normal(0, spread))
             : (rng.bool() ? rng.range(0.72, 1.0) : rng.range(0.0, 0.28));
           // 劣性の半分は欠陥（荷重）も一緒に運ぶ。優性が隠している間は無害
-          const load = dominant ? 0 : (rng.next() < C.LOAD_P ? rng.range(0.20, 0.95) : 0);
+          const load = dominant ? 0 : (rng.next() < loadP ? rng.range(0.20, 0.95) : 0);
           hap[ch][h][name] = { v, d: dominant, load };
         } else {
           hap[ch][h][name] = { v: clamp01(t + rng.normal(0, C.BODY_FOUND_SPREAD)), d: true, load: 0 };

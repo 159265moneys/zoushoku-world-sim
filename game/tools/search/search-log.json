@@ -1,0 +1,448 @@
+{
+  "stages": [
+    {
+      "stage": "successive_halving",
+      "points": 241,
+      "rounds": [
+        {
+          "round": 0,
+          "candidates": 241,
+          "seeds": 3,
+          "keep": 60,
+          "best": 13276.5,
+          "median": 1717.0,
+          "disqualified": 31
+        },
+        {
+          "round": 1,
+          "candidates": 60,
+          "seeds": 6,
+          "keep": 24,
+          "best": 8963.416666666666,
+          "median": 3924.0,
+          "disqualified": 0
+        },
+        {
+          "round": 2,
+          "candidates": 24,
+          "seeds": 9,
+          "keep": 12,
+          "best": 9561.666666666666,
+          "median": 5649.305555555556,
+          "disqualified": 0
+        }
+      ]
+    },
+    {
+      "stage": "surrogate",
+      "r2": 0.482512405085072,
+      "coef": {
+        "deploy_top": -79.14737728739084,
+        "deploy_top^2": -84.45681704442897,
+        "spare_old": 638.721983268816,
+        "spare_old^2": -890.8954779915845,
+        "raise_young": 1563.848827275343,
+        "raise_young^2": -1362.649740667928,
+        "guards": -347.21030870785984,
+        "guards^2": -21.072329325457137,
+        "drill": 1042.2065071864372,
+        "drill^2": -1153.7680524379716,
+        "surrender_at": -326.19023506492465,
+        "surrender_at^2": 803.3095569011705,
+        "hunt_ratio": 956.8209493444209,
+        "hunt_ratio^2": -23.056506101733532,
+        "stockpile": 829.5619632587358,
+        "stockpile^2": 16.97630765033617,
+        "frontier": 14.029516220157177,
+        "frontier^2": 2215.708792058015,
+        "ration_equal": 2323.262228765496,
+        "ration_equal^2": -398.36550471289826,
+        "hereditary": -4741.073946817252,
+        "hereditary^2": 2735.636864016239,
+        "mix_policy": -682.5447287672933,
+        "mix_policy^2": 80.73559195784775,
+        "axis=総合": 405.85717233558483,
+        "axis=武力": 59.96523069764341,
+        "axis=知性": 243.02933357547698,
+        "axis=統率": 186.001332231289,
+        "axis=繁殖性": -59.26376613634576,
+        "axis=器用": -136.01454314766272,
+        "axis=頑健": 146.67158290291093,
+        "border=accept": 346.6011935237144,
+        "border=kill": 172.69919363879546,
+        "border=return": 326.94595529677156,
+        "promote=martial": 851.805916965662,
+        "promote=agrarian": 18.343507923329593,
+        "promote=fecund": -343.6678313304557,
+        "promote=purist": 214.401693482633,
+        "promote=melting": 492.9760568935444,
+        "promote=terror": 315.874068350058,
+        "promote=laissez": -121.0495935855041,
+        "promote=pious": -173.64079119543774,
+        "promote=merit": -99.21212476807852,
+        "promote=dynastic": -309.5845602769645,
+        "warAppetite": -174.59035883110622,
+        "warAppetite^2": -366.90912426644053,
+        "const": 846.2463424596201
+      },
+      "predicted": [
+        7760.284256895752,
+        7474.344725940708,
+        7435.549196801541
+      ]
+    },
+    {
+      "stage": "de",
+      "trace": [
+        14010.722222222223,
+        14010.722222222223
+      ],
+      "seeds": 9
+    },
+    {
+      "stage": "hill_climb",
+      "traces": [
+        [
+          14010.722222222223,
+          14010.722222222223,
+          14640.555555555555
+        ],
+        [
+          11737.5,
+          12709.833333333334,
+          12709.833333333334
+        ],
+        [
+          10850.222222222223,
+          10850.222222222223,
+          12245.444444444445
+        ],
+        [
+          9561.666666666666,
+          10363.111111111111,
+          10363.111111111111
+        ]
+      ]
+    },
+    {
+      "stage": "verify",
+      "n": 10,
+      "best": 12172.75,
+      "seeds": 24,
+      "ranked": [
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 50.0,
+              "spare_old": 9.0,
+              "raise_young": 40.0,
+              "guards": 2.0,
+              "drill": 25.0,
+              "surrender_at": 70.0,
+              "hunt_ratio": 65.0,
+              "stockpile": 50.0,
+              "frontier": 100.0,
+              "ration_equal": 100.0,
+              "hereditary": 10.0,
+              "mix_policy": 20.0
+            },
+            "captiveAxis": "器用",
+            "border": "accept",
+            "promote": "terror",
+            "warAppetite": 0.266
+          },
+          "power": 12172.75,
+          "extinct_rate": 0.041666666666666664
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 50.0,
+              "spare_old": 9.0,
+              "raise_young": 50.0,
+              "guards": 2.0,
+              "drill": 25.0,
+              "surrender_at": 60.0,
+              "hunt_ratio": 60.0,
+              "stockpile": 55.0,
+              "frontier": 100.0,
+              "ration_equal": 100.0,
+              "hereditary": 0.0,
+              "mix_policy": 20.0
+            },
+            "captiveAxis": "器用",
+            "border": "accept",
+            "promote": "terror",
+            "warAppetite": 0.232
+          },
+          "power": 11715.666666666666,
+          "extinct_rate": 0.041666666666666664
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 35.0,
+              "spare_old": 10.0,
+              "raise_young": 40.0,
+              "guards": 2.0,
+              "drill": 25.0,
+              "surrender_at": 80.0,
+              "hunt_ratio": 50.0,
+              "stockpile": 45.0,
+              "frontier": 100.0,
+              "ration_equal": 80.0,
+              "hereditary": 0.0,
+              "mix_policy": 60.0
+            },
+            "captiveAxis": "器用",
+            "border": "accept",
+            "promote": "terror",
+            "warAppetite": 0.286
+          },
+          "power": 9582.875,
+          "extinct_rate": 0.041666666666666664
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 90.0,
+              "spare_old": 4.0,
+              "raise_young": 30.0,
+              "guards": 2.0,
+              "drill": 15.0,
+              "surrender_at": 10.0,
+              "hunt_ratio": 60.0,
+              "stockpile": 55.0,
+              "frontier": 100.0,
+              "ration_equal": 30.0,
+              "hereditary": 10.0,
+              "mix_policy": 20.0
+            },
+            "captiveAxis": "武力",
+            "border": "return",
+            "promote": "martial",
+            "warAppetite": 0.264
+          },
+          "power": 9549.125,
+          "extinct_rate": 0.125
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 30.0,
+              "spare_old": 10.0,
+              "raise_young": 40.0,
+              "guards": 2.0,
+              "drill": 25.0,
+              "surrender_at": 80.0,
+              "hunt_ratio": 50.0,
+              "stockpile": 50.0,
+              "frontier": 100.0,
+              "ration_equal": 70.0,
+              "hereditary": 0.0,
+              "mix_policy": 60.0
+            },
+            "captiveAxis": "繁殖性",
+            "border": "accept",
+            "promote": "terror",
+            "warAppetite": 0.286
+          },
+          "power": 9411.708333333334,
+          "extinct_rate": 0.0625
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 60.0,
+              "spare_old": 8.0,
+              "raise_young": 60.0,
+              "guards": 2.0,
+              "drill": 35.0,
+              "surrender_at": 50.0,
+              "hunt_ratio": 80.0,
+              "stockpile": 50.0,
+              "frontier": 90.0,
+              "ration_equal": 90.0,
+              "hereditary": 0.0,
+              "mix_policy": 50.0
+            },
+            "captiveAxis": "頑健",
+            "border": "return",
+            "promote": "martial",
+            "warAppetite": 0.132
+          },
+          "power": 8987.166666666666,
+          "extinct_rate": 0.041666666666666664
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 90.0,
+              "spare_old": 4.0,
+              "raise_young": 30.0,
+              "guards": 2.0,
+              "drill": 15.0,
+              "surrender_at": 10.0,
+              "hunt_ratio": 60.0,
+              "stockpile": 60.0,
+              "frontier": 100.0,
+              "ration_equal": 30.0,
+              "hereditary": 0.0,
+              "mix_policy": 20.0
+            },
+            "captiveAxis": "武力",
+            "border": "return",
+            "promote": "martial",
+            "warAppetite": 0.318
+          },
+          "power": 8767.4375,
+          "extinct_rate": 0.0625
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 60.0,
+              "spare_old": 8.0,
+              "raise_young": 60.0,
+              "guards": 0.0,
+              "drill": 35.0,
+              "surrender_at": 50.0,
+              "hunt_ratio": 80.0,
+              "stockpile": 55.0,
+              "frontier": 90.0,
+              "ration_equal": 90.0,
+              "hereditary": 0.0,
+              "mix_policy": 60.0
+            },
+            "captiveAxis": "頑健",
+            "border": "return",
+            "promote": "martial",
+            "warAppetite": 0.132
+          },
+          "power": 8662.708333333334,
+          "extinct_rate": 0.041666666666666664
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 40.0,
+              "spare_old": 8.0,
+              "raise_young": 50.0,
+              "guards": 1.0,
+              "drill": 30.0,
+              "surrender_at": 80.0,
+              "hunt_ratio": 60.0,
+              "stockpile": 40.0,
+              "frontier": 100.0,
+              "ration_equal": 60.0,
+              "hereditary": 0.0,
+              "mix_policy": 30.0
+            },
+            "captiveAxis": "頑健",
+            "border": "kill",
+            "promote": "martial",
+            "warAppetite": 0.222
+          },
+          "power": 8527.708333333334,
+          "extinct_rate": 0.0625
+        },
+        {
+          "policy": {
+            "cards": {
+              "deploy_top": 40.0,
+              "spare_old": 7.0,
+              "raise_young": 20.0,
+              "guards": 0.0,
+              "drill": 10.0,
+              "surrender_at": 0.0,
+              "hunt_ratio": 30.0,
+              "stockpile": 15.0,
+              "frontier": 20.0,
+              "ration_equal": 50.0,
+              "hereditary": 50.0,
+              "mix_policy": 50.0
+            },
+            "captiveAxis": "総合",
+            "border": "accept",
+            "promote": "merit",
+            "warAppetite": 0.5
+          },
+          "power": 1730.1666666666667,
+          "extinct_rate": 0.020833333333333332
+        }
+      ]
+    }
+  ],
+  "seeds": {
+    "search": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24
+    ],
+    "holdout": [
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123,
+      124,
+      125,
+      126,
+      127,
+      128,
+      129,
+      130
+    ]
+  },
+  "opponents": [
+    "martial",
+    "agrarian"
+  ],
+  "screen_opponents": [
+    "martial",
+    "agrarian"
+  ],
+  "gens": 200,
+  "screen_gens": 200,
+  "refine_gens": 200,
+  "eval": "node /Users/shabutarou/Desktop/増殖/game/tools/eval.js --workers 6"
+}

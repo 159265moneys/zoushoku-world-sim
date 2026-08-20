@@ -120,5 +120,11 @@ export const ROUT_HELD_DEATH = 0.11;  // 敗走時、踏み止まっていた個
 // 「5対5なら、攻撃力天才が恐怖で固まって死ぬのを目撃できる」
 export const FIRST_WAR_SIZE = 5;
 
+// ゴーストの候補を何倍作って淘汰するか。1.0 は無淘汰（＝実在しない集団）。
+export const GHOST_OVERDRAW = 2.0;
+// 走っている国は突然変異と淘汰が釣り合った水準にいる。創世（LOAD_P）と同じ値を
+// 使うと、移民が自国民より欠陥を多く持つ「実在しない集団」になる。
+export const GHOST_LOAD_P = 0.37;
+
 // --- 捕虜 ---
 export const CAPTIVE_COUNT = { 1: [1, 1], 2: [1, 5] };

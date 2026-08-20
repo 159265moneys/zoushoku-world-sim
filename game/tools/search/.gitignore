@@ -1,0 +1,4 @@
+__pycache__/
+# 評価キャッシュ（sim版ごとの生の測定値。数MB〜。再生成できる）
+cache-*.jsonl
+cache.jsonl

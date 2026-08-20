@@ -147,6 +147,12 @@ export function makeRivalOwner(profileId) {
 export function applyProfileToWorld(world, owner) {
   const pf = owner.profile;
   for (const [k, v] of Object.entries(pf.cards)) setCard(world, k, true, v);
+  // 居住区・透過率・融和度は、AIも必ずカードを通す。
+  // プレイヤーと同じレバーであることを構造で保証しないと、
+  // 「AIだけが別経路を持っている」という不公平が静かに戻ってくる
+  setCard(world, 'frontier', true, Math.round(pf.frontier * 100));
+  setCard(world, 'hereditary', true, Math.round((1 - pf.transparency) * 100));
+  setCard(world, 'mix_policy', true, Math.round(50 + pf.foreignBias * 50));
   world.transparency = pf.transparency;
   world.mating.foreignBias = pf.foreignBias;
   world.mating.inbreedGuard = pf.inbreedGuard;
@@ -185,24 +191,7 @@ export function runRivalTurn(world, owner, rng) {
     }
   }
 
-  // --- 置く：居住区。辺境は練度が伸びるが死ぬ。中心は安全だが軟弱になる ---
-  const wantFrontier = pf.frontier;
-  const people = [...world.people.values()];
-  const nFrontier = people.filter((p) => p.district === DISTRICT.FRONTIER).length;
-  const target = Math.round(people.length * wantFrontier);
-  if (nFrontier < target) {
-    const movable = people.filter((p) => p.district === DISTRICT.CENTER);
-    rng.shuffle(movable);
-    for (let i = 0; i < Math.min(target - nFrontier, movable.length, 6); i++) {
-      setDistrict(world, movable[i].id, DISTRICT.FRONTIER);
-    }
-  } else if (nFrontier > target + 2) {
-    const movable = people.filter((p) => p.district === DISTRICT.FRONTIER);
-    rng.shuffle(movable);
-    for (let i = 0; i < Math.min(nFrontier - target, movable.length, 4); i++) {
-      setDistrict(world, movable[i].id, DISTRICT.CENTER);
-    }
-  }
+  // --- 置く：居住区は 'frontier' カードが毎世代 applyDistrictPolicy で処理する ---
 
   // --- 裁く：具申。承認の傾きがプロファイルそのもの ---
   const pets = petitions(world, rng);
