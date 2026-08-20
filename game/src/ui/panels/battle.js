@@ -1,7 +1,7 @@
 // 画面9：戦闘。5対5が見える。逃げる／固まる／死ぬが分かる。
 // 降伏ボタンは常に1つだけ画面にある（戦闘中の唯一の判断）。
 
-import { el, clear, modal, num, pct, toast } from '../dom.js';
+import { el, clear, modal, num, pct, toast, clamp } from '../dom.js';
 import { drawIndividual } from '../color.js';
 import { openBorder } from './border.js';
 
@@ -64,17 +64,25 @@ export function openBattle(ctx, opponent) {
     for (const side of ['a', 'b']) {
       const s = battle[side];
       const wref = side === 'a' ? world : foeWorld;
+      // 円の大きさは**行の間隔から出す**。半径を 15 に固定すると、8行を詰めこんだとき
+      // 行間（縦 288px なら 30px）より「半径＋名前の高さ」のほうが大きくなり、
+      // 名前が次の行の円に重なって、名前も顔も読めなくなる。
+      const rows = Math.max(1, s.rows || Math.min(s.fighters.length, 6));
+      const gap = rows > 1 ? (0.74 * H) / (rows - 1) : H * 0.5;
+      const r = clamp(gap * 0.33, 5.5, 15);
+      const nameGap = Math.min(13, gap * 0.30);
+      const nameSize = clamp(gap * 0.24, 8, 9.5);
       for (const f of s.fighters) {
         const x = f.x * W, y = f.y * H;
-        const r = 15;
         if (f.state === 'dead') {
           ctx2.globalAlpha = 0.28;
           drawIndividual(ctx2, wref, f.ind, x, y, r * 0.8, { dead: true, fear: 1 });
           ctx2.globalAlpha = 1;
           ctx2.strokeStyle = 'rgba(226,96,74,0.7)'; ctx2.lineWidth = 1.4;
+          const k = r * 0.4;
           ctx2.beginPath();
-          ctx2.moveTo(x - 6, y - 6); ctx2.lineTo(x + 6, y + 6);
-          ctx2.moveTo(x + 6, y - 6); ctx2.lineTo(x - 6, y + 6);
+          ctx2.moveTo(x - k, y - k); ctx2.lineTo(x + k, y + k);
+          ctx2.moveTo(x + k, y - k); ctx2.lineTo(x - k, y + k);
           ctx2.stroke();
           continue;
         }
@@ -83,21 +91,22 @@ export function openBattle(ctx, opponent) {
           ring: f.state === 'flee' ? 'rgba(232,178,74,0.95)' : (f.state === 'freeze' ? 'rgba(180,190,220,0.7)' : null),
         });
         // 体力
+        const bw = r * 1.9;
         ctx2.fillStyle = 'rgba(20,26,38,0.9)';
-        ctx2.fillRect(x - 14, y + r + 4, 28, 3);
+        ctx2.fillRect(x - bw / 2, y + r + 3, bw, 3);
         ctx2.fillStyle = f.hp > 0.5 ? '#5fe3c4' : '#e2604a';
-        ctx2.fillRect(x - 14, y + r + 4, 28 * Math.max(0, f.hp), 3);
+        ctx2.fillRect(x - bw / 2, y + r + 3, bw * Math.max(0, f.hp), 3);
         // 状態は円の横に出す。上に置くと隣の行の名前と重なって読めなくなる。
         if (f.state !== 'fight') {
-          ctx2.font = '9px -apple-system, sans-serif';
+          ctx2.font = `${nameSize.toFixed(1)}px -apple-system, sans-serif`;
           ctx2.fillStyle = f.state === 'flee' ? '#e8b24a' : '#b4becc';
           const t = f.state === 'flee' ? '逃走' : '硬直';
           ctx2.fillText(t, x + r + 5, y + 3.5);
         }
-        ctx2.font = '9.5px -apple-system, sans-serif';
+        ctx2.font = `${nameSize.toFixed(1)}px -apple-system, sans-serif`;
         ctx2.fillStyle = 'rgba(160,172,196,0.85)';
         const nm = f.name.length > 8 ? f.name.slice(0, 8) : f.name;
-        ctx2.fillText(nm, x - ctx2.measureText(nm).width / 2, y + r + 16);
+        ctx2.fillText(nm, x - ctx2.measureText(nm).width / 2, y + r + nameGap);
       }
     }
   }

@@ -112,7 +112,10 @@ export function renderSearch(ctx, node) {
       onclick: () => ctx.select(p.id),
     },
       portrait(world, p, 26),
-      el('div', { class: 'nm' }, p.name, !p.alive ? el('span', { class: 'mut' }, '（故）') : null),
+      el('div', { class: 'nm' }, p.name,
+        // 敵味方で同じ名前が出るので、よそ者には必ず出身を添える
+        p.foreign ? el('span', { class: 'mut' }, `（${p.homeName || 'よそ者'}）`) : null,
+        !p.alive ? el('span', { class: 'mut' }, '（故）') : null),
       el('div', { class: 'mt' }, `${p.age}歳 ・ ${ROLE_LABEL[p.role] || p.role} ・ ${val}`),
     ));
   }

@@ -86,7 +86,8 @@ function chip(ctx, p, picked) {
     onclick: () => { state.castPick = (picked === p.id ? null : p.id); ctx.select(p.id); },
   },
     portrait(world, p, 26),
-    el('div', { class: 'nm' }, p.name),
+    el('div', { class: 'nm' }, p.name,
+      p.foreign ? el('span', { class: 'mut' }, `（${p.homeName || 'よそ者'}）`) : null),
     el('div', { class: 'mt' }, `${p.age}歳 ・ 熟練${Math.round(training(p) * 100)}`),
   );
 }

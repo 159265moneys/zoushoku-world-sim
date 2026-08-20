@@ -13,7 +13,7 @@
 import { api, SIM_SOURCE, registerRoster } from './api.js';
 import { RNG } from '../core/rng.js';
 import { PHASE, ROLE, BUREAU_LABEL, GEN_MS } from '../core/model.js';
-import { el, clear, num, pct, toast, modal, mount } from './dom.js';
+import { el, clear, num, pct, toast, modal, mount, DEV } from './dom.js';
 import { seedCards } from './cards.js';
 import { Dish } from './dish.js';
 import { swatchColor, strainName } from './color.js';
@@ -88,9 +88,13 @@ function buildWorld(answers, opts = {}) {
 function startWorld(mode) {
   document.getElementById('app').hidden = false;
 
+  // どの実装が動いているかは開発者にしか意味がない。遊ぶ人には出さない。
+  // ただしモック（＝壊れたビルド）で動いているときは、黙っていてはいけない。
   const badge = document.getElementById('sim-badge');
-  badge.textContent = SIM_SOURCE === 'sim' ? 'sim' : 'mock sim';
-  badge.className = 'badge ' + (SIM_SOURCE === 'sim' ? 'live' : 'mock');
+  const isMock = SIM_SOURCE !== 'sim';
+  badge.hidden = !isMock && !DEV;
+  badge.textContent = isMock ? 'mock sim' : 'sim';
+  badge.className = 'badge ' + (isMock ? 'mock' : 'live');
 
   state.dish = new Dish(document.getElementById('dish'));
   state.dish.onPick = (id) => { if (id != null) select(id); };

@@ -215,8 +215,13 @@ function projectBattle(view) {
       if (!f) {
         const n = side.units.length;
         // 5対5なら1列。sim は数十体を送り込んでくるので、列を折り返して格子に並べる。
-        const rows = Math.min(n, 8);
+        // 上限は6行。8行にすると、縦 288px の戦場では行間が 30px しか取れず、
+        // 円（直径30px）と名前が縦に潰れて誰が誰だか読めなくなる。
+        const rows = Math.min(n, 6);
         const cols = Math.ceil(n / rows);
+        // 何行に折り返したかは描画側が要る。円の大きさと名前の位置を
+        // 行間から決めないと、行数が増えたとたんに名前が下の円へ重なる。
+        dst.rows = rows;
         const col = Math.floor(i / rows), row = i % rows;
         const inner = cols > 1 ? (col / (cols - 1)) * 0.16 : 0;
         f = dst.fighters[i] = {
