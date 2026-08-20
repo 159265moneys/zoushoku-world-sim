@@ -13,6 +13,7 @@ import {
   centroidFrom, speciesOf, axisScores, answersForSim, answeredRatio, OFF_AXIS_GENES,
 } from '../questions.js';
 import { drawIndividual } from '../color.js';
+import { saveSpecies, loadSpecies, savedAgo } from '../save.js';
 
 
 
@@ -29,27 +30,63 @@ export function openOpening({ build, start }) {
   document.body.appendChild(root);
 
   // ------------------------------------------------------------ 表紙
+  //
+  // 保存された種族があれば、**60問をやり直さずに始められる**ことを最初に出す。
+  // テストのたびに60問答え直すのは、それだけで遊ぶ気が失せる。
   function renderCover() {
     clear(root);
-    root.appendChild(el('div', { class: 'op cover' },
+    const saved = loadSpecies();
+    const box = el('div', { class: 'op cover' },
       el('div', { class: 'title' }, '増 殖'),
       el('div', { class: 'tag' }, 'シャーレの中でカビを育てて、隣のシャーレとぶつける。'),
-      el('div', { class: 'card wide-card' },
-        el('h4', {}, 'これから作るのは、1匹ではなく種族です'),
-        el('p', {}, `${STATEMENTS.length}問の答えが、この世界に置かれる生き物の「重心」になります。`
-          + 'アダムとイザナミは、その重心から引かれた2つのサンプルにすぎません。'
-          + '2匹はあなたの答えどおりには生まれません。ばらけます。そこから交叉が始まります。'),
-        el('div', { class: 'kv', style: { marginTop: '10px' } },
-          el('div', { class: 'k' }, '所要'), el('div', { class: 'v' }, `${STATEMENTS.length}問・3〜5分`),
-          el('div', { class: 'k' }, '答え方'), el('div', { class: 'v' }, '1文を読んで、賛成か反対かを押すだけ。押した瞬間に次へ進みます'),
-          el('div', { class: 'k' }, '出るもの'), el('div', { class: 'v' }, '6軸64種族のうちの1つ。軸は染色体そのものです'),
+    );
+    root.appendChild(box);
+
+    if (saved) {
+      mount(box,
+        el('div', { class: 'resume' },
+          el('div', { class: 'resume-lab' }, '前回きめた種族'),
+          el('div', { class: 'resume-name' }, saved.name || '—'),
+          el('div', { class: 'resume-code' }, saved.code || ''),
+          el('div', { class: 'resume-ago' }, savedAgo(saved) ? `${savedAgo(saved)}に決めた` : ''),
         ),
-      ),
-      el('button', { class: "btn primary lead", onclick: () => { qi = 0; renderQ(); } }, '種族を決める'),
+        el('button', {
+          class: 'btn primary lead', onclick: () => resume(saved),
+        }, 'この種族で始める'),
+        el('div', { class: 'orline' }, 'または'),
+        el('button', {
+          class: 'btn lead', onclick: () => { qi = 0; renderQ(); },
+        }, `作り直す（${STATEMENTS.length}問・3〜5分）`),
+      );
+    } else {
+      mount(box,
+        el('div', { class: 'card wide-card' },
+          el('h4', {}, 'これから作るのは、1匹ではなく種族です'),
+          el('p', {}, `${STATEMENTS.length}問の答えが、この世界に置かれる生き物の「重心」になります。`
+            + '最初の2匹は、その重心から引かれたサンプルです。答えどおりには生まれません。'),
+          el('div', { class: 'kv', style: { marginTop: '10px' } },
+            el('div', { class: 'k' }, '所要'), el('div', { class: 'v' }, `${STATEMENTS.length}問・3〜5分`),
+            el('div', { class: 'k' }, '答え方'), el('div', { class: 'v' }, '1文を読んで賛成か反対かを押すだけ。押した瞬間に次へ進みます'),
+            el('div', { class: 'k' }, '次回から'), el('div', { class: 'v' }, 'この種族は保存されます。もう60問に答える必要はありません'),
+          ),
+        ),
+        el('button', { class: 'btn primary lead', onclick: () => { qi = 0; renderQ(); } }, '種族を決める'),
+      );
+    }
+
+    mount(box,
       el('div', { class: 'divider' }),
-      el('p', { class: 'hint' }, '開発用：診断を飛ばして、外来の血が入った部族フェーズから始める。'),
-      el('button', { class: 'btn sm', onclick: () => finish(2) }, 'デモ：部族フェーズから開始'),
-    ));
+      el('button', { class: 'btn sm', onclick: () => finish(2) }, '開発用：部族フェーズから開始'),
+    );
+  }
+
+  /** 保存された種族で、60問を飛ばして本編へ。 */
+  function resume(saved) {
+    const centroid = saved.centroid;
+    const sp = speciesOf(centroid);
+    cleanup();
+    build(answersForSim(centroid), { centroid, species: sp, responses: saved.responses || null });
+    start();
   }
 
   // ------------------------------------------------------------ 設問
@@ -162,6 +199,16 @@ export function openOpening({ build, start }) {
     // 通るとは限らない。要求値を見せると「答えたとおりになっていない」と読めてしまう。
     // sim が world.spec.centroid に正規化後の値を入れてくれている。
     const centroid = (world && world.spec && world.spec.centroid) || asked;
+
+    // ここで保存する。次回起動時は表紙に「この種族で始める」が出て、60問は要らない。
+    // 保存するのは種族だけ。世界の途中経過は保存しない。
+    saveSpecies({
+      centroid: asked,
+      code: sp.code,
+      name: sp.name,
+      spread: (world && world.spec && world.spec.spread) ?? null,
+      responses: { ...answers },
+    });
 
     clear(root);
     const box = el('div', { class: 'op result' });

@@ -249,6 +249,17 @@ input[type=range]:disabled::-webkit-slider-thumb{background:var(--tx3)}
 .op.cover{text-align:center}
 .op.cover .btn.lead{margin:0 auto}
 
+/* ---- 前回の種族（60問をやり直さないための入口） ---- */
+.resume{
+  background:var(--panel2);border:1px solid var(--ac2);border-radius:10px;
+  padding:16px 18px;margin:0 auto 16px;max-width:460px
+}
+.resume-lab{font-size:12px;letter-spacing:.16em;color:var(--ac)}
+.resume-name{font-size:30px;font-weight:700;letter-spacing:.05em;margin-top:4px}
+.resume-code{font-size:20px;letter-spacing:.34em;color:var(--tx2);margin-top:2px}
+.resume-ago{font-size:12px;color:var(--tx2);margin-top:8px}
+.orline{margin:14px 0 12px;font-size:13px;color:var(--tx2)}
+
 /* ---- 診断：1問1画面。**問い文の高さと点の位置は固定**。
    1問ごとに点が動くと毎回狙い直しが要る。60回それをやると遅い。 ---- */
 /* 視線の移動距離＝速度。問い文と点は近く置く */
