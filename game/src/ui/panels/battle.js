@@ -1,16 +1,36 @@
 // 画面9：戦闘。5対5が見える。逃げる／固まる／死ぬが分かる。
 // 降伏ボタンは常に1つだけ画面にある（戦闘中の唯一の判断）。
+//
+// 【呼び口はここに1つも無い】
+//   開戦（S0）・1ラウンド（S1）・降伏（S2）・締め（S3〜S5）は全部 `flow/war.js`。
+//   この画面は「進行層に頼む → 返ってきた battle を絵に写す」だけをする（R-951）。
+//   **締め（settle）が返るまでこのモーダルを閉じない**。戦死の85%は決着のあと、
+//   敗走の追い討ちで出るので、先に閉じると「戦死0体」と言ってから3体が無言で消える
+//   （R-952 S3→S5）。
 
 import { el, clear, modal, num, pct, toast, clamp } from '../dom.js';
 import { drawIndividual } from '../color.js';
 import { openBorder } from './border.js';
+import * as war from '../../flow/war.js';
 
 const STEP_MS = 230;
 
-export function openBattle(ctx, opponent) {
-  const { world, api, rng } = ctx;
-  const battle = api.startWar(world, rng, opponent);
+export function openBattle(ctx, target) {
+  const { world, api, run } = ctx;
+
+  // S0：開戦。断られたら理由をそのまま出す（人口0・不応期・国境が残っている等）
+  const sb = war.beginWar(run, target);
+  if (!sb) {
+    const why = run.refusal;
+    toast(why && why.reason ? why.reason : '戦いに行けなかった。', 'bad');
+    ctx.state.paused = false;
+    ctx.refresh();
+    return null;
+  }
+  const battle = api.viewBattle(sb, world, target);
   ctx.state.battle = battle;
+  let priceIndex = 0;        // 降伏したときに選んだ代価（R-962）
+  let awaitingPrice = false; // 3択に答えるまでは締めない
 
   const canvas = el('canvas', { id: 'battlefield' });
   // どちらが自分かを色に頼らせない。自国の色は血すじで決まるので、
@@ -151,37 +171,79 @@ export function openBattle(ctx, opponent) {
     const dt = Math.min(160, now - last); last = now;
     if (!battle.over) {
       acc += dt;
-      if (acc >= STEP_MS) { acc = 0; api.stepBattle(battle, rng); syncLog(); syncBars(); syncRoster(); }
+      // S1：1ラウンド。進めるのは進行層で、ここは絵を追いつかせるだけ。
+      if (acc >= STEP_MS) { acc = 0; war.stepWar(run, sb); api.syncBattle(battle); syncLog(); syncBars(); syncRoster(); }
     }
     draw();
-    if (battle.over && !finished) finish();
+    if (battle.over && !finished && !awaitingPrice) finish();
   }
 
   function finish() {
     if (finished) return;
     finished = true;
+    surrenderBtn.disabled = true;
+
+    // S3〜S5：**ここで初めて戦死が確定する**（中で敗走の追い討ちが走る）。
+    // 相手の世界にも書き戻される（S4）。画面はそのあとの姿を出す。
+    let ok = true;
+    try { war.settle(run, sb, { priceIndex }); }
+    catch (e) { ok = false; console.error(e); toast('戦の締めに失敗した：' + e.message, 'bad'); }
+    api.syncBattle(battle);
+
     // 決着時は必ず最終状態を流し込む。ログ・団結・名簿が途中で止まって見えるのを防ぐ。
     syncLog(); syncBars(); syncRoster();
     nextBtn.hidden = false;
-    surrenderBtn.disabled = true;
-    const dead = battle.deaths.a.length;
-    status.textContent = battle.outcome === 'win' ? `勝った。戦死 ${dead} 体。`
-      : battle.outcome === 'surrender' ? `降伏した。戦死 ${dead} 体で止めた。`
-      : `負けた。戦死 ${dead} 体。`;
+    // 数えるのは画面の丸ではなく、世界に書き戻された数（battle.losses が唯一の出所）
+    const L = (ok && sb.losses) ? sb.losses : { dead: battle.deaths.a.length, wounded: 0, fled: 0 };
+    const tail = L.wounded || L.fled ? `（負傷 ${L.wounded} ・ 逃走 ${L.fled}）` : '';
+    status.textContent = battle.outcome === 'win' ? `勝った。戦死 ${L.dead} 体。${tail}`
+      : battle.outcome === 'surrender' ? `降伏した。戦死 ${L.dead} 体で止めた。${tail}`
+      : `負けた。戦死 ${L.dead} 体。${tail}`;
     status.style.color = battle.outcome === 'lose' ? '#f0907c' : '#5fe3c4';
   }
 
+  // S2：降伏。sim が出す3つの代価をそのまま出し、選んだ index を締めに渡す（R-962）。
+  // **画面が world.food を自分で引かない**（締めでもう一度引かれて二重になる）。
   function doSurrender() {
-    if (battle.over) return;
-    const terms = api.surrender(battle);
-    syncLog(); syncBars();
+    if (battle.over || awaitingPrice) return;
+    const terms = war.surrenderWar(run, sb);
     if (!terms.accepted) {
+      api.syncBattle(battle); syncLog(); syncBars(); syncRoster();
       toast('降伏は拒否された。追撃が来る。', 'bad');
       return;
     }
-    world.food = Math.max(0, world.food - terms.food);
-    toast(`降伏。賠償：食料 ${terms.food} / 人 ${terms.captives}`, 'warn');
-    finish();
+    api.markSurrender(battle, terms);
+    syncLog(); syncBars(); syncRoster();
+    const options = terms.options || [];
+    if (options.length < 2) { finish(); return; }
+    awaitingPrice = true;
+    surrenderBtn.disabled = true;
+    status.textContent = '降伏が受け入れられた。代価を選ぶ。';
+    askPrice(options);
+  }
+
+  /** 代価の3択。押すまで締めない（押した瞬間に戦死が確定する）。 */
+  function askPrice(options) {
+    const card = el('div', { class: 'card' });
+    card.appendChild(el('h4', { style: { margin: '0 0 6px' } }, '降伏の代価をどれで払うか'));
+    card.appendChild(el('p', {}, '早く降りれば安い。粘るほど高くつく。人で払うと、その体は戻らない。'));
+    const row = el('div', { style: { display: 'flex', gap: '7px', marginTop: '8px' } });
+    options.forEach((o, i) => {
+      row.appendChild(el('button', {
+        class: 'btn' + (i === 0 ? ' primary' : ''), style: { flex: 1 },
+        onclick: () => {
+          priceIndex = i;
+          awaitingPrice = false;
+          card.remove();
+          toast(`降伏。代価：${o.label}（食料 ${o.food} ／ 人 ${o.captives}）`, 'warn');
+          finish();
+        },
+      }, `${o.label}　食料 ${o.food} ／ 人 ${o.captives}`));
+    });
+    card.appendChild(row);
+    body.insertBefore(card, logBox);
+    // 戦場の下に入るので、そのままだと折りたたみの外に出ることがある。必ず見せる。
+    card.scrollIntoView({ block: 'nearest' });
   }
 
   function goNext() {

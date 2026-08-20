@@ -1,8 +1,22 @@
 # src/ui — 画面
 
 `python3 -m http.server` で `game/index.html` を開けば動く。ビルド手順はない。
-依存の向きは **ui → sim → core** の一方向。ui から sim へは必ず `src/ui/api.js` 越しに触ること
-（`src/sim/` を直接 import しない）。
+
+依存の向きは **ui → flow → sim → core** の一方向。窓口は用件で2つに分かれる（R-950 / R-951）。
+
+| 用件 | 呼ぶ先 | 例 |
+|---|---|---|
+| **進む・止まる・戦う**（世界の状態が動くもの） | `src/flow/`（`run` / `war` / `clock` / `rules`） | `flow.advanceTicks` `flow.advanceGeneration` `war.beginWar` `war.settle` |
+| **読む・書く**（役を割る・カードを立てる・名簿・年代記） | `src/ui/api.js` 越しに sim | `api.assignRole` `api.setCard` `api.chronicle` |
+
+`src/sim/` は**どちらの場合も直接 import しない**。とくに
+`startWar` / `settleWar` / `takeCaptives` / `borderDecision` の4つは
+**`src/flow/war.js` だけが呼んでよい**（静的検査 G-18。`ui/` の中でこの4つの名前を
+書いた時点で赤くなるので、画面から捕虜を引くときは `war.drawCaptives` を使う）。
+
+戦争の順番（S0〜S10・R-952）を持っているのも `flow/war.js` で、画面は
+「相手を選ぶ → 戦闘を見る → 捕虜と国境を決める」の3枚を順に開くだけ。
+**戦闘モーダルは `war.settle` が返るまで閉じない**（戦死の85%は決着のあとに出る）。
 
 ---
 
@@ -16,6 +30,11 @@
 | `index.html?sim=mock` | `src/ui/mock.js`（画面だけ触りたいとき） |
 
 mock は捨て札として残してある。sim が壊れているときに画面側の切り分けをするためだけのもの。
+
+> **注意（段1以降）**：世界を進めるのは `src/flow/` で、`flow` は `src/sim` を直接 import する。
+> つまり **`?sim=mock` にしても世界は本物の sim が走る**。mock に落ちるのは
+> 「本物に無い関数の穴埋め」だけで、この状態では画面と世界が食い違う
+> （起動時に `console.error` で言う）。mock で通しは遊べない。
 
 ## 開幕の診断（60問 → 64種族）
 
@@ -88,14 +107,17 @@ world.spec = { mode:'centroid', spread:0.16, centroid: 成立値 }
 
 | 数 | 出どころ | 値 |
 |---|---|---|
-| `TICKS_PER_GEN` | `src/sim/constants.js`（`api.TICKS_PER_GEN` 経由で引く） | 12 |
-| `GEN_MS` | `src/core/model.js` | P1 = 2分／世代、P2 = 60分／世代 |
+| `TICKS_PER_GEN` | `src/sim/constants.js`（`src/flow/rules.js` 経由で引く） | 12 |
+| `GEN_MS` | `src/core/model.js` | P1 = 75秒／世代、P2 = 180秒／世代（**R-960**） |
 
-`main.js` は `GEN_MS[phase] / TICKS_PER_GEN` を1tickの実時間として回す。
+1tickの実時間は `src/flow/clock.js` の `tickMs(world)`（＝`GEN_MS[phase] / TICKS_PER_GEN`）。
+`main.js` はそれを読むだけで、**時計を動かしてよいかどうかの判断も進行層が持つ**（R-956）。
 **×1 が設計値そのもの**で、倍速ボタン（×1/×2/×4/×8）はこの尺に対する倍率。
 
-- P1 ×1 → 1tick = 10秒、1世代 = 2分。sim の実測で10体到達が3〜4世代なので **6〜8分**
-- P2 ×1 → 1tick = 5分、1世代 = 60分（×8 で 7分30秒）
+- P1 ×1 → 1tick = 6.25秒、1世代 = 1分15秒。G-02 の実測で10体到達が平均4.4世代なので
+  **世界の時間だけで平均5.6分**（＋戦の段取り約2分 ＝ **7.7分**。A-7 は5〜10分）
+- P2 ×1 → 1tick = 15秒、1世代 = 3分（×8 で 22.5秒）。1セッション＝1〜3世代 ＝ **3〜9分**
+- 不応期2世代（R-963）＝ ×1 で6分、×8 で45秒
 
 > 以前は画面が独自に `TICK_MS=220ms × TICKS_PER_GEN=120` で回していた。
 > 1世代26秒という尺の問題だけではなく、**sim に1世代あたり10倍のtickを流し込んでいた**
@@ -324,7 +346,8 @@ sim が `pendingFirstWar` を立てて10体でフェーズ移行を止めるの�
   隠れたタブが新しいフレームを合成しないため。撮る直前に
   `window['増殖'].state.dish.draw(world)` を単独で呼ぶと正しく写る
 - ブラウザは裏タブの `setInterval` を約1秒に絞るので、裏で放置すると進行が実時間より遅い。
-  世代を進めたいだけなら `api.stepTick` / `api.advanceGeneration` を直接叩くほうが速い
+  世代を進めたいだけなら `window['増殖'].flow.advanceGeneration(window['増殖'].run)` を
+  直接叩くほうが速い（`flow` / `war` / `clock` は開発用フックに出してある）
 
 ---
 

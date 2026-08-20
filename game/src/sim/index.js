@@ -20,6 +20,7 @@ export {
   captiveOptions, takeCaptives, borderDecision, publicRank,
   settleWar, applyRout, selectDeployment, selectFirstWarForce, captiveRange,
   rankNation, injectOutsideBlood, CAPTIVE_AXES,
+  applySideLosses,   // R-953：sim への唯一の変更。中身は触らない。公開面を広げるだけ
 } from './battle.js';
 
 export {

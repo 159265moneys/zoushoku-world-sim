@@ -1,5 +1,11 @@
 // 画面のシェル。ルーティング・ループ・トップバー。
-// 依存の向きは ui -> sim -> core の一方向。sim へは必ず api.js 越しに触る。
+//
+// 依存の向きは **ui → flow → sim → core** の一方向（R-950）。
+//   進む・止まる・戦う      … `src/flow/`（run / war / clock / rules）だけを呼ぶ
+//   読む・書く（役・カード） … `api.js` 越しに sim を読む
+// **世界を作るのも、tick を刻むのも、世代を進めるのも、戦争も、もう画面の仕事ではない。**
+// 画面が sim の startWar / settleWar / takeCaptives / borderDecision を呼ぶことは
+// 禁止されている（R-951・静的検査 G-18）。
 //
 // 【画面の設計方針】
 //   1. 薄い文字を書かない。読めない説明文は無いほうがマシ
@@ -10,11 +16,13 @@
 //   3. 「何が置いてあるか」ではなく「何をすればいいか」。
 //      ドックの最上段は常に “いまやること”
 
-import { api, SIM_SOURCE, registerRoster } from './api.js';
-import { RNG } from '../core/rng.js';
-import { PHASE, ROLE, BUREAU_LABEL, GEN_MS } from '../core/model.js';
+import { api, SIM_SOURCE, registerRoster, adapt } from './api.js';
+import { PHASE, ROLE, BUREAU_LABEL } from '../core/model.js';
+import * as flow from '../flow/run.js';
+import * as war from '../flow/war.js';
+import * as clock from '../flow/clock.js';
+import { RUNNING_STAGES, TICKS_PER_GEN } from '../flow/rules.js';
 import { el, clear, num, pct, toast, modal, mount, DEV } from './dom.js';
-import { seedCards } from './cards.js';
 import { Dish } from './dish.js';
 import { swatchColor, strainName } from './color.js';
 
@@ -30,25 +38,26 @@ import { openOpponents } from './panels/opponents.js';
 import { openBattle } from './panels/battle.js';
 
 // ------------------------------------------------------------------ 世代の尺
-// 世代の長さは TICKS_PER_GEN（sim の刻み）× GEN_MS（設計値）の積で決まる。
-// 画面が勝手に決めてよいのは片方もない。倍速はこの尺に対する倍率で、×1 が設計値。
-const TICKS_PER_GEN = api.TICKS_PER_GEN ?? 12;
-const genMs = (w) => GEN_MS[w ? w.phase : 1] ?? GEN_MS[1];
-const tickMs = (w) => genMs(w) / TICKS_PER_GEN;
+// 世代の長さ（1世代＝何ミリ秒か）は **進行層の時計** が持つ（flow/clock.js）。
+// 画面はそれを読むだけ。倍速はこの尺に対する倍率で、×1 が設計値。
+const genMs = (w) => clock.genMs(w);
+const tickMs = (w) => clock.tickMs(w);
 
 const SEED = 20260819;
 
 const state = {
-  world: null, roster: null, rng: null, dish: null,
+  run: null,                 // ← 1回のプレイ。world / roster / rng / stage の持ち主
+  world: null, roster: null, dish: null,
   speed: 1, paused: false, selected: null, tab: 'roles',
   castPick: null, openBureau: null, search: null, chron: null,
   battle: null, rosterDebug: false, autoReport: true,
-  firstWarSeen: false, elapsedMs: 0, hadForeign: false, species: null,
+  elapsedMs: 0, hadForeign: false, species: null,
 };
 
 const ctx = {
   get world() { return state.world; },
-  get rng() { return state.rng; },
+  get run() { return state.run; },
+  get rng() { return state.run ? state.run.rng : null; },
   api, state,
   refresh, select, afterBorder,
 };
@@ -70,19 +79,33 @@ openOpening({
 });
 
 function buildWorld(answers, opts = {}) {
-  state.rng = new RNG(SEED);
   const spec = opts.centroid ? { centroid: opts.centroid } : answers;
-  state.world = api.createWorld(SEED, SIM_SOURCE === 'sim' ? spec : answers, {
+  // 世界も10国も乱数も、作るのは進行層。画面は出来たものを受け取るだけ（R-950）。
+  state.run = flow.createRun({
+    seed: SEED,
+    answers: SIM_SOURCE === 'sim' ? spec : answers,
     name: '我らのシャーレ',
     species: opts.species || null,
     responses: opts.responses || null,
   });
+  state.world = adapt(state.run.world);   // 画面が読む面（血すじ・推移・国境）を生やす
+  state.roster = state.run.roster;
   state.species = opts.species || null;
-  seedCards(api, state.world);
-  try { state.roster = api.createRoster ? api.createRoster(SEED) : null; }
-  catch (e) { console.warn('roster 生成に失敗', e); state.roster = null; }
   registerRoster(state.roster);
+  // P1では方針カードを1枚も立てない（R-964）。5枚が立つのは部族に上がった瞬間で、
+  // それは進行層（flow/run.js の enterTribe）の仕事になった。
+  reportFaults();
   return state.world;
+}
+
+/** 進行層が握りつぶさずに積んだ失敗。無言で消さない（#19：空の catch で10国が止まった） */
+function reportFaults() {
+  const R = state.run;
+  if (!R || !R.faults.length) return;
+  for (const f of R.faults.splice(0)) {
+    console.warn(`[flow] 第${f.gen}世代 ${f.where}: ${f.message}`);
+    if (DEV) toast(`[flow] ${f.where}: ${f.message}`, 'bad');
+  }
 }
 
 function startWorld(mode) {
@@ -110,7 +133,7 @@ function startWorld(mode) {
   if (state.species) toast(`種族：${state.species.name}（${state.species.code}）`, 'warn');
 
   // 時計の原点はここ。診断に何分かけていても世界の時間には入れない。
-  last = performance.now(); lastDraw = last; acc = 0; tickInGen = 0; state.elapsedMs = 0;
+  last = performance.now(); lastDraw = last; acc = 0; state.elapsedMs = 0;
 
   setInterval(loop, FRAME_MS);
   refresh();
@@ -120,36 +143,43 @@ function startWorld(mode) {
 // requestAnimationFrame ではなくタイマーで回す。rAF は裏タブで止まるので、
 // タブを切り替えただけで世界の時計まで止まってしまう。
 const FRAME_MS = 33;
-let last = performance.now(), lastDraw = performance.now(), acc = 0, tickInGen = 0, dockAcc = 0;
+let last = performance.now(), lastDraw = performance.now(), acc = 0, dockAcc = 0;
 
 function loop() {
   const now = performance.now();
-  const w = state.world;
-  if (!w) { last = now; return; }
+  const R = state.run, w = state.world;
+  if (!R || !w) { last = now; return; }
+
+  // 止める／速さは画面の持ちものだが、**進めてよいかどうかを決めるのは進行層**。
+  // 村がいっぱいのあいだ（R-956）と戦のあいだは、押しても1tickも進まない。
+  R.paused = state.paused;
+  R.speed = state.speed;
 
   // 1フレームで進めてよい実時間の上限は「1世代ぶん」。裏タブでタイマーが絞られても、
   // 起きた瞬間に寝ていたぶんを取り戻す（「不在中も世界は進む」）。
   const dt = Math.min(genMs(w), now - last); last = now;
   state.elapsedMs += dt;
 
-  if (!state.paused && state.speed > 0) {
+  if (flow.isRunning(R)) {
     acc += dt * state.speed;
     const step = tickMs(w);
     let guard = 0;
     while (acc >= step && guard++ < TICKS_PER_GEN) {
       acc -= step;
-      api.stepTick(w, state.rng);
-      tickInGen++;
-      if (tickInGen >= TICKS_PER_GEN) { tickInGen = 0; onGeneration(); }
+      // 進行層が「進んだ数」を返す。0 なら世界が止まっている（世代境界・上限・戦）。
+      if (flow.advanceTicks(R, 1) === 0) { acc = 0; break; }
+      if (flow.atGenBoundary(R)) onGeneration();
     }
     if (acc > step * TICKS_PER_GEN) acc = step * TICKS_PER_GEN;
+  } else {
+    acc = 0;
   }
 
   state.dish.sync(w);
   state.dish.selected = state.selected;
   // **見た目の dt に世界の取り戻しぶんを流しこまない。**
   //   世界の dt は「1世代ぶん」まで許す（裏タブで寝ていた分を取り戻すため）が、
-  //   それを住人の運動にそのまま渡すと dt が最大 120 秒（P2 では 3600 秒）になり、
+  //   それを住人の運動にそのまま渡すと dt が最大 75 秒（P2 では 180 秒）になり、
   //   ばね（速度 += 変位 × 係数 × dt）の利得が 1 を大きく超えて **発散する**。
   //   実測：1度でも詰まると座標が -741045 まで飛び、住人が永久に画面外＝盤面が真っ黒。
   //   アニメーションは実時間の1フレーム分だけでよい。
@@ -163,17 +193,28 @@ function loop() {
 }
 
 function onGeneration() {
-  const w = state.world;
-  const wasPhase = w.phase;
+  const R = state.run, w = state.world;
   const wasBureaus = { ...w.bureaus };
-  const evs = api.advanceGeneration(w, state.rng) || [];
+
+  // 1世代ぶんを進行層に頼む。中でやっているのは
+  //   段A（fertBias・透過率0.9）→ sim の世代 → 段B（あふれた新生児の旅立ち）
+  //   → 10国を1世代 → 部族に上がったなら既定カード5枚 → 節目の知らせ
+  // （R-954 / R-955 / R-957 / R-964）。落ちたら握りつぶさずに止める。
+  let evs = [];
+  try { evs = flow.advanceGeneration(R) || []; }
+  catch (e) {
+    console.error(e);
+    state.paused = true; buildSpeed();
+    toast('世代を進められなかった。ここで時間を止める：' + e.message, 'bad');
+    return;
+  }
+  reportFaults();
 
   for (const k in wasBureaus) {
     if (wasBureaus[k] != null && w.bureaus[k] == null) {
       toast(`${BUREAU_LABEL[k]}の長が死んだ。空席のあいだ、この局からは何も報告が来ない。`, 'bad');
     }
   }
-  try { if (api.stepRoster) api.stepRoster(state.roster, state.rng); } catch (e) { /* ロスターは無くても続く */ }
 
   // 死亡は世代あたり複数出る。1件ずつ流すとトーストが埋まって他が読めないので束ねる。
   const dead = [];
@@ -198,18 +239,39 @@ function onGeneration() {
 
   refresh();
 
-  if (wasPhase === PHASE.VILLAGE && w.phase !== PHASE.VILLAGE) { announcePhase2(); return; }
-  if (w.pendingFirstWar && !state.firstWarSeen) { state.firstWarSeen = true; announceFirstWar(); return; }
+  // 節目は進行層が「知らせ」として積む。画面はどれをモーダルにするかを決めるだけ。
+  if (showNotices(flow.takeNotices(R))) return;
 
   // フェーズ1に報告は存在しない（全個体が画面にいるので自分で見ている）。
   if (state.autoReport && w.phase !== PHASE.VILLAGE && w.gen > 0 && !document.querySelector('.scrim')) showReport();
+}
+
+/**
+ * 進行層の知らせを画面に出す。**モーダルは1画面に1つ**なので、
+ * 束で来たときは重いほうを1つだけ出し、残りはトーストにする（R-904）。
+ * @returns true … モーダルを出した（＝このあと帰還報告を自動で開かない）
+ */
+function showNotices(list) {
+  if (!list.length) return false;
+  const rank = { 行き止まり: 4, 部族: 3, 上限: 2, 百: 1, 旅立ち: 0 };
+  const sorted = [...list].sort((a, b) => (rank[b.kind] ?? 0) - (rank[a.kind] ?? 0));
+  const top = sorted[0];
+  for (const n of sorted.slice(1)) if (n.text) toast(n.text, 'warn');
+  switch (top.kind) {
+    case '上限': announceFirstWar(top); return true;
+    case '部族': announcePhase2(); return true;
+    case '百': case '行き止まり': announceNotice(top); return true;
+    default: if (top.text) toast(top.text, 'warn'); return false;
+  }
 }
 
 // ------------------------------------------------------------------ 節目
 // 「10体 → 初戦 → 捕虜1体 → フェーズ2」はこのゲームのビートシート。
 // 通り過ぎさせないために、この2つだけはモーダルで止める。1画面に1つの用件。
 
-function announceFirstWar() {
+function announceFirstWar(notice = null) {
+  const w = state.world;
+  const pop = notice && notice.pop != null ? notice.pop : w.people.size;
   const wasPaused = state.paused;
   state.paused = true;
   const body = el('div');
@@ -226,14 +288,14 @@ function announceFirstWar() {
     ),
   );
   const m = modal({
-    title: '10体になった', sub: '隣のシャーレが見えている',
+    title: `${pop}体になった`, sub: '隣のシャーレが見えている',
     body, cls: 'narrow', dismissable: false,
     footer: [
       el('button', {
         class: 'btn', onclick: () => {
           m.close(); state.paused = wasPaused;
-          toast('「隣のシャーレへ」はいつでも押せる。押すまで村は10体のまま。', 'warn');
-          refresh();
+          toast('「隣のシャーレへ」はいつでも押せる。押すまで村は10体のまま。時間も止まっている。', 'warn');
+          buildSpeed(); refresh();
         },
       }, 'もう少し村を見る'),
       el('div', { style: { flex: 1 } }),
@@ -263,7 +325,10 @@ function announcePhase2() {
       el('div', { class: 'k' }, 'あなたの手に残るもの'), el('div', { class: 'v' }, '軍務・農業・民生の3つの局に、誰を長として据えるか'),
       el('div', { class: 'k' }, '奪われるもの'), el('div', { class: 'v' }, '一体ずつの仕事と住む場所の指定'),
       el('div', { class: 'k' }, 'これから'), el('div', { class: 'v' }, '数字は正確に届く。歪むのは「なぜそうなったか」だけ'),
-      el('div', { class: 'k' }, '時間の流れ'), el('div', { class: 'v' }, '1世代が 2分 から 60分 に伸びる。急ぐときは右上の ×8 を押す'),
+      // 数字を手で書かない。GEN_MS が動いたら（R-960）この文もついてくる
+      el('div', { class: 'k' }, '時間の流れ'), el('div', { class: 'v' },
+        `1世代が ${clock.fmtDuration(clock.genMs({ phase: PHASE.VILLAGE }))} から `
+        + `${clock.fmtDuration(clock.genMs({ phase: PHASE.TRIBE }))} に伸びる。急ぐときは右上の ×8 を押す`),
     ),
   );
   const m = modal({
@@ -275,9 +340,47 @@ function announcePhase2() {
         class: 'btn primary big', onclick: () => {
           m.close(); state.paused = false; state.tab = 'roles';
           toast('長を1人も置かないと、誰も報告してこない。', 'warn');
-          refresh();
+          buildSpeed(); refresh();
         },
       }, '3人の長を選ぶ'),
+    ],
+  });
+  return m;
+}
+
+/**
+ * 進行層の知らせ（人口100・行き止まり）をそのまま出す。**「負け」とは書かない**（R-965）。
+ * 文も選択肢も進行層が持っている。画面はそれを並べるだけ。
+ */
+function announceNotice(n) {
+  const end = n.kind === '行き止まり';
+  state.paused = true;
+  const body = el('div');
+  mount(body,
+    el('p', { style: { fontSize: '17px', lineHeight: '1.75', margin: '0 0 14px' } }, n.text),
+    el('div', { class: 'kv' },
+      el('div', { class: 'k' }, '世代'), el('div', { class: 'v' }, `第 ${n.gen} 世代`),
+      el('div', { class: 'k' }, '人口'), el('div', { class: 'v' }, String(n.pop)),
+      ...(end ? [
+        el('div', { class: 'k' }, '作る量'), el('div', { class: 'v' }, num(n.yieldRate ?? 0, 2)),
+        el('div', { class: 'k' }, '食べる量'), el('div', { class: 'v' }, num(n.consumption ?? 0, 2)),
+        el('div', { class: 'k' }, '蔵'), el('div', { class: 'v' }, num(n.food ?? 0, 0)),
+      ] : []),
+    ),
+  );
+  // 出せるのは「閉じて世界を見続ける」ほうだけ。「もう一度はじめる」は段4（入口）の担当。
+  const choices = n.choices || ['閉じる'];
+  const label = end ? choices[0] : choices[choices.length - 1];
+  const m = modal({
+    title: end ? 'この村はもう増えない' : 'ここまで',
+    sub: `第 ${n.gen} 世代 ・ ${n.pop} 体`,
+    body, cls: 'narrow', dismissable: !end,
+    footer: [
+      el('div', { style: { flex: 1 } }),
+      el('button', {
+        class: 'btn primary big',
+        onclick: () => { m.close(); state.paused = false; buildSpeed(); refresh(); },
+      }, label),
     ],
   });
   return m;
@@ -319,21 +422,26 @@ function renderTop() {
 function renderClock(w) {
   const box = document.getElementById('clock');
   if (!box) return;
+  const R = state.run;
+  const running = !!R && flow.isRunning(R);
   const effective = state.speed > 0 ? genMs(w) / state.speed : 0;
   clear(box);
   mount(box,
     el('b', {}, '経過 ' + mmss(state.elapsedMs)),
-    el('span', {}, state.speed > 0 && !state.paused
-      ? `1世代 ${mmss(effective)}`
-      : '止まっている'),
+    // 進行層が「動いていない」と言っているときに「1世代 2:00」と出さない。
+    // 止まっているかどうかを決めるのは画面ではなく進行層（R-956）。
+    el('span', { title: running ? '' : (flow.stopReason(R) || '') },
+      running ? `1世代 ${mmss(effective)}` : '止まっている'),
   );
 }
 
 function paintGenBar(w) {
   const bar = document.getElementById('genbar');
   if (!bar || !bar.firstChild) return;
+  const R = state.run;
   const withinTick = state.speed > 0 ? Math.min(1, acc / tickMs(w)) : 0;
-  const p = (tickInGen + withinTick) / TICKS_PER_GEN;
+  // 世代のどこまで来ているかを数えているのは進行層（run.tickInGen）。
+  const p = ((R ? R.tickInGen : 0) + withinTick) / TICKS_PER_GEN;
   bar.firstChild.style.width = Math.max(0, Math.min(1, p)) * 100 + '%';
 }
 
@@ -384,17 +492,25 @@ function mixLabel(st, strains) {
 // ------------------------------------------------------------------ 時間
 function buildSpeed() {
   const box = document.getElementById('speed');
+  if (!box) return;
+  const R = state.run;
+  // 世界の時計が動いてよい局面かどうかを決めるのは進行層（R-956）。
+  // 村がいっぱいのあいだは ▶ も ×8 も押せない。**押せない理由をホバーで出す**（R-943）。
+  const live = !!R && RUNNING_STAGES.has(R.stage);
+  const why = live ? '' : (R ? (flow.stopReason(R) || '') : '');
   clear(box);
   // 「止める／進める」は状態の切り替え。「速さ」は倍率。種類が違うので升を分ける。
   box.appendChild(el('button', {
     class: 'pause' + (state.paused ? ' on' : ''),
+    disabled: !live, title: why,
     onclick: () => { state.paused = !state.paused; buildSpeed(); if (state.world) renderClock(state.world); },
   }, state.paused ? '▶ 進める' : '⏸ 止める'));
   const rates = el('div', { class: 'rates' });
   for (const s of [1, 2, 4, 8]) {
     rates.appendChild(el('button', {
       class: state.speed === s ? 'on' : '',
-      title: `設計値の${s}倍`,
+      disabled: !live,
+      title: why || `設計値の${s}倍`,
       onclick: () => { state.speed = s; buildSpeed(); if (state.world) renderClock(state.world); },
     }, '×' + s));
   }
@@ -407,6 +523,7 @@ function buildSpeed() {
 // 用件は多くて3つまで。それ以上並べると、また読まれなくなる。
 function renderTodo() {
   const w = state.world;
+  const R = state.run;
   const box = document.getElementById('todo');
   if (!box) return;
   const items = [];
@@ -417,9 +534,12 @@ function renderTodo() {
     push('hot', `連れ帰った ${w.borderQueue.length} 体の処遇が決まっていない`,
       '受け入れるか、殺すか、返すか。', '決める', () => afterBorder());
   }
-  if (w.warReady && !(w.borderQueue && w.borderQueue.length)) {
+  // 「戦いに行けるか」を決めるのは進行層。人口・不応期・国境・相手の有無を
+  // 1か所で見て、押せないときは理由を持って返す（R-943 / R-963 / R-965）。
+  const why = R ? war.warReason(R) : { ok: false };
+  if (why.ok) {
     push('hot', '隣のシャーレが見えている',
-      w.pendingFirstWar ? '戦って1体を連れ帰らないと、村は10体のまま止まる。' : '勝てば相手の血が手に入る。',
+      why.firstWar ? '戦って1体を連れ帰らないと、村は10体のまま止まる。' : '勝てば相手の血が手に入る。',
       '戦いに行く', () => startWarFlow());
   }
 
@@ -497,7 +617,7 @@ function buildTabs() {
 
 function refresh() {
   if (!state.world) return;
-  renderTop(); renderStrains(); renderTodo(); buildTabs();
+  renderTop(); renderStrains(); renderTodo(); buildTabs(); buildSpeed();
 
   const body = document.getElementById('tabbody');
   const t = TABS.find(x => x.key === state.tab) || TABS[0];
@@ -547,29 +667,36 @@ function showReport() {
 }
 
 // ------------------------------------------------------------------ 戦争
+// 画面がやるのは「相手を選ぶ → 戦闘を見る → 捕虜と国境を決める」の3枚を順に開くことだけ。
+// 呼ぶ順番（S0〜S10）を持っているのは flow/war.js で、画面はそれを見ない（R-951 / R-952）。
 function startWarFlow() {
   state.paused = true;
   openOpponents(ctx,
-    (opponent) => { openBattle(ctx, opponent); },
+    (target) => { openBattle(ctx, target); },
     // 相手を選ばずに閉じたときに止まったままにしない。
-    () => { state.paused = false; refresh(); });
+    () => { state.paused = false; buildSpeed(); refresh(); });
 }
 
 function afterBorder() {
   state.paused = false;
-  const w = state.world;
+  const R = state.run, w = state.world;
+  // 戦が締まった（S9）ので、stage を世界の値から作り直す＝ここで時計が戻る（S10）。
+  if (R) flow.refreshStage(R);
+  reportFaults();
   if (w.phase === PHASE.TRIBE && !Object.values(w.bureaus).some(v => v)) {
     state.tab = 'roles';
     toast('部族になった。長を1人も置かないと、誰も報告してこない。', 'warn');
   }
-  refresh();
+  buildSpeed(); refresh();
 }
 
 // ------------------------------------------------------------------ デモ
-// 「まだら → 混色」を最初から見せるための開発用セットアップ。
+// 「まだら → 混色」を最初から見せるための開発用セットアップ（?dev=1 のときだけ）。
+//
+// **ここも進行層越しに走らせる**（R-950 / C-13）。前は sim を直に叩いていたので、
+// 10国が1世代も進まないまま「国の強さ7」で横並びになり、15対2の初戦が出ていた（#10）。
 function demoSetup() {
-  const w = state.world, rng = state.rng;
-  state.firstWarSeen = true;
+  const R = state.run, w = state.world;
 
   const cast = () => {
     if (w.phase !== PHASE.VILLAGE) return;
@@ -578,41 +705,56 @@ function demoSetup() {
       p.role = (i % 5 < 3) ? ROLE.FARM : (i % 5 === 3 ? ROLE.HUNT : ROLE.DRILL);
     });
   };
+  // 進行層は「進めてよい局面か」を自分で判断する。村がいっぱいなら1世代も進まない。
   const runGens = (n) => {
     for (let g = 0; g < n; g++) {
       cast();
-      for (let t = 0; t < TICKS_PER_GEN; t++) api.stepTick(w, rng);
-      api.advanceGeneration(w, rng);
+      if (!flow.canAdvanceGeneration(R)) break;
+      flow.advanceGeneration(R);
     }
   };
-  const fightAndAccept = (opp) => {
-    if (!opp) return;
-    const b = api.startWar(w, rng, opp);
+  // S0〜S9 を人手の代わりに撃つ。順番は進行層が持っているので、ここでは並べるだけ。
+  const fightAndAccept = (target, axis) => {
+    if (!target) return false;
+    const b = war.beginWar(R, target);
+    if (!b) return false;
     let guard = 0;
-    while (!b.over && guard++ < 400) api.stepBattle(b, rng);
-    api.takeCaptives(w, b, '攻撃素質', rng);
-    for (const c of [...w.borderQueue]) api.borderDecision(w, c.id, 'accept');
-    if (api.settleWar) api.settleWar(w, b);
+    while (!b.over && guard++ < 400) war.stepWar(R, b);
+    war.settle(R, b, { priceIndex: 0 });
+    const opt = war.captiveOptions(R, b);
+    war.drawCaptives(R, b, opt.winner ? axis : null);
+    for (const c of war.borderQueue(R)) war.borderDecide(R, c.id, 'accept');
+    war.finishWar(R, b);
+    flow.refreshStage(R);
+    return true;
   };
 
-  runGens(6);
+  runGens(12);                       // 村がいっぱいになるまで（着いた時点で止まる）
+  fightAndAccept(war.listTargets(R)[0], '武');   // 初戦＝隣村ゴースト
 
-  const opps = api.listOpponents ? api.listOpponents(state.roster) : [];
-  const nearest = (target) => [...opps].sort((a, b) => hueDist(a.hue, target) - hueDist(b.hue, target))[0];
-  const far = [nearest(108), nearest(276)];
-
-  fightAndAccept(far[0]);
+  runGens(3);                        // ここで部族に上がる（既定カード5枚は進行層が立てる）
+  // 長は**部族に上がってから、生きている個体で**選ぶ（先に選ぶと3世代のあいだに死ぬ）
   const cands = [...w.people.values()].filter(p => p.role !== ROLE.CHILD)
     .sort((a, b) => (api.powerOf ? api.powerOf(b) - api.powerOf(a) : 0));
   ['military', 'agri', 'civil'].forEach((k, i) => { if (cands[i]) api.appointBureau(w, k, cands[i].id); });
 
-  runGens(3);
-  fightAndAccept(far[1]);
+  // 2戦目は条件（人口16・不応期2世代）を満たしたときだけ。血の色がいちばん遠い相手を選ぶ。
+  runGens(4);
+  if (war.warReason(R).ok) {
+    const home = 0;                  // 自国の表示色は常に 0度（赤）
+    const far = [...war.listTargets(R)]
+      .sort((a, b) => hueDist(api.targetHue(b), home) - hueDist(api.targetHue(a), home))[0];
+    fightAndAccept(far, '武');
+  }
   api.setCard(w, 'mix_policy', true, 100);
   runGens(4);
 
   w.food += 60;
-  toast('デモ：外来の血が2系統入った状態から始める。', 'warn');
+  // 溜まった知らせ（上限・部族）はデモの中で消化済み。本編の最初の世代で
+  // まとめて出てこないように捨てる。
+  flow.takeNotices(R);
+  reportFaults();
+  toast('デモ：外来の血が入った状態から始める。', 'warn');
 }
 
 // 無役の数（P1）／空席の局の数（P2）。タブのバッジで気づかせる。
@@ -627,4 +769,4 @@ function idleCount() {
 function hueDist(a, b) { const d = Math.abs((((a - b) % 360) + 360) % 360); return Math.min(d, 360 - d); }
 
 // 開発用フック
-window.増殖 = { state, api, ctx };
+window.増殖 = { state, api, ctx, flow, war, clock, get run() { return state.run; } };

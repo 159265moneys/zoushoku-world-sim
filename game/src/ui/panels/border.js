@@ -4,21 +4,45 @@
 
 import { el, clear, modal, toast, mount } from '../dom.js';
 import { portrait, swatchColor, strainName, lineageHue } from '../color.js';
+import * as war from '../../flow/war.js';
+
+// 呼び口はここにも1つも無い。捕虜（S6・S7）も国境の3択（S8）も締め（S9）も
+// `flow/war.js` 越しに頼む（R-951 / R-952）。戦死はこの画面が開く前に確定している。
 
 export function openBorder(ctx, battle) {
-  const { world, api, rng } = ctx;
+  const { world, api, run } = ctx;
+  const sb = battle._sim || battle;      // 進行層が持っている本物の戦
   const body = el('div');
-  let phase = battle.outcome === 'win' ? 'axis' : 'draw';
+
+  // S6：軸の選択。決着していない戦でここへ来たら進行層が例外を投げる（黙って飛ばさない）
+  let opt;
+  try { opt = war.captiveOptions(run, sb); }
+  catch (e) {
+    console.error(e);
+    opt = { axes: [], winner: false, count: 0, note: '', broken: e.message };
+  }
+  let phase = opt.winner ? 'axis' : 'draw';
   let axis = null;
-  const opt = api.captiveOptions(battle);
 
   const m = modal({ title: '国境', sub: `${battle.opponent.name} との戦のあと`, body, cls: 'wide', dismissable: false, footer: [] });
 
   function render() {
     clear(body);
+    if (opt.broken) { renderBroken(); return; }
     if (phase === 'axis') renderAxis();
     else if (phase === 'draw') renderDraw();
     else renderQueue();
+  }
+
+  // 決着していない戦でここへ来た（手順が壊れた）。行き止まりにはしない。
+  function renderBroken() {
+    mount(body,
+      el('div', { class: 'card' },
+        el('h4', {}, '国境の処理が開けなかった'),
+        el('p', {}, opt.broken),
+      ),
+      el('button', { class: 'btn primary block', onclick: () => { m.close(); ctx.afterBorder(); } }, '世界へ戻る'),
+    );
   }
 
   // ---- 勝者は「どの軸の上位から引くか」を1つ選べる
@@ -44,14 +68,18 @@ export function openBorder(ctx, battle) {
       class: 'btn primary block', style: { marginTop: '12px' }, disabled: !axis,
       onclick: () => { phase = 'draw'; render(); },
     }, axis
-      ? `${opt.axes.find(a => a.key === axis).label} 上位から ${opt.countLabel || opt.count + ' 体'}を引く`
+      ? `${opt.axes.find(a => a.key === axis).label} 上位から ${captiveLabel(opt)}を引く`
       : '↑ どれか1つを選ぶ'));
   }
 
   function renderDraw() {
     if (!battle.drawn) {
       battle.drawn = true;
-      const got = api.takeCaptives(world, battle, axis, rng) || [];
+      // S7：0体で返ることがある（殲滅した＝報酬が消える）
+      let got = [];
+      try { got = war.drawCaptives(run, sb, axis) || []; }
+      catch (e) { console.error(e); toast('捕虜を引けなかった：' + e.message, 'bad'); }
+      api.dressCaptives(world, got, battle.opponent);   // 「どこの誰か」を絵に出せる形に
       battle.tookAny = got.length > 0;
     }
     phase = 'queue';
@@ -62,9 +90,11 @@ export function openBorder(ctx, battle) {
   function renderQueue() {
     const q = world.borderQueue;
     if (!q.length) {
-      // 捕虜がゼロ（殲滅）でもここを通る。戦争の締めは必ず実行する。
-      if (api.settleWar) api.settleWar(world, battle);
-      mount(body, 
+      // S9：国境が空であることを進行層に確認させて締める。
+      // 捕虜がゼロ（殲滅）でもここを通る。締めを打って初めて世代が動きだす（S10）。
+      const fin = war.finishWar(run, sb);
+      if (!fin.ok) toast(`まだ国境に${fin.waiting}人が残っている。`, 'bad');
+      mount(body,
         el('div', { class: 'card' },
           el('h4', {}, q.length === 0 && !battle.tookAny ? '取り分がなかった' : '国境の処理が終わった'),
           el('p', {}, '戦のすぐあとに決めたので、民には知らされていない。民心も動いていない。'
@@ -77,7 +107,7 @@ export function openBorder(ctx, battle) {
 
     mount(body, 
       el('p', { class: 'hint' },
-        battle.outcome === 'win' ? opt.note : '負けたので相手の全プールからの抽選になった。'),
+        opt.winner ? opt.note : '負けたので相手の全プールからの抽選になった。'),
       el('div', { class: 'card', style: { borderColor: '#4a3c1c', background: '#171207' } },
         el('p', {}, '見えるのは「その国の中での順位」だけ。'
           + '弱い国の上位1%が、こちらでは平均以下ということが起きる。'
@@ -121,7 +151,9 @@ export function openBorder(ctx, battle) {
   }
 
   function decide(c, d) {
-    api.borderDecision(world, c.id, d);
+    // S8：受け入れ／誅殺なら、相手の世界からもこの体を消す（送還のときは消さない）。
+    // 消さないと、連れ帰った本人が相手の国にも生きていて、何度でも連れ帰れる。
+    war.borderDecide(run, c.id, d);
     toast(d === 'accept' ? `${c.name} を国に入れた`
       : d === 'execute' ? `${c.name} を殺した` : `${c.name} を送り返した`,
       d === 'execute' ? 'bad' : '');
@@ -130,4 +162,11 @@ export function openBorder(ctx, battle) {
 
   render();
   return m;
+}
+
+/** 何体引けるか。**画面が定数から作り直さない**（sim が返した幅をそのまま出す・R-988） */
+function captiveLabel(opt) {
+  const lo = opt.min ?? opt.count ?? 0;
+  const hi = opt.max ?? opt.count ?? lo;
+  return lo === hi ? `${lo} 体` : `${lo}〜${hi} 体`;
 }

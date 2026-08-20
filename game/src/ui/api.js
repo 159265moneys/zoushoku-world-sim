@@ -8,7 +8,7 @@
 // UI のコードは一切変えない。ズレはすべてこのファイルに閉じ込める。
 
 import * as mock from './mock.js';
-import { makeAdapter, setRoster } from './adapter.js';
+import { makeAdapter, setRoster, adaptWorld } from './adapter.js';
 
 const DEFAULT_SOURCE = 'sim';
 
@@ -47,6 +47,21 @@ export const rawSim = real;
 
 /** roster を adapter に預ける（startWar が相手の world を引くのに要る） */
 export function registerRoster(roster) { setRoster(roster); }
+
+/**
+ * 進行層（flow/run.js の createRun）が作った world に、画面が読む面を生やす。
+ * 世界を作るのは flow の仕事になったので、写し取りだけをここから呼べるようにする。
+ *
+ * 注意：**世界を進めるのは常に本物の sim**（`src/flow/` は sim を直に import する）。
+ * `?sim=mock` で落ちてくるのは「本物に無い関数の穴埋め」だけで、mock が世界を
+ * 走らせることはもう無い。本物が読めないときは画面が成立しないので、黙らない。
+ */
+export function adapt(world) { return adaptWorld(world); }
+
+if (!real) {
+  console.error('[api] src/sim が読めていない。進行層（src/flow/）は sim を直接使うので、'
+    + 'この状態では画面と世界が食い違う。ビルドが壊れている。');
+}
 
 if (real) {
   // どの関数が mock 由来のままかを起動時に一度だけ出す（無言で混ざるのが一番危ない）

@@ -37,7 +37,14 @@ export const CARDS = [
 
 export const CARD_BY_ID = Object.fromEntries(CARDS.map(c => [c.id, c]));
 
-/** world.cards に既定値を流し込む */
+/**
+ * world.cards に既定値を流し込む。
+ *
+ * **画面からはもう呼んでいない**（R-964）。P1では方針カードを1枚も立てず、
+ * 部族に上がった瞬間に `flow/rules.js` の `TRIBE_CARDS` 5枚を進行層が立てる。
+ * ここに残っているのは `game/test/flow-route.js` の 'ui' 経路（段0が測った
+ * 昔の呼び順の基準線）が読むためだけで、このファイル自体は段3で消える。
+ */
 export function seedCards(api, world, list = CARDS) {
   for (const c of list) {
     if (world.cards && world.cards[c.id]) continue;

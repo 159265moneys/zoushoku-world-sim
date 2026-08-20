@@ -438,6 +438,79 @@ export function makeAdapter(sim) {
 
   A.makeGhost = (seed, phase, power) => sim.makeGhost(seed, phase, power);
 
+  // =========================================================================
+  // 戦争：**画面が使うのはここから下の4つ（viewBattle / syncBattle /
+  // markSurrender / dressCaptives）だけ**。どれも sim を1回も呼ばない、
+  // 「進行層が作った battle を絵に写す」ためだけの関数である。
+  //
+  // 開戦・締め・捕虜・国境は `src/flow/war.js` が唯一の呼び口（R-951 / R-952）。
+  // この下にある A.startWar 以下の包みは **`game/test/flow-route.js` の 'ui' 経路**
+  // （段0が測った「昔のUIの呼び順」の基準線）が使うために残してあるもので、
+  // 画面からは1か所も呼ばない。呼ぶと順番が2通りに割れる。
+  // =========================================================================
+
+  /**
+   * 進行層（flow/war.js の beginWar）が返した sim の battle を、画面が読む形に写す。
+   * @param sb     sim の battle（flow が作ったもの）
+   * @param w      自分の world
+   * @param target flow/war.js の listTargets が返した相手（隣村ゴースト or 国）
+   */
+  A.viewBattle = (sb, w, target) => {
+    const t = target || {};
+    const key = t.id || t.key || sb.opponentKey || 'foe';
+    const name = sb.opponentName || t.name || '相手';
+    const hue = displayHue(key, null);
+    rememberOrigin(key, name);
+    // foeStrains は _world（相手世界）を見る。隣村ゴーストには世界が無いので null。
+    const foe = { key, name, _world: t._world || t.world || null };
+    const view = {
+      _sim: sb, _rng: null, _world: w,
+      id: sb.id, gen: sb.gen ?? w.gen, seed: (w.seed ^ (w.gen * 40503)) >>> 0,
+      t: 0, over: false, outcome: null, surrendered: null,
+      opponent: { id: key, name, hue, world: foe._world, strains: foeStrains(foe, hue) },
+      a: { name: w.name || '我らのシャーレ', hue: 0, cohesion: 1, base: 1, fighters: [], world: w },
+      b: { name, hue, cohesion: 1, base: 1, fighters: [], world: foe._world },
+      log: [], deaths: { a: [], b: [] },
+    };
+    pushLog(view, `${view.a.name} と ${view.b.name} が衝突した。`
+      + `${sb.sides.home.units.length} 対 ${sb.sides.away.units.length}。`, 'hi');
+    return projectBattle(view);
+  };
+
+  /** sim の battle が動いたあと、絵とログを追いつかせる（1ラウンド後・締めのあと）。 */
+  A.syncBattle = (view) => (view && view._sim ? projectBattle(view) : view);
+
+  /** 降伏が受理された印。決着の1行が「負け」ではなく「降伏」になる。 */
+  A.markSurrender = (view, terms) => {
+    if (!view) return view;
+    view.surrendered = terms || { accepted: true };
+    return projectBattle(view);
+  };
+
+  /**
+   * 捕虜に「どこから来た誰か」を足す。sim の捕虜は出身国の**表示名**を持たないので、
+   * 国境画面が `agrarian` ではなく「デメテルの血」を出せるように補う。
+   */
+  A.dressCaptives = (w, list, target) => {
+    const foeName = (target && target.name) || null;
+    if (target) rememberOrigin(target.id || target.key, foeName);
+    for (const c of [...(list || []), ...(w.borderQueue || [])]) {
+      if (!c) continue;
+      if (!c.homeName) c.homeName = originName(c.origin, c.fromNation || foeName);
+      if (c.origin) rememberOrigin(c.origin, c.fromNation || foeName);
+      c.foreign = true;
+    }
+    return list || [];
+  };
+
+  /** 相手の表示色（度）。相手選択・戦闘・捕虜で同じ色になるように1か所から出す。 */
+  A.targetHue = (target) => {
+    if (!target) return 0;
+    const key = target.id || target.key || target.name || 'foe';
+    rememberOrigin(key, target.name);
+    return displayHue(key, null);
+  };
+
   A.startWar = (w, rng, opponent) => {
     const roster = ROSTER_OF.get(w) || opponent?._roster || null;
     const foe = toSimOpponent(sim, roster ?? opponentRoster, opponent);
