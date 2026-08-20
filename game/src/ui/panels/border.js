@@ -25,10 +25,11 @@ export function openBorder(ctx, battle) {
   function renderAxis() {
     mount(body, 
       el('div', { class: 'card' },
-        el('h4', {}, '勝った。相手の平均より上のプールから抽選する。'),
-        el('p', {}, '指名はできない。引く軸を1本だけ選べる。当たり外れは残るが、方向は選べる。'),
+        el('h4', {}, '勝った。相手の上位から1体を連れ帰れる。'),
+        el('p', {}, '名指しはできない。「どの点で上位か」だけを1つ選ぶ。'
+          + '当たり外れは残るが、方向は選べる。'),
       ),
-      el('h3', { class: 'sec' }, 'どの軸の上位から引くか'),
+      el('h3', { class: 'sec' }, 'どの点で上位の者を連れ帰るか'),
     );
     const wrap = el('div', { class: 'seg' });
     for (const a of opt.axes) {
@@ -38,13 +39,13 @@ export function openBorder(ctx, battle) {
     }
     body.appendChild(wrap);
     body.appendChild(el('p', { class: 'hint' },
-      '自分と違う国から取るほど当たりが眠っている。その国の環境が開いた才能しか、数字には出ていない。'));
+      '数字に出ているのは、その国が伸ばした才能だけ。眠っている才能は数字に出ない。'));
     body.appendChild(el('button', {
       class: 'btn primary block', style: { marginTop: '12px' }, disabled: !axis,
       onclick: () => { phase = 'draw'; render(); },
     }, axis
       ? `${opt.axes.find(a => a.key === axis).label} 上位から ${opt.countLabel || opt.count + ' 体'}を引く`
-      : '軸を選ぶ'));
+      : '↑ どれか1つを選ぶ'));
   }
 
   function renderDraw() {
@@ -66,8 +67,8 @@ export function openBorder(ctx, battle) {
       mount(body, 
         el('div', { class: 'card' },
           el('h4', {}, q.length === 0 && !battle.tookAny ? '取り分がなかった' : '国境の処理が終わった'),
-          el('p', {}, '戦争終了時に実施したので国民への通達はない。感情変数は動いていない。'
-            + '一度国に入れたあとに殺せば、それは粛清として返ってくる。'),
+          el('p', {}, '戦のすぐあとに決めたので、民には知らされていない。民心も動いていない。'
+            + '一度国に入れてから殺すと、それは粛清として跳ね返ってくる。'),
         ),
         el('button', { class: 'btn primary block', onclick: () => { m.close(); ctx.afterBorder(); } }, '世界へ戻る'),
       );
@@ -78,9 +79,9 @@ export function openBorder(ctx, battle) {
       el('p', { class: 'hint' },
         battle.outcome === 'win' ? opt.note : '負けたので相手の全プールからの抽選になった。'),
       el('div', { class: 'card', style: { borderColor: '#4a3c1c', background: '#171207' } },
-        el('p', {}, '見えるのは相手国内での順位階級だけ。'
-          + '弱小国の上位1%が、こちらでは平均以下ということが起きる。'
-          + '忠誠も未発現の才能も、この数字には入っていない。'),
+        el('p', {}, '見えるのは「その国の中での順位」だけ。'
+          + '弱い国の上位1%が、こちらでは平均以下ということが起きる。'
+          + '忠誠心も、まだ開いていない才能も、この数字には入っていない。'),
       ),
     );
 
@@ -101,18 +102,18 @@ export function openBorder(ctx, battle) {
             ),
           ),
           el('div', { style: { textAlign: 'right' } },
-            el('div', { class: 'mut', style: { fontSize: '10px' } }, '相手国内での階級'),
+            el('div', { class: 'mut', style: { fontSize: '13px' } }, '相手の国の中での順位'),
             el('div', { class: 'rank' }, rank.label)),
         ),
         el('div', { style: { display: 'flex', gap: '7px', marginTop: '10px' } },
           el('button', { class: 'btn primary', style: { flex: 1 }, onclick: () => decide(c, 'accept') }, '受け入れる'),
-          el('button', { class: 'btn danger', style: { flex: 1 }, onclick: () => decide(c, 'execute') }, '誅殺する'),
+          el('button', { class: 'btn danger', style: { flex: 1 }, onclick: () => decide(c, 'execute') }, 'ここで殺す'),
           el('button', { class: 'btn', style: { flex: 1 }, onclick: () => decide(c, 'return') }, '送り返す'),
         ),
         el('div', { class: 'kv', style: { marginTop: '7px' } },
-          el('div', { class: 'k' }, '受け入れる'), el('div', { class: 'v', style: { fontWeight: 400 } }, '体が増える。怨恨と異文化も入る。混ぜれば色が溶ける。'),
-          el('div', { class: 'k' }, '誅殺する'), el('div', { class: 'v', style: { fontWeight: 400 } }, '無料。ただし遺伝子が世界から永久に消える。'),
-          el('div', { class: 'k' }, '送り返す'), el('div', { class: 'v', style: { fontWeight: 400 } }, '得はない。世界の遺伝子プールだけが保存される。'),
+          el('div', { class: 'k' }, '受け入れる'), el('div', { class: 'v', style: { fontWeight: 400 } }, '人が1体増え、よその血が入る。恨みも一緒に入る。'),
+          el('div', { class: 'k' }, 'ここで殺す'), el('div', { class: 'v', style: { fontWeight: 400 } }, '代償はない。ただしこの血は二度と手に入らない。'),
+          el('div', { class: 'k' }, '送り返す'), el('div', { class: 'v', style: { fontWeight: 400 } }, 'こちらの得はない。相手の国にはその血が残る。'),
         ),
       );
       body.appendChild(card);
@@ -122,7 +123,7 @@ export function openBorder(ctx, battle) {
   function decide(c, d) {
     api.borderDecision(world, c.id, d);
     toast(d === 'accept' ? `${c.name} を国に入れた`
-      : d === 'execute' ? `${c.name} を誅殺した` : `${c.name} を送り返した`,
+      : d === 'execute' ? `${c.name} を殺した` : `${c.name} を送り返した`,
       d === 'execute' ? 'bad' : '');
     render();
   }

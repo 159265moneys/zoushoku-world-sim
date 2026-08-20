@@ -1,5 +1,13 @@
 // 小さなDOMヘルパ。フレームワークは使わない。
 
+/**
+ * 開発用UIを出すか。**既定は出さない。**
+ * 「デモ：部族フェーズから開始」「デバッグ表示」のような開発専用のボタンが
+ * 本番の画面に並んでいると、押していいものか分からず、周りの本物のボタンまで
+ * 避けられる。開発時は `?dev=1` を付ける。
+ */
+export const DEV = new URLSearchParams(location.search).has('dev');
+
 export function el(tag, attrs, ...kids) {
   const n = document.createElement(tag);
   if (attrs && (typeof attrs !== 'object' || attrs instanceof Node)) { kids.unshift(attrs); attrs = null; }

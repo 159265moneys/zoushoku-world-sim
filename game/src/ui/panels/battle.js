@@ -13,19 +13,22 @@ export function openBattle(ctx, opponent) {
   ctx.state.battle = battle;
 
   const canvas = el('canvas', { id: 'battlefield' });
-  const cohA = cohesionRow(battle.a.name, battle.a.hue);
-  const cohB = cohesionRow(battle.b.name, battle.b.hue);
+  // どちらが自分かを色に頼らせない。自国の色は血すじで決まるので、
+  // 相手より「弱そうな色」になることがある（実測：自分=赤・相手=緑で勝っているのに負けて見えた）。
+  const cohA = cohesionRow(`あなた（${battle.a.name}）`, battle.a.hue);
+  const cohB = cohesionRow(`相手（${battle.b.name}）`, battle.b.hue);
   const logBox = el('div', { id: 'blog' });
-  const status = el('div', { class: 'mut', style: { fontSize: '11px' } }, '交戦中');
+  const status = el('div', { class: 'mut', style: { fontSize: '13.5px' } }, '交戦中');
   const roster = el('div', { class: 'cols', style: { marginTop: '10px', gap: '14px' } });
 
   const surrenderBtn = el('button', { class: 'btn danger', onclick: doSurrender }, '降伏する');
-  const nextBtn = el('button', { class: 'btn primary', onclick: goNext, hidden: true }, '戦後処理へ');
+  const nextBtn = el('button', { class: 'btn primary big', onclick: goNext, hidden: true }, '戦のあとを決める');
 
   const body = el('div', {},
-    el('p', { class: 'hint' },
-      '戦術操作はできない。勝敗は殲滅ではなく、先に団結が折れたほうの崩壊で決まる。'
-      + '早く降りれば安く、粘るほど代価は跳ね上がる。'),
+    el('div', { class: 'lead-note' },
+      'ここで出来ることは「降伏する」だけ。勝負は皆殺しではなく、'
+      + '先に団結が 0 になったほうが崩れて終わる。'
+      + '早く降りれば安く済み、粘るほど代償は大きくなる。'),
     canvas, cohA.row, cohB.row, logBox, roster,
   );
 
@@ -112,14 +115,15 @@ export function openBattle(ctx, opponent) {
     for (const side of ['a', 'b']) {
       const s = battle[side];
       const col = el('div');
-      col.appendChild(el('div', { class: 'mut', style: { fontSize: '10px', letterSpacing: '.12em', marginBottom: '4px' } }, s.name));
+      col.appendChild(el('div', { style: { fontSize: '14px', fontWeight: '700', marginBottom: '5px' } },
+        side === 'a' ? `あなたの兵（${s.name}）` : `相手の兵（${s.name}）`));
       for (const f of s.fighters) {
         col.appendChild(el('div', { class: 'row' },
           el('div', { class: 'k' }, f.name),
-          el('div', { class: 'v', style: { fontSize: '10.5px' } },
+          el('div', { class: 'v', style: { fontSize: '13px' } },
             f.state === 'dead' ? el('span', { class: 'tag bad' }, '戦死')
               : f.state === 'flee' ? el('span', { class: 'tag warn' }, '逃走')
-              : f.state === 'freeze' ? el('span', { class: 'tag' }, '硬直')
+              : f.state === 'freeze' ? el('span', { class: 'tag' }, '固まった')
               : el('span', { class: 'tag ac' }, '交戦'),
             el('span', { class: 'mut', style: { marginLeft: '6px' } }, `恐怖 ${Math.round(f.fear * 100)}`)),
         ));

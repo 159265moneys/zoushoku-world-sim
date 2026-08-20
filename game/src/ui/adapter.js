@@ -222,7 +222,8 @@ function projectBattle(view) {
         f = dst.fighters[i] = {
           id: u.key, indId: u.id, name: u.name, ind: u.ind, side: uiKey,
           x: uiKey === 'a' ? 0.20 - inner : 0.80 + inner,
-          y: rows > 1 ? 0.09 + (0.82 * row) / (rows - 1) : 0.5,
+          // 名前は円の下 16px に描くので、下端に寄せると枠の外へ出て読めなくなる。
+          y: rows > 1 ? 0.11 + (0.74 * row) / (rows - 1) : 0.46,
           hp: 1, fear: 0, state: 'fight',
         };
       }
@@ -240,12 +241,17 @@ function projectBattle(view) {
       f.x = clamp(f.x, 0.02, 0.98);
 
       // 状態が変わったらログの一行にする（sim のログは数値スナップショットなので文にならない）
+      //
+      // **どちらの側の誰かを必ず書く。** 名前は両軍で同じプールから引かれるので、
+      // 素の名前だけだと「アダム が背を向けた」が敵味方で2回出て、
+      // 3秒で終わる戦闘の唯一の情報源が読めなくなる。
       if (prev !== f.state) {
+        const who = uiKey === 'a' ? '我らの' : `${dst.name || '相手'}の`;
         if (f.state === 'dead') {
           view.deaths[uiKey].push(f);
-          pushLog(view, `${u.name} が倒れた。`, 'bad');
+          pushLog(view, `${who}${u.name} が倒れた。`, uiKey === 'a' ? 'bad' : '');
         } else if (f.state === 'flee') {
-          pushLog(view, `${u.name} が背を向けた。`, 'flee');
+          pushLog(view, `${who}${u.name} が背を向けた。`, 'flee');
         }
       }
     });
@@ -258,9 +264,9 @@ function projectBattle(view) {
     const o = b.outcome || {};
     view.outcome = view.surrendered ? 'surrender' : (o.winner === 'home' ? 'win' : 'lose');
     pushLog(view,
-      view.outcome === 'win' ? `${view.b.name} の団結が折れた。敗走。`
-        : view.outcome === 'surrender' ? '降伏が受諾された。'
-        : 'こちらの団結が折れた。敗走。',
+      view.outcome === 'win' ? `${view.b.name} の団結が折れた。相手の敗走。こちらの勝ち。`
+        : view.outcome === 'surrender' ? 'こちらの降伏が受け入れられた。'
+        : 'こちらの団結が折れた。こちらの敗走。負け。',
       view.outcome === 'lose' ? 'bad' : 'hi');
   }
   return view;
@@ -569,7 +575,9 @@ export function makeAdapter(sim) {
     const idx = all.findIndex(v => v <= p);
     const r = all.length ? clamp((idx < 0 ? all.length : idx) / all.length) : 0.5;
     const pct = r <= 0.01 ? 1 : Math.max(10, Math.ceil(r * 10) * 10);
-    return { pct, label: `上位 ${pct}%`, value: Math.round(p) };
+    // citizenPower は clamp01（0..1）。そのまま Math.round すると
+    // **全個体が 0 と表示される**（実測 0.02〜0.23）。100点満点に伸ばして見せる。
+    return { pct, label: `上位 ${pct}%`, value: Math.round(p * 100) };
   };
 
   // sim の petitions() は「読む」関数ではなく **「湧かせる」関数** で、呼ぶたびに

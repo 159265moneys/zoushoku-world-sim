@@ -10,36 +10,42 @@
 
 <div id="app" hidden>
 
+  <!-- トップバー：読み取り（数値）と時間の操作だけ。
+       行動のボタンは混ぜない（読むものと押すものが同じ帯に並ぶと種類を取り違える）。 -->
   <header id="topbar">
     <div class="brand">増殖<span id="sim-badge" class="badge">—</span></div>
-
     <div class="stats" id="stats"></div>
-
     <div class="topright">
-      <button class="btn ghost" id="btn-report">帰還報告</button>
-      <button class="btn war" id="btn-war" hidden>隣のシャーレ</button>
       <div class="clock" id="clock"></div>
       <div class="speed" id="speed"></div>
     </div>
-
-    <!-- 世代の進み。P1では10秒に1tickしか来ないので、これが無いと停止と区別できない -->
     <div id="genbar"><i></i></div>
   </header>
 
   <main>
     <section id="stage">
       <canvas id="dish"></canvas>
-      <div id="legend">
-        <div class="lg"><b>色相</b> 血統の混合比</div>
-        <div class="lg"><b>彩度</b> 練度</div>
-        <div class="lg"><b>明度</b> 年齢・体力</div>
-        <div class="lg"><b>目</b> 感応の高さ／恐怖で細くなる</div>
-      </div>
+
+      <!-- 個体パネル：「一体だけ」の画面。
+           国ぜんたいのドック（右）とは別の場所・別の色に置く。
+           これをタブ列に混ぜると「他のタブも個体にかかる」と読まれる。 -->
+      <aside id="indpanel" hidden>
+        <div id="indhead">
+          <div class="scope">◂ この一体だけ</div>
+          <button class="x" id="ind-close">閉じる ✕</button>
+        </div>
+        <div id="indbody"></div>
+      </aside>
+
       <div id="strains"></div>
+      <div id="legend"></div>
       <div id="toast"></div>
     </section>
 
+    <!-- ドック：「国ぜんたい」の画面。ここに個体1体のタブは置かない。 -->
     <aside id="dock">
+      <div id="dockhead"><div class="scope">▪ 国ぜんたい</div></div>
+      <div id="todo"></div>
       <nav id="tabs"></nav>
       <div id="tabbody"></div>
     </aside>

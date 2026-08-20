@@ -16,12 +16,11 @@ export function openReport(ctx, { onClose } = {}) {
   const body = el('div');
 
   // ---- 各局からの1行報告
-  body.appendChild(el('h3', { class: 'sec' }, '各局からの報告'));
+  body.appendChild(el('h3', { class: 'sec' }, '3人の長からの報告'));
   if (world.phase === PHASE.VILLAGE) {
     body.appendChild(el('div', { class: 'card' },
-      el('h4', {}, 'まだ報告は存在しない'),
-      el('p', {}, '10体の村では全員が目の前にいる。誰かに読んでもらう必要がない。'
-        + '部族になると、世界はあなたの目から離れて局長の言葉になる。'),
+      el('h4', {}, 'まだ報告は無い'),
+      el('p', {}, '村では全員が目の前にいる。誰かに読んでもらう必要がない。'),
     ));
   } else {
     for (const key of ['military', 'agri', 'civil']) {
@@ -30,29 +29,29 @@ export function openReport(ctx, { onClose } = {}) {
         el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
           chief ? portrait(world, chief, 22) : null,
           el('div', { style: { flex: 1, minWidth: 0 } },
-            el('h4', { style: { margin: 0 } }, BUREAU_LABEL[key], chief ? el('span', { class: 'mut', style: { fontWeight: 400, marginLeft: '7px', fontSize: '11px' } }, chief.name) : null),
+            el('h4', { style: { margin: 0 } }, BUREAU_LABEL[key], chief ? el('span', { class: 'mut', style: { fontWeight: 400, marginLeft: '7px', fontSize: '13.5px' } }, chief.name) : null),
             el('p', {}, chief ? bureauLine(world, key, chief) : '空位。誰も報告してこない。'),
           ),
         ),
       ));
     }
-    body.appendChild(el('p', { class: 'hint' },
-      '局長は数値を隠せない。歪められるのは解釈・帰属・進言だけ。'));
+    body.appendChild(el('div', { class: 'lead-note' },
+      '数字は正確に届く。長が歪められるのは「なぜそうなったか」の説明だけ。'));
   }
 
   // ---- 推移グラフ3本
-  body.appendChild(el('h3', { class: 'sec' }, '推移'));
+  body.appendChild(el('h3', { class: 'sec' }, 'ここまでの移り変わり'));
   const h = world.history || [];
   const graphs = el('div', { class: 'cols3' },
-    sparkline('人口', h.map(x => x.pop), { color: '#5fe3c4', min: 0 }),
-    sparkline('産出率 / 消費', h.map(x => (x.consumption ? x.yieldRate / x.consumption : 1)), { color: '#e8b24a', min: 0 }),
-    sparkline('民心', h.map(x => x.morale), { color: '#7f8ce0', min: 0, max: 1 }),
+    sparkline('人口', h.map(x => x.pop), { color: '#6ff0d0', min: 0 }),
+    sparkline('作る量 ÷ 食べる量', h.map(x => (x.consumption ? x.yieldRate / x.consumption : 1)), { color: '#f5bd52', min: 0 }),
+    sparkline('民心', h.map(x => x.morale), { color: '#8fb4ff', min: 0, max: 1 }),
   );
   body.appendChild(graphs);
   if (world.collapsing) {
     body.appendChild(el('div', { class: 'card', style: { borderColor: '#5a2a22', background: '#1c0d0b' } },
-      el('h4', { style: { color: '#f0907c' } }, '産出率が消費を下回っている'),
-      el('p', {}, '唯一の崩壊条件はこれ。ゲームは負けを宣言しない。'),
+      el('h4', { style: { color: '#ff9c86' } }, '作る量より食べる量のほうが多い'),
+      el('p', {}, 'これが唯一の崩壊条件。畑に回す人を増やすか、人を減らすしかない。'),
     ));
   }
 
@@ -66,30 +65,29 @@ export function openReport(ctx, { onClose } = {}) {
     el('div', { class: 'k' }, '死んだ'), el('div', { class: 'v' }, `${deaths} 体`),
     el('div', { class: 'k' }, '人口'), el('div', { class: 'v' }, `${world.people.size} 体`),
     el('div', { class: 'k' }, '備蓄'), el('div', { class: 'v' }, num(world.food, 1)),
-    el('div', { class: 'k' }, '体制怨恨'), el('div', { class: 'v' }, num(world.regimeGrudge, 2)),
+    el('div', { class: 'k' }, '国への恨み'), el('div', { class: 'v' }, num(world.regimeGrudge, 2)),
   ));
-  if (!evs.length) body.appendChild(el('p', { class: 'hint' }, '特筆すべきことは起きていない。「静かだった」は安全の証拠ではない。'));
+  if (!evs.length) body.appendChild(el('p', { class: 'hint' }, '目立ったことは起きていない。静かなのは安全の証拠ではない。'));
   for (const e of evs.slice(0, 14)) {
     body.appendChild(el('div', { class: 'row' },
       el('div', { class: 'k' }, e.kind),
-      el('div', { class: 'v', style: { fontWeight: 400, fontSize: '11.5px', textAlign: 'right', flex: 1 } }, e.text || ''),
+      el('div', { class: 'v', style: { fontWeight: 400, fontSize: '14px', textAlign: 'right', flex: 1 } }, e.text || ''),
     ));
   }
 
   // ---- 裁可待ち
-  body.appendChild(el('h3', { class: 'sec' }, '裁可待ち'));
+  body.appendChild(el('h3', { class: 'sec' }, '返事を待っている願い'));
   const pbox = el('div');
   renderPetitions(ctx, pbox, { compact: true });
   body.appendChild(pbox);
 
   const m = modal({
-    title: `帰還報告　第 ${world.gen} 世代`,
+    title: `国のようす　第 ${world.gen} 世代`,
     sub: world.phase === PHASE.VILLAGE ? '村' : '部族',
     body,
     cls: 'wide',
     footer: [
-      el('button', { class: 'btn ghost', onclick: () => m.close() }, '閉じる'),
-      el('button', { class: 'btn primary', onclick: () => m.close() }, '世界を回す'),
+      el('button', { class: 'btn primary big', onclick: () => m.close() }, '世界へ戻る'),
     ],
     onClose,
   });

@@ -69,6 +69,11 @@ export class Dish {
   }
 
   sync(world) {
+    // キャンバスの実寸を毎フレーム確かめる。ResizeObserver だけに頼ると、
+    // #app が hidden のまま生成された回で幅 0 のまま焼き付き、盤面が空になる。
+    const r = this.c.getBoundingClientRect();
+    if (Math.abs(r.width - this.w) > 0.5 || Math.abs(r.height - this.h) > 0.5) this._resize();
+
     const live = new Set();
     for (const p of world.people.values()) {
       live.add(p.id);
@@ -85,6 +90,12 @@ export class Dish {
   }
 
   update(world, dt) {
+    // **ここに大きい dt を入れてはいけない。**
+    // 速度は「変位 × 係数 × dt」で増えるので、dt が数十秒になった瞬間に利得が 1 を超え、
+    // ばねが振動ではなく発散に変わる。一度発散すると座標が ±10^5 まで飛んで
+    // 全員が永久に画面外に出る＝盤面が真っ黒のまま戻らない。
+    // 呼び出し側（main.js）でも実フレーム時間に絞っているが、ここでも必ず切る。
+    dt = Math.min(0.05, Math.max(0, dt) || 0);
     this.time += dt;
     const cx = this.w / 2, cy = this.h / 2;
     const n = world.people.size || 1;
@@ -113,6 +124,13 @@ export class Dish {
       s.vy += (ty - s.y) * 0.0026 * dt * 60;
       s.vx *= 0.90; s.vy *= 0.90;
       s.x += s.vx; s.y += s.vy;
+
+      // 最後の砦：座標が画面の外へ大きく出たら、その場で目標へ引き戻す。
+      // NaN も同じ経路で拾う（NaN は比較が常に false なので !isFinite で見る）。
+      if (!Number.isFinite(s.x) || !Number.isFinite(s.y)
+        || s.x < -this.w || s.x > this.w * 2 || s.y < -this.h || s.y > this.h * 2) {
+        s.x = tx; s.y = ty; s.vx = 0; s.vy = 0;
+      }
     }
   }
 

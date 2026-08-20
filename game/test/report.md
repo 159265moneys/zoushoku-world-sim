@@ -58,7 +58,7 @@
 
 sim単体もUI単体も緑なのに、繋いだ瞬間に落ちる。その穴を塞ぐための検査。
 
-UI が呼ぶ 30個の名前すべてが本物の sim で解決し、開幕→20世代→検索→年代記→具申→ロスター→開戦→捕虜→国境 の27手すべてが例外なく通った。
+UI が呼ぶ 31個の名前すべてが本物の sim で解決し、開幕→20世代→検索→年代記→具申→ロスター→開戦→捕虜→国境 の27手すべてが例外なく通った。
 
 ### A. UI が呼ぶ名前が本物の sim にあるか
 
@@ -70,7 +70,7 @@ UI が呼ぶ 30個の名前すべてが本物の sim で解決し、開幕→20�
 > 埋まった関数は本物の world を渡されて初めて壊れるので、起動するまで誰も気づかない。
 > ここで ❌ が出たら、それはブラウザで確実に落ちるという意味。
 
-UI が呼ぶ **30個**の名前はすべて本物の sim で解決する（mock で埋まっているものは0個）。
+UI が呼ぶ **31個**の名前はすべて本物の sim で解決する（mock で埋まっているものは0個）。
 
 `src/ui/adapter.js` が形ごと写しているもの（30件）: `advanceGeneration`・`appointBureau`・`assignRole`・`borderDecision`・`canonize`・`captiveOptions`・`CARDS`・`chronicle`・`createRoster`・`createWorld`・`listOpponents`・`nationPower`・`peek`・`petitions`・`powerOf`・`publicRank`・`resolvePetition`・`search`・`setCard`・`setDistrict`・`settleWar`・`startWar`・`stepBattle`・`stepRoster`・`stepTick`・`surrender`・`takeCaptives`・`TICKS_PER_GEN`・`traceDown`・`traceUp`
 

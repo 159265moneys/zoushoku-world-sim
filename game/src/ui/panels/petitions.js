@@ -1,5 +1,5 @@
-// 画面6：具申。局長からの要求。承認／却下の2ボタン。
-// 「誰が誰に何を賭けているか」が読めること。具申は中立な要望ではなく、10人のゲームの手。
+// 「願い」（具申）。局の長からの要求。通す／断るの2つだけ。
+// 中立な要望ではなく、その長にとって得のある手。誰が得をして誰が損をするかを出す。
 
 import { el, clear, toast, mount } from '../dom.js';
 import { PHASE } from '../../core/model.js';
@@ -13,50 +13,48 @@ export function renderPetitions(ctx, node, { compact = false } = {}) {
   if (world.phase === PHASE.VILLAGE || !hasChiefs) {
     node.appendChild(el('div', { class: 'empty' },
       world.phase === PHASE.VILLAGE
-        ? 'まだ局はない。全員が目の前にいるので、誰かの報告を待つ必要がない。'
-        : '局長が空位。誰も何も求めてこない。',
-      el('br'), el('span', { class: 'mut' }, '（フェーズ2で局長を任命すると、ここに具申が湧く）'),
-    ));
+        ? 'まだ局はない。全員が目の前にいるので、誰かに頼まれるまでもない。'
+        : '局の長が1人もいない。誰も何も言ってこない。「長を選ぶ」で先に長を据える。'));
     return;
   }
 
   const list = api.petitions(world, rng) || [];
   if (!list.length) {
-    node.appendChild(el('div', { class: 'empty' }, 'いまは何も求められていない。'));
+    node.appendChild(el('div', { class: 'empty' }, 'いまは何も言われていない。'));
     return;
   }
 
   if (!compact) {
-    node.appendChild(el('p', { class: 'hint' },
-      'どちらを選んでも誰かが不満を持つ。却下し続ければ局長が腐り、承認し続ければその局が肥大する。'));
+    node.appendChild(el('div', { class: 'lead-note' },
+      'どちらを選んでも誰かが不満を持つ。断り続ければ長が腐り、通し続ければその局が肥る。'));
   }
 
   for (const p of list) {
     const chief = world.people.get(p.fromId);
     const card = el('div', { class: 'card' });
-    mount(card, 
-      el('div', { style: { display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '5px' } },
-        chief ? portrait(world, chief, 24) : null,
+    mount(card,
+      el('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginBottom: '7px' } },
+        chief ? portrait(world, chief, 28) : null,
         el('div', { style: { flex: '1', minWidth: 0 } },
-          el('h4', { style: { margin: 0 } }, p.title),
-          el('div', { class: 'mut', style: { fontSize: '10.5px' } }, `${p.bureauLabel}　${p.fromName}`)),
+          el('h4', { style: { margin: 0, fontSize: '16px' } }, p.title),
+          el('div', { class: 'mut', style: { fontSize: '13px' } }, `${p.bureauLabel}　${p.fromName}`)),
       ),
-      el('p', {}, p.detail),
-      el('div', { class: 'kv', style: { marginTop: '7px' } },
-        el('div', { class: 'k' }, '得をする'), el('div', { class: 'v', style: { fontWeight: '400' } }, p.gain),
-        el('div', { class: 'k' }, '損をする'), el('div', { class: 'v', style: { fontWeight: '400' } }, p.lose),
-        el('div', { class: 'k' }, '動機'), el('div', { class: 'v', style: { fontWeight: '400' } }, p.motive),
+      el('p', { style: { fontSize: '14px', color: 'var(--tx)' } }, p.detail),
+      el('div', { class: 'kv', style: { marginTop: '9px' } },
+        el('div', { class: 'k' }, '得をする'), el('div', { class: 'v' }, p.gain),
+        el('div', { class: 'k' }, '損をする'), el('div', { class: 'v' }, p.lose),
+        el('div', { class: 'k' }, 'なぜ言うのか'), el('div', { class: 'v' }, p.motive),
       ),
-      p.risk ? el('p', { class: 'hint', style: { color: '#e8b24a' } }, p.risk) : null,
-      el('div', { style: { display: 'flex', gap: '7px', marginTop: '9px' } },
+      p.risk ? el('p', { class: 'hint', style: { color: 'var(--warn)' } }, p.risk) : null,
+      el('div', { style: { display: 'flex', gap: '9px', marginTop: '11px' } },
         el('button', {
-          class: 'btn primary', style: { flex: 1 },
-          onclick: () => { api.resolvePetition(world, p.id, true, rng); toast(`「${p.title}」を承認した`); ctx.refresh(); },
-        }, '承認'),
+          class: 'btn primary big', style: { flex: 1 },
+          onclick: () => { api.resolvePetition(world, p.id, true, rng); toast(`「${p.title}」を通した`); ctx.refresh(); },
+        }, '通す'),
         el('button', {
-          class: 'btn danger', style: { flex: 1 },
-          onclick: () => { api.resolvePetition(world, p.id, false, rng); toast(`「${p.title}」を却下した`, 'warn'); ctx.refresh(); },
-        }, '却下'),
+          class: 'btn danger big', style: { flex: 1 },
+          onclick: () => { api.resolvePetition(world, p.id, false, rng); toast(`「${p.title}」を断った`, 'warn'); ctx.refresh(); },
+        }, '断る'),
       ),
     );
     node.appendChild(card);
