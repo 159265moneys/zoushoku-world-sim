@@ -29,6 +29,7 @@ import {
   AREA_STATS, HOUSES_PER_VILLAGE, RATION_YEARS, WHERE_NAMES,
 } from '../world/village.js';
 import { explain } from '../world/grow.js';
+import { lookOf, bloodTop2, bloodBreakdown, FOUNDER_COUNT } from '../world/looks.js';
 
 // ---- UI へ渡す名前（UI が world を import しなくて済むように、ここで中継する） ----
 export {
@@ -42,16 +43,22 @@ export const STAT_COUNT = S.COUNT;
 // ---- レア度の段（オーナー確定・2026-08-21） --------------------------------
 // 「全員持っているのは N〜A まで。S・SS・SSS・G はゼロがあるので、そもそも持っていない」
 //
-// **いまは効かない。**レア度は初期値の割り振りに一度も使われていないので、
-// 全レア度が平均50で配られている（実測：SS の創意も N の普通のステも同じ釣り鐘型）。
-// レア度→初期値は 確定事項 B-1 が承認待ちのまま止まっていて、設計班へ申し送り済み。
-// ここは「遺伝が変わった日にそのまま効く」ようにだけしてある。
+// 段は11（N F E D C B A S SS SSS G）。AA/AAA は廃止され、既存104ステは全て A 以下。
+// **S以上はオーナーが新規設計する枠として空いている**（86af089）。
+// だから、いまはどのステも「全員が持つ」側にいて、この関門は1本も弾かない。
+// S以上のステが足された日に、そのまま効く。
 //
-// AA（利き手・両利き／容姿／学習速度）がどちら側かはオーナー未回答。
-// 容姿は全員持っていそうなので AA までを「全員持つ」に置いた。**変えるならこの1行。**
-export const RARITY_ALWAYS = S.RARITY_LEVELS.indexOf('AA');
+// **境目はここ1行。**`A` までが全員。これを動かすときは設計班と合わせること。
+export const RARITY_ALWAYS = S.RARITY_LEVELS.indexOf('A');
+if (RARITY_ALWAYS < 0) throw new Error('stats: レア度の段に A が無い。RARITY_ALWAYS の境目を引き直すこと');
 
-/** そのステを、この個体が「持っている」か。持っていなければ画面に出さない */
+/**
+ * そのステを、この個体が「持っている」か。持っていなければ画面に出さない。
+ *
+ * ※ レア度は初期値の割り振りにまだ使われていない（実測：全レア度が平均50の同じ釣り鐘型）。
+ *   レア度→初期値は 確定事項 B-1 が承認待ちで、設計班へ申し送り済み。
+ *   いまは才能ゼロがほぼ出ないので、実際には誰も弾かれない。
+ */
 export function possesses(rarityRank, talent) {
   return rarityRank <= RARITY_ALWAYS || talent > 0;
 }
@@ -129,6 +136,22 @@ export function cellsOf(mastery) {
 export function ringsOf(ageYears) {
   const n = Math.floor(ageYears / 12);
   return n < 0 ? 0 : n > 5 ? 5 : n;
+}
+
+/**
+ * 弱っている度合い 0〜1。**明度が言うのはこれだけ**（A-5）。
+ * 内訳（何で弱っているか）は言わない。それは個体票のアイコンの仕事。
+ */
+export function weaknessOf(P, i, state) {
+  const A = P.a;
+  let w = A.scar[i] * 0.9;                       // 古傷。恒久
+  if (state & ST_HUNGRY) w += 0.34;
+  if (state & ST_SICK) w += 0.30;
+  // 老い。寿命の半分を過ぎてから効きはじめる
+  const years = A.ageMonths[i] / C.MONTHS_PER_YEAR;
+  const half = A.lifespan[i] * 0.5;
+  if (years > half) w += Math.min(0.45, (years - half) / Math.max(1, A.lifespan[i] - half) * 0.45);
+  return w < 0 ? 0 : w > 1 ? 1 : w;
 }
 
 // ===========================================================================
@@ -404,12 +427,20 @@ export class Run {
       const hi = homeIndex.get(h);
       const blood = hueOfBlood(A.blood[i]);
       const mastery = masteryOf(P, i);
+      const look = lookOf(P, i);
+      const bt = bloodTop2(P, i);
       const p = {
         i, h, v: v === NO_VILLAGE ? -1 : v,
         slot: hi !== undefined ? homes[hi].slot : -1,
         job, at, jobName: AREA_NAMES[job],
         sex: A.sex[i], age, months,
         hue: blood.hue, pure: blood.pure, lines: blood.lines,
+        // 見た目（キャラビジュアル.md）。色相は血の1位。沈殿が2位。**平均しない**
+        hue1: FOUNDER_HUE[bt.first], hue2: FOUNDER_HUE[bt.second],
+        sediment: bt.sediment, bloodLines: bt.lines,
+        corners: look.corners, stripeV: look.stripeV, stripeH: look.stripeH,
+        special: look.special,
+        weak: weaknessOf(P, i, st),
         mastery, cells: cellsOf(mastery), rings: ringsOf(age),
         grow: Math.min(1, months / (26 * C.MONTHS_PER_YEAR)),   // 大きさ＝年齢（ピーク26歳）
         pregnant: !!(st & ST_PREGNANT),
@@ -577,6 +608,8 @@ export class Run {
       scar: A.scar[i],
       generation: A.gen[i],
       blood: A.blood[i], hue: blood.hue, pure: blood.pure, lines: blood.lines,
+      look: lookOf(P, i), bloodTop: bloodTop2(P, i), bloodMix: bloodBreakdown(P, i),
+      weak: weaknessOf(P, i, A.state[i]),
       states,
       spouse: A.spouse[i] === NO_ONE ? -1 : A.spouse[i],
       mother: A.mother[i] === NO_ONE ? -1 : A.mother[i],
