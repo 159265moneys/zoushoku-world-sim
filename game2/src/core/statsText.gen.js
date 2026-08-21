@@ -1,5 +1,5 @@
 // 自動生成。手で直さない。
-// もと: docs/v3/stats_v3.csv (sha256 56e847c74e882ef48bf51ea3d0d57a4c62c4f3ed5074aeb3a33a6adfa90dae7f)
+// もと: docs/v3/stats_v3.csv (sha256 e2fac7a2b734ca3f254689234e89ae91e7390884eaab5b81c250fa3ad3cd17bb)
 //
 // 長い説明文。ホバー説明と用語辞書で使う。
 // core/stats.js は これを import しない（重いので、要る側だけが読む）。

@@ -46,7 +46,7 @@ export function parseCSV(text) {
 
 // ---- 段階の並び（低い→高い） ---------------------------------------------
 const CATEGORIES = ['からだ', 'あたま', 'こころ'];
-const RARITY = ['N', 'F', 'E', 'D', 'C', 'B', 'A', 'AA', 'S', 'SS'];
+const RARITY = ['N', 'F', 'E', 'D', 'C', 'B', 'A', 'S', 'SS', 'SSS', 'G'];
 const THRESHOLD = ['該当なし', 'なし', '低い', '中', '高い', '非常に高い'];
 const GROWTH = ['該当なし', 'ほぼゼロ', '小さい', '中', '大きい'];
 const INHERIT = ['中間遺伝', '優劣'];
