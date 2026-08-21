@@ -10,9 +10,10 @@
 
 <header id="bar">
   <div class="clock">
+    <span id="daybar" title="今月の進み具合"><i></i></span>
     <b id="date">1年1月1日</b>
     <span id="season" class="pill s0">春</span>
-    <span id="tickno" class="dim">0 tick</span>
+    <span id="tickno" class="dim dev">0 tick</span>
   </div>
 
   <div class="gauges">
@@ -26,7 +27,7 @@
 
   <div class="ctl">
     <button id="playbtn" title="空白キー">▶</button>
-    <span id="speeds" class="speeds"></span>
+    <span id="speeds" class="speeds"></span><span id="speedhint" class="dim"></span>
     <button id="stepday" class="ghost" title="1日だけ進める（.）">＋1日</button>
     <button id="stepmonth" class="ghost">＋1ヶ月</button>
     <button id="fitbtn" class="ghost" title="全体を映す（f）">全体</button>

@@ -46,7 +46,16 @@ button.ghost:hover { color: var(--ink); }
   padding: 0 14px;
   background: var(--panel); border-bottom: 1px solid var(--line);
 }
-#bar .clock { display: flex; align-items: baseline; gap: 8px; min-width: 210px; }
+#bar .clock { display: flex; align-items: baseline; gap: 8px; min-width: 210px; flex-wrap: wrap; }
+/* 月の進み具合。**「動いている」の唯一の合図。**
+   日付は ×60 でも1秒に1回、×1 だと1分に1回しか変わらない。
+   ▶を押しても何も起きないように見えるのを、この線が塞ぐ */
+#daybar {
+  order: 9; flex: 0 0 100%;
+  height: 2px; margin-top: 5px;
+  background: #23261a; border-radius: 1px; overflow: hidden;
+}
+#daybar i { display: block; height: 100%; background: #6d7350; }
 #bar .clock b { font-size: 16px; letter-spacing: .04em; }
 .pill {
   font-size: 11px; padding: 1px 8px; border-radius: 9px;
@@ -74,6 +83,7 @@ button.ghost:hover { color: var(--ink); }
 #playbtn { width: 38px; text-align: center; }
 .speeds { display: inline-flex; gap: 3px; }
 .sp { padding: 3px 7px; font-size: 11.5px; }
+#speedhint { font-size: 10.5px; min-width: 56px; }
 .sp.debug { color: #d09a5e; border-style: dashed; }
 body:not(.dev) .dev { display: none; }
 
@@ -164,6 +174,53 @@ p.legend span:first-child { margin-left: 0; }
 p.legend b { color: var(--dim); font-weight: 400; }
 .b { display: block; height: 4px; background: #23261a; border-radius: 2px; overflow: hidden; }
 .b i { display: block; height: 100%; background: #6f7a4c; }
+
+/* 授かりもの（S以上）。**持っているかどうかだけ**なので棒にしない。札で出す。
+   色は使わない（A-5）。段（S/SS/SSS/G）は枠の太さと明るさで出す */
+.gifts { margin: 8px 0 10px; }
+.gift {
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  padding: 6px 8px; margin-bottom: 4px;
+  background: var(--panel2); border-left: 2px solid var(--hi);
+}
+.gift b { font-size: 13px; font-weight: 600; }
+.gift .ge { flex: 1 1 100%; font-size: 10.5px; color: var(--dim); }
+.gift .pending { flex: 1 1 100%; font-size: 10.5px; color: var(--dimmer); }
+.tier {
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  padding: 0 4px; border: 1px solid var(--dimmer); border-radius: 2px; color: var(--dim);
+}
+.tier.tSS  { border-color: var(--dim); color: var(--ink); }
+.tier.tSSS { border-color: var(--hi); color: var(--hi); }
+.tier.tG   { border-color: var(--hi); color: #0b0d08; background: var(--hi); }
+
+/* 保因。**オーナーだけに見える。**発現とは別物なので、見た目をはっきり分ける */
+.carried { padding: 6px 8px; border: 1px dashed var(--line); }
+.carried .only {
+  display: block; font-size: 9.5px; letter-spacing: .08em;
+  color: var(--dimmer); margin-bottom: 4px;
+}
+.carried .chip {
+  display: inline-block; font-size: 11px; color: var(--dim);
+  margin: 0 6px 2px 0;
+}
+.carried .chip i {
+  font-style: normal; font-size: 9px; color: var(--dimmer);
+  margin-right: 3px; border: 1px solid var(--line); padding: 0 3px; border-radius: 2px;
+}
+.carried .ge { display: block; font-size: 10.5px; color: var(--dimmer); }
+
+/* 名簿。**何も選んでいないときの既定の画面。**
+   ここに記号の説明を並べない（初見は読まない）。いま村に誰がいるかを出す */
+table.roster { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.roster td { padding: 2.5px 6px; border-bottom: 1px solid #1f2218; white-space: nowrap; }
+table.roster tr.hd td { color: var(--dimmer); font-size: 10px; padding-bottom: 4px; }
+table.roster tr[data-i] { cursor: pointer; }
+table.roster tr[data-i]:hover td { background: var(--panel2); color: var(--hi); }
+table.roster td.ag { text-align: right; width: 26px; font-variant-numeric: tabular-nums; }
+table.roster td.sx { width: 16px; color: var(--dim); }
+table.roster td.jb { width: 100%; }
+table.roster td.mk { color: var(--dim); font-size: 11px; text-align: right; }
 
 table.fam { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.fam td { padding: 2px 4px; border-bottom: 1px solid #1f2218; }

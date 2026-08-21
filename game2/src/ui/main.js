@@ -41,6 +41,10 @@ if (DEV) {
 }
 $('seedlabel').textContent = `種 ${SEED}`;
 
+// **既定の速さ。**×1 は1日＝1分なので、▶を押しても1分間なにも起きない。
+// 初見が「壊れている」と読む原因がこれだった。世界の側は何も変えず、選ぶだけ。
+run.setSpeed(15);
+
 // ---- 上帯 ------------------------------------------------------------------
 function buildSpeeds() {
   const box = $('speeds');
@@ -57,6 +61,11 @@ function buildSpeeds() {
 }
 function markSpeeds() {
   for (const b of $('speeds').children) b.classList.toggle('on', Number(b.dataset.speed) === run.speed);
+  // **いまの速さが何を意味するかを、常に出す。**「×15」だけでは誰にも分からない
+  const secPerMonth = 30 * 60 / run.speed;
+  $('speedhint').textContent = secPerMonth >= 60
+    ? `1ヶ月 ${(secPerMonth / 60).toFixed(0)}分`
+    : `1ヶ月 ${secPerMonth.toFixed(0)}秒`;
   $('playbtn').textContent = run.playing ? '⏸' : '▶';
   $('playbtn').classList.toggle('on', run.playing);
 }
@@ -85,6 +94,8 @@ function drawBar(force = false) {
   if (v.ration) $('ration').textContent = `配給　あと${v.rationLeftYears}年　この十匹はまだ飢えない`;
   $('extinct').hidden = !v.extinct;
 
+  // **「動いている」の唯一の合図。**日付は ×60 でも1秒に1回しか変わらず、
+  // ×1 だと1分に1回。押しても何も起きないように見えるのを、この線が塞ぐ
   $('tickno').textContent = `${v.tick} tick`;
   if (DEV) drawDev();
 }
@@ -134,6 +145,39 @@ function statRow(s) {
     <td class="bar">${bar(s.eff, 140)}</td>
   </tr>`;
 }
+/**
+ * 授かりもの（S以上）。**104ステとは別枠。**持っているか、いないかだけ。
+ * だから棒グラフにしない。**札（バッジ）で出す。**
+ *
+ * 2段ある。意味がまるで違うので、見た目もはっきり分ける。
+ *   発現 … いま効いている。本人にも周りにも結果が出ている
+ *   保因 … 出ていないが子に渡りうる。**オーナーだけに見える**（A-7）
+ *
+ * 保因こそがオーナーの持ち札。A-21b「その無駄を拾い上げることだけが、オーナーにできること」。
+ */
+function giftBlock(p) {
+  const has = p.gifts && p.gifts.length;
+  const carried = p.giftsCarried && p.giftsCarried.length;
+  if (!has && !carried) return '';
+
+  const shown = has ? p.gifts.map(g => `
+    <div class="gift">
+      <span class="tier t${g.tier}">${g.tier}</span>
+      <b>${esc(g.name)}</b>
+      <span class="ge">${esc(g.text)}</span>
+      ${g.active ? '' : '<span class="pending">この効果はまだ世界に入っていない</span>'}
+    </div>`).join('') : '';
+
+  const hidden = carried ? `
+    <div class="carried">
+      <span class="only">あなただけに見える</span>
+      ${p.giftsCarried.map(g => `<span class="chip"><i>${g.tier}</i>${esc(g.name)}</span>`).join('')}
+      <span class="ge">出ていない。だが子に渡ることがある</span>
+    </div>` : '';
+
+  return `<div class="gifts">${shown}${hidden}</div>`;
+}
+
 const STAT_HEAD = '<tr class="hd"><td>ステ</td><td class="sum">実効</td><td>内訳</td><td></td></tr>';
 
 // 肖像は WebGL の面を1枚使う。**個体票を作り直す前に必ず返す**（portrait.js の約束）
@@ -147,7 +191,7 @@ function drawDetail() {
   dropPortrait();
   if (run.selectedHouse >= 0) {
     const h = run.house(run.selectedHouse);
-    if (!h) { box.innerHTML = empty(); return; }
+    if (!h) { showEmpty(box); return; }
     box.innerHTML = `
       <h2>${h.h}の家<small>${h.gen}代目・${h.size}人</small></h2>
       <div class="kv"><span>建った</span><b>${h.foundedText}</b></div>
@@ -163,9 +207,9 @@ function drawDetail() {
   }
 
   const i = run.selected;
-  if (i < 0) { box.innerHTML = empty(); return; }
+  if (i < 0) { showEmpty(box); return; }
   const p = run.person(i);
-  if (!p) { box.innerHTML = empty(); return; }
+  if (!p) { showEmpty(box); return; }
 
   // 肖像は h2 の前に差し込む。**80px 未満だと模様の本数が数えられない**（portrait.js）
   const legend = portraitLegend(p);
@@ -187,6 +231,7 @@ function drawDetail() {
       </div>
     </div>
     ${p.alive ? '' : `<p class="died">${p.deathCauseName}で死んだ</p>`}
+    ${giftBlock(p)}
     <div class="kv"><span>いま居る</span><b>${p.atName}${p.at !== p.job ? `<span class="dim">　仕事は${p.jobName}（身重なので出ない）</span>` : ''}</b></div>
     <div class="kv"><span>家</span><b>${p.house >= 0 ? `${p.house}の家（${p.houseGen}代目・${p.houseSize}人）` : '家なし'}${p.isHead ? '　△家長' : ''}</b></div>
     <div class="kv"><span>身分</span><b>${p.rankName}　${p.whereName}育ち</b></div>
@@ -237,16 +282,57 @@ function drawDetail() {
   }
 }
 function link(label, i) { return `${label}<a href="#" data-i="${i}">${i}番</a>`; }
+/**
+ * 何も選んでいないときの右パネル。
+ *
+ * **ここに記号の説明を並べない。**初見は読まないし、読ませるための画面でもない。
+ * 誰も選んでいないときに知りたいのは「いま村に誰がいるか」なので、名簿を出す。
+ * 記号の読み方は畳んでおく。**要るときに開く。**
+ */
+/** 名簿を出して、行を個体票につなぐ。地図の丸と同じ入口 */
+function showEmpty(box) {
+  box.innerHTML = empty();
+  for (const tr of box.querySelectorAll('.roster tr[data-i]')) {
+    tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); map.dirty = true; };
+  }
+}
+
 function empty() {
-  return `<h2 class="dim">誰も選んでいない</h2>
-    <p class="hint">地図の丸をクリックすると、その一体の全部が見える。<br>
-      家の箱をクリックすると、その家の顔ぶれが見える。<br><br>
-      <b>大きさ</b>＝年齢。<b>暗さ</b>＝弱っている（それだけ。内訳はここに出る）。<br>
-      <b>色</b>＝血。<b>下に沈んだ色</b>＝よその血。<b>沈んだ高さ</b>＝どれだけ混ざったか。<br>
-      <b>形</b>と<b>模様</b>＝血統。親の中間が子に出る。<b>星・ハート</b>は稀に潜って出る。<br>
-      <b>上の山形</b>＝家長。<br>
-      色に意味は載せない。<b>色は血だけ</b>。<br><br>
-      <span class="dim">訓練場と辺境はまだ空いている。いまは畑と森にしか人が振られない。</span></p>`;
+  const snap = run.snapshot();
+  const folk = snap.folk.slice().sort((a, b) => b.age - a.age);
+  const b = snap.bar;
+
+  const rows = folk.map(f => {
+    const mark = [];
+    if (f.pregnant) mark.push('身重');
+    if (f.hungry) mark.push('飢え');
+    if (f.sick) mark.push('病');
+    if (f.newborn) mark.push('生まれたて');
+    return `<tr data-i="${f.i}">
+      <td class="ag">${f.age}</td>
+      <td class="sx">${f.sex === 1 ? '女' : '男'}</td>
+      <td class="jb">${f.jobName}</td>
+      <td class="mk">${mark.join('・')}</td>
+    </tr>`;
+  }).join('');
+
+  return `<h2>村の者<small>${b.pop}人${b.pregnant ? `　身重 ${b.pregnant}` : ''}${b.hungry ? `　飢え ${b.hungry}` : ''}</small></h2>
+    <table class="roster">
+      <tr class="hd"><td>歳</td><td></td><td>いる場所</td><td></td></tr>
+      ${rows || '<tr><td colspan="4" class="dim">誰もいない</td></tr>'}
+    </table>
+    <p class="hint">行をクリックすると、その一体の全部が見える。地図の丸でも同じ。</p>
+
+    <details class="all">
+      <summary>絵の読み方</summary>
+      <p class="hint">
+        <b>大きさ</b>＝年齢。<b>暗さ</b>＝弱っている。<b>中の粒</b>＝熟練。<br>
+        <b>色</b>＝血。<b>下に沈んだ色</b>＝よその血。<b>沈んだ高さ</b>＝どれだけ混ざったか。<br>
+        <b>形</b>と<b>模様</b>＝血統。親の中間が子に出る。<b>星・ハート</b>は稀に潜って出る。<br>
+        <b>上の山形</b>＝家長。<br>
+        <b>色に意味は無い。色は血だけ。</b>
+      </p>
+    </details>`;
 }
 
 // ---- 年代記（初めて起きたことだけが載る・A-10） -----------------------------
@@ -294,7 +380,18 @@ setInterval(() => {
 
 // 絵を描くのは rAF。世界の時計には使わない
 let lastDetailMonth = -1;
+// 月の進み具合。**「動いている」の唯一の合図。**
+// 日付は ×60 でも1秒に1回、×1 だと1分に1回しか変わらない。
+// ▶を押しても何も起きないように見えるのを、この線が塞ぐ。だから毎フレーム動かす。
+function drawDayBar() {
+  const v = run.view();
+  const within = run.playing ? Math.min(1, run.acc / run.msPerTick()) : 0;
+  const w = (v.day - 1 + within) / 30 * 100;
+  $('daybar').firstElementChild.style.width = `${Math.max(0, Math.min(100, w)).toFixed(2)}%`;
+}
+
 function frame() {
+  drawDayBar();
   if (map.dirty || run.snapshot().tick !== lastBarTick) {
     drawBar();
     map.draw();
