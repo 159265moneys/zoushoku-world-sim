@@ -39,6 +39,32 @@ export {
 export const SEASON_NAMES = C.SEASON_NAMES;
 export const STAT_COUNT = S.COUNT;
 
+// ---- レア度の段（オーナー確定・2026-08-21） --------------------------------
+// 「全員持っているのは N〜A まで。S・SS・SSS・G はゼロがあるので、そもそも持っていない」
+//
+// **いまは効かない。**レア度は初期値の割り振りに一度も使われていないので、
+// 全レア度が平均50で配られている（実測：SS の創意も N の普通のステも同じ釣り鐘型）。
+// レア度→初期値は 確定事項 B-1 が承認待ちのまま止まっていて、設計班へ申し送り済み。
+// ここは「遺伝が変わった日にそのまま効く」ようにだけしてある。
+//
+// AA（利き手・両利き／容姿／学習速度）がどちら側かはオーナー未回答。
+// 容姿は全員持っていそうなので AA までを「全員持つ」に置いた。**変えるならこの1行。**
+export const RARITY_ALWAYS = S.RARITY_LEVELS.indexOf('AA');
+
+/** そのステを、この個体が「持っている」か。持っていなければ画面に出さない */
+export function possesses(rarityRank, talent) {
+  return rarityRank <= RARITY_ALWAYS || talent > 0;
+}
+
+// ---- 伸びやすさ（A-21：どこに住んでいるかで伸び率が変わる） -----------------
+// 総合 ＝ いまの仕事がそのステを使う重み × 住んでいる場所の補正
+//   重み  … village.js の AREA_STATS。**表に無いステは 0（＝その仕事では触りもしない）**
+//   補正  … stats.js の PLACE_MULTIPLIER。中央1.10／辺境0.90 など
+//
+// **切れ目は仮。**A-21 の「補正の大きさ」自体がまだ未決なので、
+// 設計班が決めたらこの1本を引き直す。
+export const GROW_FAST = 0.95;
+
 // ---- 速さ（A-11） ---------------------------------------------------------
 // 1倍＝1日1分。60倍で1ヶ月30秒・1年6分。
 export const SPEEDS = [1, 2, 5, 15, 60];               // 本番。上限は60（確定）
@@ -475,6 +501,14 @@ export class Run {
       }
     }
 
+    // いまの仕事が、どのステをどれだけ使うか。表に無いステは 0（触りもしない）
+    const jobArea = A.job[i];
+    const jobW = new Float32Array(S.COUNT);
+    for (const [s, w] of (AREA_STATS[jobArea] || AREA_STATS[AREA_HOME])) jobW[s] = w;
+    const jobName = AREA_NAMES[jobArea];
+    const whereName = WHERE_NAMES[where];
+    const working = age >= WORK_START_AGE[A.rank[i]];
+
     // 104ステ。全部返す（オーナーは全部見える）
     const stats = [];
     for (let s = 0; s < S.COUNT; s++) {
@@ -482,18 +516,45 @@ export class Run {
       const ev = A.ev[s][i];
       const deb = P.debuff(i, s);
       const ex = explain(P, i, s, where);
+      const rarityRank = S.RARITY[s];
+
+      // 伸びやすさ。総合 ＝ 仕事の重み × 場所の補正
+      const w = jobW[s];
+      const total = w * ex.place;
+      // perMonth は閾値・伸びしろ・年齢減衰を通した「重み1のときの実際の伸び」。
+      // これが0なら、仕事が何であろうと積まれない
+      const growing = working && w > 0 && ex.perMonth > 0;
+      const growth = !growing ? 'none' : (total >= GROW_FAST ? 'fast' : 'slow');
+
+      // なぜそうなのかを、必ず言葉で添える（A-1：数字を出すなら意味を添える）
+      let why;
+      if (growth === 'none') {
+        why = !working ? `まだ働く歳ではない（${WORK_START_AGE[A.rank[i]]}歳から）`
+            : w <= 0 ? `${jobName}の仕事では、これを使わない`
+            : ex.reason || 'このステは努力では積まれない';
+      } else {
+        // 判定を先に言う。総合が0.55なのに「追い風」だけ読ませると矛盾して見える
+        const use = w >= 0.9 ? `${jobName}がよく使う` : w >= 0.6 ? `${jobName}がそこそこ使う` : `${jobName}は軽くしか使わない`;
+        const dir = ex.place > 1 ? `${whereName}は追い風` : ex.place < 1 ? `${whereName}は向かい風` : `${whereName}は関係なし`;
+        why = `${growth === 'fast' ? 'よく伸びる' : '伸びにくい'}（${total.toFixed(2)}）　`
+            + `${use}（重み${w.toFixed(1)}）× ${dir}（${ex.place.toFixed(2)}）`;
+      }
+
       stats.push({
         s, name: S.NAME[s],
         cat: S.CATEGORY[s], catName: S.CATEGORIES[S.CATEGORY[s]],
         sub: S.SUBCATEGORIES[S.SUB[s]],
-        rarity: S.RARITY_LEVELS[S.RARITY[s]],
+        rarity: S.RARITY_LEVELS[rarityRank], rarityRank,
+        has: possesses(rarityRank, talent),
         chromosome: S.CHROMOSOME[s], arm: S.armOf(s),
         talent, ev, debuff: deb, eff: (talent + ev) * deb,
         threshold: ex.threshold, canTrain: ex.passesThreshold,
-        reason: ex.reason, perMonth: ex.perMonth,
+        reason: ex.reason, perMonth: ex.perMonth * w,
+        jobWeight: w, place: ex.place, growTotal: total, growth, why,
       });
     }
-    const top = stats.slice().sort((a, b) => b.eff - a.eff).slice(0, 8);
+    const shown = stats.filter(s => s.has);
+    const top = shown.slice().sort((a, b) => b.eff - a.eff).slice(0, 8);
 
     const mastery = masteryOf(P, i);
     return {
@@ -523,7 +584,8 @@ export class Run {
       births: A.births[i],
       children,
       mastery, cells: cellsOf(mastery), rings: ringsOf(age),
-      stats, top,
+      stats, top, statsHidden: stats.length - shown.length,
+      jobWeights: jobW,
       bodyDebuff: P.debuff(i, 0),
     };
   }

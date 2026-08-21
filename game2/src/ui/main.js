@@ -93,18 +93,47 @@ function bar(value, max, cls = '') {
   const w = Math.max(0, Math.min(100, value / max * 100));
   return `<span class="b ${cls}"><i style="width:${w.toFixed(1)}%"></i></span>`;
 }
+function esc(t) {
+  return String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
+/**
+ * ステ1行。**まとめが大きく、内訳が小さく、内訳の左端が才能**（オーナー確定）。
+ *
+ *   最大筋力      57   才能10 ＋努力50 ×0.95   ▓▓▓▓░░
+ *
+ * まとめの数字だけに色が付く（オーナー確定）：
+ *   赤＝伸びやすい ／ 青＝伸びにくい ／ 灰＝いまは伸びていない
+ * 総合＝「いまの仕事がこのステを使う重み × 住んでいる場所の補正」。flow/run.js が出す。
+ *
+ * **色はここ（個体票のDOM）から一歩も出さない。**盤面に載る色は血統の色相だけ（A-5）。
+ */
 function statRow(s) {
-  const stuck = !s.canTrain;
-  const why = stuck && s.reason ? ` title="${s.reason}"` : '';
-  return `<tr class="${stuck ? 'stuck' : ''}"${why}>
+  // 表示は整数（めもりは0〜100の整数。小数を読ませない）。
+  // 内訳が必ず足し算として成立するように、努力は「素の合計 − 才能」で出す
+  const tal = Math.round(s.talent);
+  const ev = Math.round(s.talent + s.ev) - tal;
+  const raw = tal + ev;
+  const sum = Math.round(raw * s.debuff);
+  const hasDebuff = Math.abs(s.debuff - 1) > 0.005;
+
+  // 内訳は、割るものがあるときだけ出す。
+  // 才能そのものが答えの行（104本の大半）で、同じ数字を2度読ませない
+  let brk = '';
+  if (ev !== 0 || hasDebuff) {
+    brk = `<i>才能</i>${tal}`;
+    if (ev !== 0) brk += ` <i>＋努力</i>${ev}`;
+    if (hasDebuff) brk += ` <i>×</i>${fix(s.debuff, 2)}`;
+  }
+
+  return `<tr title="${esc(s.why)}">
     <td class="nm">${s.name}</td>
-    <td class="num">${fix(s.talent, 0)}</td>
-    <td class="num">${s.ev > 0.05 ? '+' + fix(s.ev, 1) : '<span class="dim">—</span>'}</td>
-    <td class="num">${fix(s.debuff, 2)}</td>
-    <td class="num strong">${fix(s.eff, 1)}</td>
+    <td class="sum g-${s.growth}">${sum}</td>
+    <td class="brk">${brk}</td>
     <td class="bar">${bar(s.eff, 140)}</td>
   </tr>`;
 }
+const STAT_HEAD = '<tr class="hd"><td>ステ</td><td class="sum">実効</td><td>内訳</td><td></td></tr>';
 
 function drawDetail() {
   const box = $('detail');
@@ -136,6 +165,9 @@ function drawDetail() {
   if (p.father >= 0) fam.push(link('父', p.father));
   if (p.mother >= 0) fam.push(link('母', p.mother));
   const kids = p.children.filter(c => c.alive);
+  // 持っていないステは行ごと出さない（オーナー確定：S以上はゼロがある＝そもそも持っていない）。
+  // いまは全員が104個すべてを持っているので何も消えない。遺伝が変わった日にそのまま効く
+  const shownStats = p.stats.filter(s => s.has);
 
   box.innerHTML = `
     <h2>${swatch}${p.i}番<small>${p.age}歳 ${p.sexName}${p.alive ? '' : '　（死んでいる）'}</small></h2>
@@ -155,18 +187,26 @@ function drawDetail() {
 
     <h3>いちばん高い8つ<small>実効値 ＝（才能＋努力値）×デバフ</small></h3>
     <table class="st">
-      <tr class="hd"><td>ステ</td><td>才能</td><td>努力</td><td>デバフ</td><td>実効</td><td></td></tr>
+      ${STAT_HEAD}
       ${p.top.map(statRow).join('')}
     </table>
+    <p class="legend">
+      <span class="g-fast">赤</span><b>＝いまの仕事と住む場所でよく伸びる</b>
+      <span class="g-slow">青</span><b>＝伸びにくい</b>
+      <b>／ 印の無い数字は、いまは伸びていない</b>
+    </p>
 
     <details class="all">
-      <summary>104ステ全部を見る（オーナーは全部見える）</summary>
+      <summary>${shownStats.length}ステ全部を見る（オーナーは全部見える）</summary>
       <table class="st">
-        <tr class="hd"><td>ステ</td><td>才能</td><td>努力</td><td>デバフ</td><td>実効</td><td></td></tr>
-        ${p.stats.map(statRow).join('')}
+        ${STAT_HEAD}
+        ${shownStats.map(statRow).join('')}
       </table>
-      <p class="hint">灰色の行は努力値が積まれない。行にカーソルを置くと理由が出る。<br>
-        こころ29個には閾値という概念が原理的に無い（野心を鍛える職が無い）。</p>
+      <p class="hint">行にカーソルを置くと、伸びる／伸びない理由が出る。<br>
+        こころ29個には閾値という概念が原理的に無い（野心を鍛える職が無い）。<br>
+        ${p.statsHidden
+          ? `${p.statsHidden}個は<b>この一体が持っていない</b>ので出していない（レア度S以上で才能ゼロ）。`
+          : '<span class="dim">いまは104個すべてを持っている。レア度が初期値に効いていないため（設計班へ申し送り済み）。</span>'}</p>
     </details>`;
 
   for (const a of box.querySelectorAll('a[data-i]')) {
