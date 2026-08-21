@@ -13,6 +13,7 @@
 //   B-12  食料の天井で人口を自己調整させる（マルサス）
 
 import * as S from '../core/stats.js';
+import { breedLook } from './looks.js';
 import * as C from '../core/calendar.js';
 import {
   SEX_MALE, SEX_FEMALE, NO_HOUSE, NO_VILLAGE, NO_ONE,
@@ -218,6 +219,7 @@ export function birthDay(P, houses, V, tick, rng) {
       A.father[c] = father;
       A.rank[c] = father >= 0 ? A.rank[father] : A.rank[mother];
       A.blood[c] = (father >= 0 ? A.blood[father] : 0) | A.blood[mother];
+      breedLook(P, c, father >= 0 && A.alive[father] ? father : mother, mother, rng);
       A.gen[c] = (father >= 0 ? Math.max(A.gen[father], A.gen[mother]) : A.gen[mother]) + 1;
       A.lifespan[c] = lifespanOf(P, c);
       if (h !== NO_HOUSE) houses.join(P, h, c);

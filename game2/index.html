@@ -40,7 +40,13 @@
 </div>
 
 <main>
-  <canvas id="map"></canvas>
+  <div id="stage">
+    <canvas id="map"></canvas>
+    <!-- 個体だけを描く層。WebGL2。背景と家の箱は #map（Canvas2D）のまま -->
+    <canvas id="actors"></canvas>
+    <!-- 名札。個体より上でないと体に隠れる -->
+    <canvas id="labels"></canvas>
+  </div>
   <aside id="side">
     <section id="detail"></section>
 

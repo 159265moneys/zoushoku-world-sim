@@ -16,6 +16,7 @@
 import * as S from '../core/stats.js';
 import * as C from '../core/calendar.js';
 import { make } from '../core/arrays.js';
+import { LOOK_SPEC, FOUNDER_COUNT } from './looks.js';
 
 // ---- 属性の番号 -----------------------------------------------------------
 export const SEX_MALE = 0, SEX_FEMALE = 1;
@@ -158,6 +159,10 @@ export const SPEC = {
   gen: 'u16',            // 何代目か（家族の単位。A-12）
   blood: 'u16',          // 創世の十匹のうち誰の血が入っているか。10ビットの旗。
                          // 子は 父の旗 | 母の旗。収束計「血統の生き残り数」がこれを数える
+
+  // 見た目（キャラビジュアル.md §2/§3）。**ステではない。**何にも効かない血統の指紋。
+  // blood（旗）は「誰の血が入ったか」の有無しか言えないので、割合は別に持つ。
+  ...LOOK_SPEC,
 };
 
 export const HEART0 = S.BY_CATEGORY[S.HEART][0];        // 75
@@ -208,6 +213,7 @@ export class People {
     A.vitality[i] = 1;
     A.lifespan[i] = 55;
     A.blood[i] = 0;
+    for (let f = 0; f < FOUNDER_COUNT; f++) A.bloodMix[f][i] = 0;
     this.count++; this.born++;
     return i;
   }

@@ -428,7 +428,7 @@ export class Run {
       const blood = hueOfBlood(A.blood[i]);
       const mastery = masteryOf(P, i);
       const look = lookOf(P, i);
-      const bt = bloodTop2(P, i);
+      const bt = bloodTop2(P, i, f => FOUNDER_HUE[f]);
       const p = {
         i, h, v: v === NO_VILLAGE ? -1 : v,
         slot: hi !== undefined ? homes[hi].slot : -1,
@@ -436,7 +436,7 @@ export class Run {
         sex: A.sex[i], age, months,
         hue: blood.hue, pure: blood.pure, lines: blood.lines,
         // 見た目（キャラビジュアル.md）。色相は血の1位。沈殿が2位。**平均しない**
-        hue1: FOUNDER_HUE[bt.first], hue2: FOUNDER_HUE[bt.second],
+        hue1: FOUNDER_HUE[bt.first], hue2: bt.secondHue,
         sediment: bt.sediment, bloodLines: bt.lines,
         corners: look.corners, stripeV: look.stripeV, stripeH: look.stripeH,
         special: look.special,
@@ -608,7 +608,8 @@ export class Run {
       scar: A.scar[i],
       generation: A.gen[i],
       blood: A.blood[i], hue: blood.hue, pure: blood.pure, lines: blood.lines,
-      look: lookOf(P, i), bloodTop: bloodTop2(P, i), bloodMix: bloodBreakdown(P, i),
+      look: lookOf(P, i), bloodTop: bloodTop2(P, i, f => FOUNDER_HUE[f]),
+      bloodMix: bloodBreakdown(P, i),
       weak: weaknessOf(P, i, A.state[i]),
       states,
       spouse: A.spouse[i] === NO_ONE ? -1 : A.spouse[i],

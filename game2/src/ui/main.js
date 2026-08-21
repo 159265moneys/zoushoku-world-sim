@@ -24,7 +24,7 @@ const $ = id => document.getElementById(id);
 const fix = (v, n = 0) => (Number.isFinite(v) ? v : 0).toFixed(n);
 
 const run = new Run({ seed: SEED, dev: DEV });
-const map = new MapView($('map'), run);
+const map = new MapView($('map'), run, $('actors'), $('labels'));
 map.onSelect = hit => {
   if (!hit) { run.select(-1); run.selectHouse(-1); }
   else if (hit.kind === 'person') run.select(hit.id);
@@ -218,9 +218,11 @@ function empty() {
   return `<h2 class="dim">誰も選んでいない</h2>
     <p class="hint">地図の丸をクリックすると、その一体の全部が見える。<br>
       家の箱をクリックすると、その家の顔ぶれが見える。<br><br>
-      丸の<b>大きさと年輪</b>＝年齢。<b>中の点の数</b>＝熟練。<b>色相</b>＝血統。<br>
-      <b>輪郭が切れている</b>＝飢え。<b>中の白い点</b>＝身重。<b>上の山形</b>＝家長。<br>
-      色に意味は無い。色は血だけ。混ざるほど色が抜ける。<br><br>
+      <b>大きさ</b>＝年齢。<b>暗さ</b>＝弱っている（それだけ。内訳はここに出る）。<br>
+      <b>色</b>＝血。<b>下に沈んだ色</b>＝よその血。<b>沈んだ高さ</b>＝どれだけ混ざったか。<br>
+      <b>形</b>と<b>模様</b>＝血統。親の中間が子に出る。<b>星・ハート</b>は稀に潜って出る。<br>
+      <b>上の山形</b>＝家長。<br>
+      色に意味は載せない。<b>色は血だけ</b>。<br><br>
       <span class="dim">訓練場と辺境はまだ空いている。いまは畑と森にしか人が振られない。</span></p>`;
 }
 

@@ -88,7 +88,14 @@ body:not(.dev) .dev { display: none; }
 
 /* ---- 本体 --------------------------------------------------------------- */
 main { flex: 1 1 auto; display: flex; min-height: 0; }
-#map { flex: 1 1 auto; display: block; min-width: 0; background: #0d0f0a; touch-action: none; }
+#stage { flex: 1 1 auto; position: relative; min-width: 0; }
+#map, #actors, #labels {
+  position: absolute; inset: 0; display: block;
+  width: 100%; height: 100%; touch-action: none;
+}
+#map { background: #0d0f0a; }
+/* 個体と名札の層。押すのは下の #map が受けるので、こちらは触らせない */
+#actors, #labels { pointer-events: none; }
 
 #side {
   flex: 0 0 344px; overflow-y: auto;

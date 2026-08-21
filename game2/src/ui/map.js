@@ -19,6 +19,7 @@ import {
   AREA_NAMES, AREA_HOME, AREA_FIELD, AREA_FOREST, AREA_TRAIN, AREA_FRONTIER,
   HOUSES_PER_VILLAGE,
 } from '../flow/run.js';
+import { ActorLayer } from './actors.js';
 
 // ---- 村1つぶんの大きさ（世界座標） ----------------------------------------
 export const VW = 1040, VH = 760;
@@ -66,6 +67,9 @@ const COL = {
   dead:         '#a2483a',
   snow:         'rgba(190,210,235,0.10)',
 };
+
+// 生きている者の彩度。**彩度が言うのは生死だけ**（A-5）。死ぬと 0 へ落ちる
+export const SAT_ALIVE = 0.46;
 
 // ---- 決まった散らし（乱数ではない。同じ i からは必ず同じ位置が出る） --------
 function hash01(n) {
@@ -143,9 +147,15 @@ export function radiusOf(p) { return 3.2 + 5.2 * p.grow; }
 // ===========================================================================
 
 export class MapView {
-  constructor(canvas, run) {
+  constructor(canvas, run, glCanvas = null, labelCanvas = null) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    // 個体だけを WebGL で描く（キャラビジュアル.md §8）。無ければ 2D に落ちる
+    this.actors = glCanvas ? new ActorLayer(glCanvas) : null;
+    if (this.actors && !this.actors.ok) this.actors = null;
+    // 名札は個体より上。下に置くと体に隠れて読めない
+    this.labels = labelCanvas || null;
+    this.labelCtx = labelCanvas ? labelCanvas.getContext('2d') : null;
     this.run = run;
     this.dpr = 1;
     this.w = 1; this.h = 1;
@@ -183,6 +193,13 @@ export class MapView {
     this.h = Math.max(1, Math.round(rect.height));
     this.canvas.width = Math.round(this.w * dpr);
     this.canvas.height = Math.round(this.h * dpr);
+    if (this.actors) this.actors.resize(this.w, this.h, dpr);
+    if (this.labels) {
+      this.labels.width = Math.round(this.w * dpr);
+      this.labels.height = Math.round(this.h * dpr);
+      this.labels.style.width = this.w + 'px';
+      this.labels.style.height = this.h + 'px';
+    }
     this.dirty = true;
   }
 
@@ -296,6 +313,7 @@ export class MapView {
 
     this.hits.length = 0;
     this.boxes.length = 0;
+    if (this.actors) this.actors.begin(snap.folk.length);
 
     const n = Math.max(1, snap.villages.length);
     for (let k = 0; k < snap.villages.length; k++) {
@@ -310,7 +328,14 @@ export class MapView {
       g.restore();
     }
 
-    this._tip(g, snap);
+    if (this.actors) this.actors.flush();   // 個体はここで一度に出る
+
+    const lg = this.labelCtx || g;          // 名札は個体より上の層へ
+    if (this.labelCtx) {
+      this.labelCtx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      this.labelCtx.clearRect(0, 0, this.w, this.h);
+    }
+    this._tip(lg, snap);
     this.dirty = false;
   }
 
@@ -491,55 +516,34 @@ export class MapView {
   }
 
   /**
-   * 個体。**円。大きさ＋年輪＝年齢／細胞の数＝熟練／色相＝血統**（A-4/A-5）。
-   * 状態は色ではなく形で言う。**色に意味を載せない。**
+   * 個体。**WebGL の層へ積むだけ。**（キャラビジュアル.md §1／§8）
+   *
+   *   色相＝血の1位／沈殿＝血の2位／形と模様＝血統／大きさ＝年齢／
+   *   明度＝弱っている、それだけ／彩度＝生死／目＝生きていること
+   *
+   * 体そのものは GL が上に描くので、**2D でここに描いたものは体の下に隠れる。**
+   * だから 2D に残すのは「体からはみ出るもの」だけ：生まれたての輪・選択の輪・家長の印。
    */
   _person(g, at, p, z, isSel, inSelHouse) {
     const r = radiusOf(p);
-    // 血が混ざるほど色が抜ける。ただし色相そのものは読めるだけの濃さを残す
-    // （**閉じこもる村は血が痩せる**（A-19b）が、そのまま画面の色あせになる）
-    const sat = 34 + 40 * p.pure;
-    const lig = p.working ? 55 : 68;
-    const hue = p.hue.toFixed(0), sa = sat.toFixed(0);
+    const s = this.toScreen(this._ox + at.x, this._oy + at.y);
+    const rs = r * z;                                   // 画面上の半径（CSS px）
+    this.hits.push({ i: p.i, x: s.x, y: s.y, r: rs });
 
-    g.beginPath();
-    g.arc(at.x, at.y, r, 0, Math.PI * 2);
-    g.fillStyle = `hsl(${hue} ${sa}% ${lig}%)`;
-    g.fill();
-
-    const px = r * z;                          // 画面上の大きさ。小さいときは中身を描かない
-    if (px > 2.6) {
-      g.lineWidth = (p.hungry ? 1.7 : 1.1) / z;
-      g.strokeStyle = `hsl(${hue} ${sa}% 24%)`;
-      if (p.hungry) g.setLineDash([2.2 / z, 2.2 / z]);   // 飢え＝輪郭が切れる
-      g.stroke();
+    // ---- 体からはみ出るものだけ、2D で下に敷く ----
+    if (p.newborn) {                                    // 生まれた（A-1：変化を変化として）
+      g.strokeStyle = 'rgba(255,250,230,0.5)';
+      g.lineWidth = 1 / z;
+      g.beginPath(); g.arc(at.x, at.y, r + 5, 0, Math.PI * 2); g.stroke();
+    }
+    if (isSel || inSelHouse) {                          // 操作の反応。状態ではない
+      g.strokeStyle = isSel ? COL.sel : 'rgba(242,234,210,0.45)';
+      g.lineWidth = (isSel ? 2 : 1.2) / z;
+      if (!isSel) g.setLineDash([3 / z, 3 / z]);
+      g.beginPath(); g.arc(at.x, at.y, r + 4.5, 0, Math.PI * 2); g.stroke();
       g.setLineDash([]);
     }
-
-    if (px > 4.5 && p.rings > 0) {             // 年輪＝年齢
-      g.strokeStyle = 'rgba(0,0,0,0.34)';
-      g.lineWidth = 0.7 / z;
-      for (let k = 1; k <= p.rings; k++) {
-        g.beginPath(); g.arc(at.x, at.y, r * (k / (p.rings + 1)), 0, Math.PI * 2); g.stroke();
-      }
-    }
-
-    if (px > 7.5 && p.cells > 0) {             // 細胞の数＝熟練
-      g.fillStyle = 'rgba(255,252,238,0.74)';
-      const rr = r * 0.52, dot = Math.max(0.5, r * 0.135);
-      for (let k = 0; k < p.cells; k++) {
-        const a = (k / p.cells) * Math.PI * 2 - Math.PI / 2;
-        g.beginPath();
-        g.arc(at.x + Math.cos(a) * rr, at.y + Math.sin(a) * rr, dot, 0, Math.PI * 2);
-        g.fill();
-      }
-    }
-
-    if (p.pregnant && px > 4) {                // 身重＝中に子の点
-      g.fillStyle = 'rgba(255,248,225,0.92)';
-      g.beginPath(); g.arc(at.x, at.y, Math.max(1, r * 0.26), 0, Math.PI * 2); g.fill();
-    }
-    if (p.head && px > 5) {                    // 家長＝上に小さな印
+    if (p.head && rs > 5) {                             // 家長。体の上（§5 の冠の場所）
       g.strokeStyle = 'rgba(240,232,205,0.85)';
       g.lineWidth = 1.1 / z;
       g.beginPath();
@@ -548,22 +552,27 @@ export class MapView {
       g.lineTo(at.x + r * 0.55, at.y - r - 2.5);
       g.stroke();
     }
-    if (p.newborn && px > 3) {                 // 生まれたて＝広がる輪
-      g.strokeStyle = 'rgba(255,250,230,0.5)';
-      g.lineWidth = 1 / z;
-      g.beginPath(); g.arc(at.x, at.y, r + 5, 0, Math.PI * 2); g.stroke();
-    }
-    if (isSel || inSelHouse) {
-      g.strokeStyle = isSel ? COL.sel : 'rgba(242,234,210,0.45)';
-      g.lineWidth = (isSel ? 2 : 1.2) / z;
-      if (!isSel) g.setLineDash([3 / z, 3 / z]);
-      g.beginPath(); g.arc(at.x, at.y, r + 4.5, 0, Math.PI * 2); g.stroke();
-      g.setLineDash([]);
-    }
 
-    const s = this.toScreen(this._ox + at.x, this._oy + at.y);
-    this.hits.push({ i: p.i, x: s.x, y: s.y, r: r * z });
+    if (!this.actors) { this._person2d(g, at, p, r); return; }
+
+    const d = this.dpr;
+    this.actors.push(
+      s.x * d, s.y * d, Math.max(1.1, rs * d),
+      p.weak,                                           // 明度＝弱っている、それだけ
+      p.hue1, p.hue2, p.sediment,
+      SAT_ALIVE,                                        // 彩度＝生死。生きている者は固定
+      p.corners, p.special, p.stripeV, p.stripeH);
   }
+
+  /** WebGL2 が無い環境の落とし先。丸と色相だけ。**記号は諦める** */
+  _person2d(g, at, p, r) {
+    g.beginPath();
+    g.arc(at.x, at.y, r, 0, Math.PI * 2);
+    g.fillStyle = `hsl(${p.hue1.toFixed(0)} ${(SAT_ALIVE * 100).toFixed(0)}% `
+      + `${(66 * (1 - 0.42 * p.weak)).toFixed(0)}%)`;
+    g.fill();
+  }
+
 
   _tip(g, snap) {
     const h = this.hover;
