@@ -1,0 +1,162 @@
+/* 増殖 game2。線画と塗り分けだけ。画像アセットは使わない。
+   色に意味は載せない（色相は血統だけ）ので、画面の色は明るさで段を作る。 */
+
+:root {
+  --bg:      #0b0d08;
+  --panel:   #14160f;
+  --panel2:  #1a1c14;
+  --line:    #2b2e22;
+  --ink:     #e8e4d8;
+  --dim:     #8d8a7c;
+  --dimmer:  #5e5c52;
+  --hi:      #c9b98a;
+  --good:    #7fbf5f;
+  --bad:     #d9614c;
+  --bar-h:   58px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg); color: var(--ink);
+  font: 13px/1.6 system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  overflow: hidden;
+}
+button {
+  font: inherit; color: var(--ink);
+  background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 4px; padding: 4px 10px; cursor: pointer;
+}
+button:hover { border-color: #4a4d3a; }
+button.on { background: #3b4029; border-color: #6d7350; color: #f3eeda; }
+button.ghost { background: transparent; color: var(--dim); }
+button.ghost:hover { color: var(--ink); }
+.dim { color: var(--dim); }
+
+/* ---- 上帯 --------------------------------------------------------------- */
+#bar {
+  flex: 0 0 auto; height: var(--bar-h);
+  display: flex; align-items: center; gap: 22px;
+  padding: 0 14px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+#bar .clock { display: flex; align-items: baseline; gap: 8px; min-width: 210px; }
+#bar .clock b { font-size: 16px; letter-spacing: .04em; }
+.pill {
+  font-size: 11px; padding: 1px 8px; border-radius: 9px;
+  border: 1px solid var(--line); color: var(--dim);
+}
+.pill.s0 { color: #9ec98a; border-color: #3d4f31; }  /* 春 */
+.pill.s1 { color: #d8c168; border-color: #58502a; }  /* 夏 */
+.pill.s2 { color: #d09a5e; border-color: #574026; }  /* 秋 */
+.pill.s3 { color: #8fb6d8; border-color: #2f4457; }  /* 冬 */
+
+.gauges { display: flex; gap: 18px; }
+.g { display: grid; grid-template-columns: auto auto; gap: 0 6px; align-items: baseline; }
+.g b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.g i { font-style: normal; font-size: 11px; color: var(--dim); }
+.g u { grid-column: 1 / -1; text-decoration: none; font-size: 10.5px; color: var(--dimmer); }
+.g.wide { min-width: 150px; }
+.meter {
+  grid-column: 1 / -1; display: block; height: 4px; margin-top: 3px;
+  background: #23261a; border-radius: 2px; overflow: hidden;
+}
+.meter i { display: block; height: 100%; background: var(--hi); transition: width .25s linear; }
+.meter i.low { background: var(--bad); }
+
+.ctl { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+#playbtn { width: 38px; text-align: center; }
+.speeds { display: inline-flex; gap: 3px; }
+.sp { padding: 3px 7px; font-size: 11.5px; }
+.sp.debug { color: #d09a5e; border-style: dashed; }
+body:not(.dev) .dev { display: none; }
+
+/* ---- 帯（配給・絶滅） --------------------------------------------------- */
+#banners { flex: 0 0 auto; }
+.banner {
+  padding: 4px 14px; font-size: 12px;
+  background: #1d2116; color: var(--hi);
+  border-bottom: 1px solid var(--line);
+}
+.banner.bad { background: #2a1512; color: #f0a294; }
+
+/* ---- 本体 --------------------------------------------------------------- */
+main { flex: 1 1 auto; display: flex; min-height: 0; }
+#map { flex: 1 1 auto; display: block; min-width: 0; background: #0d0f0a; touch-action: none; }
+
+#side {
+  flex: 0 0 344px; overflow-y: auto;
+  background: var(--panel); border-left: 1px solid var(--line);
+  padding: 12px 14px 40px;
+}
+#side section + section { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); }
+#side h2 { font-size: 15px; margin: 0 0 10px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }
+#side h2 small { font-weight: 400; font-size: 11.5px; color: var(--dim); }
+#side h3 {
+  font-size: 12px; margin: 16px 0 6px; font-weight: 600; color: var(--hi);
+  display: flex; align-items: baseline; gap: 8px;
+}
+#side h3 small { font-weight: 400; font-size: 10.5px; color: var(--dimmer); }
+.hint { font-size: 11.5px; color: var(--dimmer); line-height: 1.7; }
+.died { color: var(--bad); font-size: 12px; margin: -4px 0 8px; }
+
+.blood {
+  width: 11px; height: 11px; border-radius: 50%;
+  display: inline-block; border: 1px solid rgba(0,0,0,.5);
+}
+.kv { display: flex; gap: 8px; font-size: 12px; padding: 1.5px 0; }
+.kv span { flex: 0 0 92px; color: var(--dim); }
+.kv b { font-weight: 500; }
+.kv a { color: var(--hi); margin-left: 3px; }
+
+/* ステの表 */
+table.st { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+table.st td { padding: 1px 4px; white-space: nowrap; }
+table.st tr.hd td { color: var(--dimmer); font-size: 10px; border-bottom: 1px solid var(--line); }
+table.st td.nm { width: 34%; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+table.st td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim); }
+table.st td.num.strong { color: var(--ink); }
+table.st td.bar { width: 54px; }
+table.st tr.stuck td { color: var(--dimmer); }
+table.st tr.stuck td.num.strong { color: var(--dim); }
+.b { display: block; height: 4px; background: #23261a; border-radius: 2px; overflow: hidden; }
+.b i { display: block; height: 100%; background: #6f7a4c; }
+
+table.fam { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.fam td { padding: 2px 4px; border-bottom: 1px solid #1f2218; }
+table.fam tr { cursor: pointer; }
+table.fam tr:hover td { background: var(--panel2); color: var(--hi); }
+
+details.all { margin-top: 12px; }
+details.all summary { cursor: pointer; font-size: 11.5px; color: var(--dim); padding: 3px 0; }
+details.all summary:hover { color: var(--ink); }
+
+#chronlist { list-style: none; margin: 0; padding: 0; }
+#chronlist li {
+  font-size: 11.5px; padding: 4px 0; border-bottom: 1px solid #1f2218;
+  display: grid; grid-template-columns: 1fr auto;
+}
+#chronlist b { font-weight: 600; }
+#chronlist i { font-style: normal; color: var(--dimmer); font-size: 10.5px; }
+#chronlist span { grid-column: 1 / -1; color: var(--dim); }
+
+.row { display: flex; gap: 6px; margin-top: 8px; }
+
+/* ---- 出来事の札 --------------------------------------------------------- */
+#toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 16px);
+  background: #1c2016; border: 1px solid #454b33; border-radius: 6px;
+  padding: 9px 18px; font-size: 13px; color: var(--ink);
+  opacity: 0; pointer-events: none; transition: opacity .3s, transform .3s;
+  max-width: 70vw; text-align: center;
+}
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast b { display: block; color: var(--hi); }
+#toast span { font-size: 11.5px; color: var(--dim); }
+
+@media (max-width: 900px) {
+  #side { flex-basis: 260px; }
+  #bar { gap: 12px; }
+}

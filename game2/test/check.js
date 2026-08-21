@@ -24,6 +24,7 @@ import * as V from '../src/world/village.js';
 import * as grow from '../src/world/grow.js';
 import * as M from '../src/world/marry.js';
 import * as W from '../src/world/world.js';
+import * as RUN from '../src/flow/run.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GAME2 = join(HERE, '..');
@@ -1360,6 +1361,355 @@ check('UI も flow も知らない（world は core しか import しない）',
 });
 
 // ===========================================================================
+section('進行（flow/run.js）');
+// ===========================================================================
+// flow は「いつ進めるか」だけを持つ。世界の中身には一切触らない。
+// UI が世界を覗く穴もここしかない（UI は world を直接呼ばない）。
+
+check('同じ種から同じ歴史が出る（flow を通しても）', () => {
+  const a = new RUN.Run({ seed: 4242 });
+  const b = new RUN.Run({ seed: 4242 });
+  a.advance(360 * 20);
+  b.advance(360 * 20);
+  const x = a.view(), y = b.view();
+  if (x.pop !== y.pop) return `人口 ${x.pop} ≠ ${y.pop}`;
+  if (x.houses !== y.houses) return `家 ${x.houses} ≠ ${y.houses}`;
+  if (x.born !== y.born || x.died !== y.died) return '生き死にが食い違う';
+  const ca = a.converge(), cb = b.converge();
+  if (ca.meanOfStats !== cb.meanOfStats) return 'ステの平均が食い違う';
+  return true;
+});
+
+check('倍速でも早送りでも、同じ日数なら同じ歴史', () => {
+  // 60倍で刻んだ世界と、一息で飛ばした世界が一致すること。
+  // 「倍速の役割は短い時間の制御だけ」（A-11）を壊さないための綱
+  const a = new RUN.Run({ seed: 77 });
+  a.setSpeed(60); a.play();
+  let guard = 0;
+  while (a.view().tick < 1800 && guard++ < 200000) a.pump(16);
+  const days = a.view().tick;
+  const b = new RUN.Run({ seed: 77 });
+  b.advance(days);
+  if (a.view().pop !== b.view().pop) return `${days}日で 人口 ${a.view().pop} ≠ ${b.view().pop}`;
+  if (a.view().born !== b.view().born) return '生まれた数が食い違う';
+  return true;
+});
+
+check('1倍は1日1分（A-11）', () => {
+  const r = new RUN.Run({ seed: 1 });
+  r.play();
+  if (r.msPerTick() !== 60000) return `1tick が ${r.msPerTick()}ms`;
+  // 頁は16msごとに刻む。60秒ぶん渡すと、ちょうど1日だけ進むこと
+  let days = 0;
+  for (let ms = 0; ms < 60000; ms += 16) days += r.pump(16);
+  if (days !== 1) return `60秒で ${days}日進んだ`;
+  for (let ms = 0; ms < 59000; ms += 16) days += r.pump(16);
+  return days === 1 ? true : `さらに59秒で ${days}日になった`;
+});
+
+check('60倍で1ヶ月30秒・1年6分（A-11）', () => {
+  const r = new RUN.Run({ seed: 1 });
+  r.setSpeed(60);
+  const sec = 30 * r.msPerTick() / 1000;
+  return Math.abs(sec - 30) < 1e-9 ? true : `1ヶ月 ${sec}秒`;
+});
+
+check('本番の上限は60倍。500倍は ?dev=1 のときだけ（A-11）', () => {
+  const rel = new RUN.Run({ seed: 1 });
+  rel.setSpeed(500);
+  if (rel.speed !== 60) return `本番で ×${rel.speed} まで上がった`;
+  if (rel.speedChoices().some(s => s > 60)) return '本番の選択肢に60超が出ている';
+  const dev = new RUN.Run({ seed: 1, dev: true });
+  dev.setSpeed(500);
+  if (dev.speed !== 500) return `デバッグで ×${dev.speed} までしか上がらない`;
+  if (!dev.speedChoices().includes(500)) return 'デバッグの選択肢に500が無い';
+  return true;
+});
+
+check('止まっているあいだは1日も進まない', () => {
+  const r = new RUN.Run({ seed: 1 });
+  r.setSpeed(60);
+  const t0 = r.view().tick;
+  for (let k = 0; k < 100; k++) r.pump(1000);
+  return r.view().tick === t0 ? true : `${r.view().tick - t0}日進んでしまった`;
+});
+
+check('裏タブで溜まった壁時計を一気に流し込まない', () => {
+  const r = new RUN.Run({ seed: 1, dev: true });
+  r.setSpeed(500); r.play();
+  const n = r.pump(60 * 60 * 1000);       // 1時間ぶん渡す
+  return n <= RUN.MAX_TICKS_PER_PUMP ? true : `1回で ${n}日進んだ`;
+});
+
+check('flow は壁時計を持たない（何ミリ秒経ったかは頁が渡す）', () => {
+  // コメントは落としてから見る。「持たない」と書いた注意書きで赤になっては困る
+  const src = code(join(GAME2, 'src/flow/run.js'));
+  const bad = /Date\.now|performance\.now|requestAnimationFrame|setInterval|setTimeout/.exec(src);
+  return bad ? `${bad[0]} を呼んでいる` : true;
+});
+
+check('十匹が立っている。家5軒・身ごもり3人（A-10）', () => {
+  const r = new RUN.Run({ seed: 5 });
+  const s = r.snapshot();
+  if (s.bar.pop !== 10) return `${s.bar.pop}体`;
+  if (s.homes.length !== 5) return `家が ${s.homes.length}軒`;
+  if (s.bar.pregnant !== 3) return `身ごもりが ${s.bar.pregnant}人`;
+  if (s.folk.length !== 10) return `地図に出るのが ${s.folk.length}体`;
+  return true;
+});
+
+check('地図に出る家の数と、世界の家の数が合う', () => {
+  const r = new RUN.Run({ seed: 9 });
+  for (let y = 0; y < 60; y++) {
+    r.advance(360);
+    const s = r.snapshot();
+    if (s.homes.length !== s.bar.houses) return `${y}年目 ${s.homes.length} ≠ ${s.bar.houses}`;
+  }
+  return true;
+});
+
+check('住居の枠は30。家は必ずどれかの枠に入る（A-19b）', () => {
+  const r = new RUN.Run({ seed: 3 });
+  for (let y = 0; y < 120; y++) {
+    r.advance(360);
+    const s = r.snapshot();
+    const used = new Set();
+    for (const h of s.homes) {
+      if (h.slot < 0 || h.slot >= RUN.HOUSES_PER_VILLAGE) return `枠 ${h.slot} が範囲の外`;
+      if (used.has(`${h.v}/${h.slot}`)) return `${y}年目に枠がぶつかった`;
+      used.add(`${h.v}/${h.slot}`);
+    }
+  }
+  return true;
+});
+
+check('家の枠は畳まれるまで動かない（箱が飛び回らない）', () => {
+  const r = new RUN.Run({ seed: 12 });
+  r.advance(360 * 8);
+  const before = new Map(r.snapshot().homes.map(h => [h.h, h.slot]));
+  for (let k = 0; k < 40; k++) {
+    r.advance(90);
+    for (const h of r.snapshot().homes) {
+      if (before.has(h.h) && before.get(h.h) !== h.slot) return `${h.h}の家が枠を移った`;
+    }
+  }
+  return true;
+});
+
+check('地図に出る人数と、生きている人数が合う', () => {
+  const r = new RUN.Run({ seed: 21 });
+  for (let y = 0; y < 40; y++) {
+    r.advance(360);
+    const s = r.snapshot();
+    if (s.folk.length !== s.bar.pop) return `${y}年目 ${s.folk.length} ≠ ${s.bar.pop}`;
+    if (s.bar.adults + s.bar.children !== s.bar.pop) return '大人と子どもの和が人口に合わない';
+  }
+  return true;
+});
+
+check('誰がどこにいるかが、村の勘定と合う（A-19）', () => {
+  const r = new RUN.Run({ seed: 8 });
+  r.advance(360 * 30);
+  const s = r.snapshot();
+  if (!s.villages.length) return '村が無い';
+  const sum = s.villages[0].byArea.reduce((a, b) => a + b, 0);
+  return sum === s.villages[0].pop ? true : `${sum} ≠ ${s.villages[0].pop}`;
+});
+
+check('身重の女は畑にも森にも出ない。居場所も家に寄る', () => {
+  const r = new RUN.Run({ seed: 6 });
+  r.advance(360 * 20);
+  const s = r.snapshot();
+  const bad = s.folk.filter(p => p.pregnant && p.at !== RUN.AREA_HOME);
+  return bad.length === 0 ? true : `${bad.length}人が外に立っている`;
+});
+
+check('色相は血統だけ。同じ血なら同じ色相（A-4/A-5）', () => {
+  const one = RUN.hueOfBlood(1 << 3);
+  const same = RUN.hueOfBlood(1 << 3);
+  if (one.hue !== same.hue) return '同じ血で色が違う';
+  if (Math.abs(one.pure - 1) > 1e-6) return '1家系なのに混ざった扱いになっている';
+  const two = RUN.hueOfBlood((1 << 3) | (1 << 4));
+  if (two.lines !== 2) return '家系の数が数えられない';
+  if (!(two.pure < one.pure)) return '混ざっても色が抜けない';
+  if (RUN.hueOfBlood(1 << 0).hue === RUN.hueOfBlood(1 << 5).hue) return '別の家系が同じ色';
+  return true;
+});
+
+check('大きさ＝年齢は26歳で頭打ち（A-6：ピークは26歳固定）', () => {
+  const r = new RUN.Run({ seed: 31 });
+  r.advance(360 * 40);
+  for (const p of r.snapshot().folk) {
+    if (p.grow < 0 || p.grow > 1) return `大きさが ${p.grow}`;
+    if (p.age >= 26 && p.grow !== 1) return `${p.age}歳で ${p.grow}`;
+    if (p.age < 26 && p.grow >= 1) return `${p.age}歳で頭打ちになっている`;
+  }
+  return true;
+});
+
+check('細胞の数＝熟練。0〜9で、働かない者は0', () => {
+  if (RUN.cellsOf(0) !== 0) return '熟練0で細胞がある';
+  if (RUN.cellsOf(1000) !== 9) return `上限が ${RUN.cellsOf(1000)}`;
+  const r = new RUN.Run({ seed: 41 });
+  r.advance(360 * 40);
+  for (const p of r.snapshot().folk) {
+    if (p.cells < 0 || p.cells > 9) return `細胞が ${p.cells}`;
+    if (p.age < 5 && p.cells > 0) return `${p.age}歳に熟練がある`;
+  }
+  return true;
+});
+
+check('年輪＝年齢。歳を取るほど増える', () => {
+  if (!(RUN.ringsOf(0) < RUN.ringsOf(30))) return '若者と年寄りで年輪が同じ';
+  if (RUN.ringsOf(999) > 5) return '年輪が増え続ける';
+  return true;
+});
+
+check('弔いの印が、死んだ日から少しのあいだ残る（A-10：死は永久に戻らない）', () => {
+  const r = new RUN.Run({ seed: 2 });
+  let found = false;
+  for (let k = 0; k < 4000 && !found; k++) {
+    r.advance(1);
+    if (r.snapshot().gone.length > 0) found = true;
+  }
+  if (!found) return '200年近く回しても誰も死ななかった';
+  const s = r.snapshot();
+  for (const d of s.gone) {
+    if (d.fade < 0 || d.fade > 1) return `濃さが ${d.fade}`;
+    if (!d.causeName) return '死因が読めない';
+  }
+  return true;
+});
+
+check('個体票は104ステ全部を返す（A-7：オーナーは全部見える）', () => {
+  const r = new RUN.Run({ seed: 1 });
+  const p = r.person(0);
+  if (!p) return '0番が取れない';
+  if (p.stats.length !== S.COUNT) return `${p.stats.length}本しか返らない`;
+  if (p.top.length !== 8) return '上位8つが出ない';
+  for (const s of p.stats) {
+    const want = (s.talent + s.ev) * s.debuff;
+    if (Math.abs(s.eff - want) > 1e-6) return `${s.name} の実効値が式と違う`;
+    if (!Number.isFinite(s.eff)) return `${s.name} が NaN`;
+  }
+  return true;
+});
+
+check('伸びない理由が日本語で返る（才能が閾値に届いていない）', () => {
+  const r = new RUN.Run({ seed: 15 });
+  const p = r.person(0);
+  const stuck = p.stats.filter(s => !s.canTrain && s.reason);
+  if (!stuck.length) return '理由が1つも付かない';
+  const heart = p.stats.filter(s => s.catName === 'こころ');
+  if (heart.some(s => s.canTrain)) return 'こころに努力値が積める扱いになっている';
+  return true;
+});
+
+check('家票は顔ぶれを返す。家長がひとり立つ', () => {
+  const r = new RUN.Run({ seed: 1 });
+  r.advance(360 * 12);
+  const s = r.snapshot();
+  for (const hm of s.homes) {
+    const h = r.house(hm.h);
+    if (!h) return `${hm.h}の家が取れない`;
+    if (h.members.length !== h.size) return `${hm.h}の家 ${h.members.length} ≠ ${h.size}`;
+    if (h.members.filter(m => m.head).length > 1) return `${hm.h}の家に家長が2人`;
+  }
+  return true;
+});
+
+check('年代記の初出（A-10 の「これは初めてか」がそのまま出てくる）', () => {
+  const r = new RUN.Run({ seed: 1 });
+  if (!r.notices.length) return '創世が載っていない';
+  if (r.notices[0].what !== '創世') return `最初が「${r.notices[0].what}」`;
+  r.advance(360 * 40);
+  const what = r.notices.map(n => n.what);
+  if (new Set(what).size !== what.length) return '同じ節目が2回載っている';
+  if (!what.includes('初めての子')) return '40年回して出産が載らない';
+  for (const n of r.notices) if (!/年.*月.*日/.test(n.date)) return '日付が読めない';
+  return true;
+});
+
+check('人が多すぎたら箱だけにする（A-19：降りたら中が見える）', () => {
+  return RUN.MAX_FOLK > 0 && RUN.MAX_FOLK <= 10000
+    ? true : `一体ずつ描く上限が ${RUN.MAX_FOLK}`;
+});
+
+check('snapshot は同じ tick なら作り直さない（毎フレーム呼んでよい）', () => {
+  const r = new RUN.Run({ seed: 1 });
+  const a = r.snapshot(), b = r.snapshot();
+  if (a !== b) return '同じ日で作り直している';
+  r.advance(1);
+  return r.snapshot() !== a ? true : '日が変わっても古いままになる';
+});
+
+// ===========================================================================
+section('画面（src/ui）');
+// ===========================================================================
+
+check('UI は world を直接 import していない（flow を通す）', () => {
+  const ui = FILES.filter(f => f.includes(`${'/'}ui${'/'}`));
+  if (!ui.length) return 'ui にファイルが無い';
+  for (const f of ui) {
+    const m = code(f).match(/from\s+['"]([^'"]+)['"]/g) || [];
+    for (const s of m) if (/\/world\//.test(s)) return `${relative(GAME2, f)} が ${s}`;
+  }
+  return true;
+});
+
+check('flow は ui を import していない（向きは一方向）', () => {
+  const flow = FILES.filter(f => f.includes(`${'/'}flow${'/'}`));
+  if (!flow.length) return 'flow にファイルが無い';
+  for (const f of flow) {
+    const m = code(f).match(/from\s+['"]([^'"]+)['"]/g) || [];
+    for (const s of m) if (/\/ui\//.test(s)) return `${relative(GAME2, f)} が ${s}`;
+  }
+  return true;
+});
+
+check('flow は DOM を知らない', () => {
+  const flow = FILES.filter(f => f.includes(`${'/'}flow${'/'}`));
+  const bad = flow.filter(f => /\b(document|window|localStorage|requestAnimationFrame)\b/.test(code(f)));
+  return bad.length === 0 || bad.map(f => relative(GAME2, f)).join(' ');
+});
+
+check('src の js が全部そのまま構文として通る（頁が黙って落ちない）', () => {
+  for (const f of FILES) {
+    const r = spawnSync(process.execPath, ['--check', f], { encoding: 'utf8' });
+    if (r.status !== 0) {
+      return `${relative(GAME2, f)}：${(r.stderr || '').split('\n').filter(Boolean).slice(0, 2).join(' / ')}`;
+    }
+  }
+  return true;
+});
+
+check('地図が画像アセットを使っていない（線画と塗り分けだけ）', () => {
+  const ui = FILES.filter(f => f.includes(`${'/'}ui${'/'}`));
+  for (const f of ui) {
+    if (/new\s+Image\s*\(|\.png|\.jpg|\.svg|drawImage\s*\(/.test(code(f))) {
+      return `${relative(GAME2, f)} が画像を読んでいる`;
+    }
+  }
+  return true;
+});
+
+check('地図が家とエリアを両方描いている（A-19 の要件）', () => {
+  const src = code(join(GAME2, 'src/ui/map.js'));
+  if (!/AREA_RECT/.test(src)) return 'エリアの区画が無い';
+  if (!/HOUSES_PER_VILLAGE/.test(src)) return '30枠を知らない';
+  if (!/_houseBox/.test(src)) return '家の箱を描いていない';
+  if (!/_person/.test(src)) return '個体を描いていない';
+  return true;
+});
+
+check('地図の位置は乱数ではなく、i から必ず同じ場所が出る', () => {
+  const M = readFileSync(join(GAME2, 'src/ui/map.js'), 'utf8');
+  if (/Math\.random/.test(M)) return 'Math.random を使っている';
+  if (!/function hash01/.test(M)) return '決まった散らしが無い';
+  return true;
+});
+
+// ===========================================================================
 section('繋いだ状態（index.html）');
 // ===========================================================================
 // 旧版の教訓そのもの：「13項目が緑のままゲームが起動していなかった」。
@@ -1383,14 +1733,45 @@ check('index.html のスクリプトが構文として通る（頁が黙って�
   return true;
 });
 
-check('index.html が読んでいるファイルが実在する', () => {
+check('index.html から辿れるファイルが全部実在して、world まで届く', () => {
   if (!PAGE_SCRIPT) return 'スクリプトが無い';
-  const paths = [...PAGE_SCRIPT.matchAll(/['"](\.\/[^'"]+\.js)['"]/g)].map(m => m[1]);
-  if (!paths.length) return 'import しているファイルが1つも無い';
-  for (const rel of paths) {
-    if (!existsSync(join(GAME2, rel))) return `${rel} が無い`;
+  const seeds = [...PAGE_SCRIPT.matchAll(/['"](\.\/[^'"]+\.js)['"]/g)].map(m => m[1]);
+  if (!seeds.length) return 'import しているファイルが1つも無い';
+  // 推移的に辿る。頁 → ui → flow → world → core が1本で繋がっていること
+  const seen = new Set();
+  const stack = seeds.map(p => join(GAME2, p));
+  while (stack.length) {
+    const f = stack.pop();
+    if (seen.has(f)) continue;
+    seen.add(f);
+    if (!existsSync(f)) return `${relative(GAME2, f)} が無い`;
+    const dir = dirname(f);
+    for (const m of code(f).matchAll(/from\s+['"](\.[^'"]+)['"]/g)) {
+      stack.push(join(dir, m[1]));
+    }
   }
-  return paths.some(p => p.includes('/world/')) ? true : 'world を1つも読んでいない';
+  const rels = [...seen].map(f => relative(GAME2, f));
+  for (const layer of ['ui/', 'flow/', 'world/', 'core/']) {
+    if (!rels.some(r => r.includes(layer))) return `${layer} に届いていない`;
+  }
+  return true;
+});
+
+check('index.html が style.css を読んでいて、それが実在する', () => {
+  const m = PAGE.match(/href="([^"]+\.css)"/);
+  if (!m) return 'style.css を読んでいない';
+  return existsSync(join(GAME2, m[1])) ? true : `${m[1]} が無い`;
+});
+
+check('画面が探す id が、頁に全部ある（旧版で踏んだ「黙って落ちる」）', () => {
+  // ui/main.js の $('xxx') と index.html の id="xxx" を突き合わせる。
+  // 1つでも欠けると頁は例外で止まり、検査だけが緑のままになる
+  const src = readFileSync(join(GAME2, 'src/ui/main.js'), 'utf8');
+  const want = [...src.matchAll(/\$\('([A-Za-z0-9_-]+)'\)/g)].map(m => m[1]);
+  if (!want.length) return '$() を1つも使っていない';
+  const have = new Set([...PAGE.matchAll(/id="([^"]+)"/g)].map(m => m[1]));
+  const missing = [...new Set(want)].filter(id => !have.has(id));
+  return missing.length === 0 ? true : `頁に無い id: ${missing.join(' ')}`;
 });
 
 // ---- 実測の控え（検査ではない。報告のために出す） ------------------------

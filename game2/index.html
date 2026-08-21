@@ -3,133 +3,67 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>増殖 game2</title>
-<style>
-  :root { color-scheme: light dark; }
-  body {
-    margin: 0; padding: 24px;
-    font: 14px/1.7 system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
-    background: #14150f; color: #e8e4d8;
-  }
-  h1 { font-size: 16px; letter-spacing: .12em; margin: 0 0 4px; font-weight: 600; }
-  p.note { margin: 0 0 20px; color: #8d8a7c; font-size: 12px; }
-  table { border-collapse: collapse; }
-  td { padding: 2px 16px 2px 0; vertical-align: top; }
-  td:first-child { color: #8d8a7c; white-space: nowrap; }
-  .ok { color: #7fbf5f; }
-  .ng { color: #d9614c; }
-  code { color: #c9b98a; }
-</style>
+<title>増殖</title>
+<link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<h1>増殖 game2</h1>
-<p class="note">
-  土台（core）と世界（world）の起動確認。UI ができたらこの頁は差し替える。<br>
-  <code>python3 -m http.server</code> で開くこと（ESモジュールは file:// では読めない）。<br>
-  継ぎ目の検査は <code>node game2/test/check.js</code>。
-</p>
-<table id="out"></table>
+
+<header id="bar">
+  <div class="clock">
+    <b id="date">1年1月1日</b>
+    <span id="season" class="pill s0">春</span>
+    <span id="tickno" class="dim">0 tick</span>
+  </div>
+
+  <div class="gauges">
+    <div class="g"><b id="pop">10</b><i>人口</i><u id="popsub"></u></div>
+    <div class="g"><b id="houses">5 / 30</b><i>家</i><u id="housesub"></u></div>
+    <div class="g wide">
+      <b id="food">0</b><i>蔵</i><u id="foodsub"></u>
+      <span class="meter"><i id="foodbar"></i></span>
+    </div>
+  </div>
+
+  <div class="ctl">
+    <button id="playbtn" title="空白キー">▶</button>
+    <span id="speeds" class="speeds"></span>
+    <button id="stepday" class="ghost" title="1日だけ進める（.）">＋1日</button>
+    <button id="stepmonth" class="ghost">＋1ヶ月</button>
+    <button id="fitbtn" class="ghost" title="全体を映す（f）">全体</button>
+    <span id="seedlabel" class="dim"></span>
+  </div>
+</header>
+
+<div id="banners">
+  <div id="ration" class="banner" hidden></div>
+  <div id="extinct" class="banner bad" hidden>絶滅した。ここには誰もいない</div>
+</div>
+
+<main>
+  <canvas id="map"></canvas>
+  <aside id="side">
+    <section id="detail"></section>
+
+    <section class="dev" id="devbox">
+      <h3>収束計<small>開発用。本番には出さない（A-14／A-11）</small></h3>
+      <div id="devout"></div>
+      <div class="row">
+        <button id="ff10" class="ghost">10年飛ばす</button>
+        <button id="ff100" class="ghost">100年飛ばす</button>
+      </div>
+    </section>
+
+    <section id="chron">
+      <h3>年代記<small>初めて起きたことだけが載る</small></h3>
+      <ul id="chronlist"></ul>
+    </section>
+  </aside>
+</main>
+
+<div id="toast"></div>
 
 <script type="module">
-import { RNG } from './src/core/rng.js';
-import * as C from './src/core/calendar.js';
-import { make } from './src/core/arrays.js';
-import * as S from './src/core/stats.js';
-
-const rows = [];
-function line(label, value, ok = true) {
-  rows.push(`<tr><td>${label}</td><td class="${ok ? 'ok' : 'ng'}">${value}</td></tr>`);
-}
-
-try {
-  const r = new RNG(20260821);
-  const a = [r.next(), r.next(), r.next()].map(v => v.toFixed(6)).join(' ');
-  const r2 = new RNG(20260821);
-  const b = [r2.next(), r2.next(), r2.next()].map(v => v.toFixed(6)).join(' ');
-  line('乱数（種 20260821）', a, a === b);
-  line('同じ種で同じ列', a === b ? '合う' : '食い違う', a === b);
-
-  // 創世から10年。1日1tick で回してみる
-  const cal = new C.Calendar(0);
-  let winters = 0, months = 0;
-  for (let i = 0; i < C.DAYS_PER_YEAR * 10; i++) {
-    const e = cal.step();
-    if (e.monthStart) { months++; if (cal.winter) winters++; }
-  }
-  line('10年ぶん進めた', `${cal.toString()} ／ ${months}ヶ月・冬 ${winters}ヶ月`, months === 120);
-
-  // 骨組みどおりの列を確保して、十匹を置く
-  const people = make(64, {
-    age: 'u16', sex: 'u8', house: 'u32', village: 'u16',
-    rank: 'u8', post: 'u8', state: 'u32', wealth: 'f32', alive: 'u8',
-    gene: 'f32*104', ev: 'f32*104',
-  });
-  const g = new RNG(1);
-  for (let i = 0; i < 10; i++) {
-    const at = people.alloc();
-    people.alive[at] = 1;
-    people.sex[at] = g.int(2);                        // 性別は完全ランダムで1/2
-    people.age[at] = C.yearsToMonths(18 + g.int(9));  // 月齢で持つ
-    for (let s = 0; s < S.COUNT; s++) people.gene[s][at] = g.clampNormal(50, 18, 0, 100);
-  }
-  const women = [...people.sex.slice(0, people.len)].filter(v => v === 1).length;
-  line('創世の十匹', `${people.len}体（女 ${women}）`, people.len === 10);
-  line('1人あたり', `${people.bytesPerRow()} バイト（10万人で ${(people.bytesPerRow() * 1e5 / 1e6).toFixed(1)}MB）`);
-
-  let armA = 0;
-  for (let i = 0; i < S.COUNT; i++) if (S.ARM[i] === S.ARM_A) armA++;
-  line('ステの数', `${S.COUNT}（からだ${S.BY_CATEGORY[0].length}・あたま${S.BY_CATEGORY[1].length}・こころ${S.BY_CATEGORY[2].length}）`, S.COUNT === 104);
-  line('染色体と腕', `${S.CHROMOSOME_COUNT}本 ／ A${armA} 対 B${S.COUNT - armA}`, armA === 52);
-  const id = S.needId('野心');
-  line('例：野心', `${S.CHROMOSOME[id]}番染色体${S.armOf(id)}腕 ／ 対=${S.STATS[id].pairName ?? 'なし'} ／ ${S.inheritOf(id)} ／ レア度${S.rarityOf(id)}`);
-
-  // ---- 世界（world/）。十匹を置いて100年まわす ----------------------------
-  const { World, converge, lineages } = await import('./src/world/world.js');
-  const PE = await import('./src/world/people.js');
-  const VI = await import('./src/world/village.js');
-
-  const t0 = performance.now();
-  const world = new World(1).genesis();
-  const gen0 = world.summary();
-  line('創世の十匹', `${gen0.pop}体（女 ${gen0.women}）／ 家 ${gen0.houses}軒 ／ 身ごもり ${gen0.pregnant}人`, gen0.pop === 10);
-
-  const marks = [];
-  for (let y = 1; y <= 100; y++) {
-    world.runYears(1);
-    if (y % 25 === 0) marks.push(`${y}年:${world.people.aliveCount()}人/${world.houses.count}軒`);
-  }
-  const ms = performance.now() - t0;
-  const s2 = world.summary();
-  line('100年まわした', marks.join('　'), s2.pop > 0);
-  line('いま', `${s2.date} ／ ${s2.pop}人（大人${s2.adults}・子ども${s2.children}）／ 家 ${s2.houses}軒 ／ 蔵 ${s2.food.toFixed(0)}`);
-  line('生まれと死に', `生まれた ${s2.born} ／ 死んだ ${s2.died}（${s2.byCause.map((n, k) => n ? PE.DEATH_NAMES[k] + n : null).filter(Boolean).join('・')}）`);
-
-  const cv = converge(world);
-  line('収束計', `ステの平均 ${cv.meanOfStats.toFixed(1)} ／ ばらつき ${cv.sdOfStats.toFixed(1)} ／ 最良個体で80超 ${cv.bestAbove80}個 ／ 血統 ${cv.lineages}/10`);
-  line('速さ', `100年（36,000tick）で ${ms.toFixed(0)}ms`);
-
-  // 誰がどこで何をしているか（A-19：見て分かることが要件）
-  const byArea = new Array(VI.AREA_COUNT).fill(0);
-  for (const i of world.people.living()) byArea[world.people.a.job[i]]++;
-  line('誰がどこにいるか', byArea.map((n, k) => `${VI.AREA_NAMES[k]}${n}`).join('　'));
-
-  // いちばん強い者を1人だけ覗く（オーナーは全部見える・A-7）
-  let who = -1, bestv = -1;
-  const idPow = S.needId('最大筋力');
-  for (const i of world.people.living()) {
-    const v = world.people.effective(i, idPow);
-    if (v > bestv) { bestv = v; who = i; }
-  }
-  if (who >= 0) {
-    const P2 = world.people;
-    line('村いちばんの力持ち',
-      `${P2.ageYears(who)}歳${PE.SEX_NAMES[P2.a.sex[who]]} ／ 才能 ${P2.a.gene[idPow][who].toFixed(1)} ＋ 努力値 ${P2.a.ev[idPow][who].toFixed(1)} × デバフ ${P2.debuff(who, idPow).toFixed(2)} ＝ 実効値 ${bestv.toFixed(1)}`);
-  }
-  line('1人あたり', `${world.people.bytesPerRow()} バイト（10万人で ${(world.people.bytesPerRow() * 1e5 / 1e6).toFixed(1)}MB）`);
-} catch (e) {
-  line('起動', String(e && e.message || e), false);
-}
-document.getElementById('out').innerHTML = rows.join('');
+import './src/ui/main.js';
 </script>
 </body>
 </html>
