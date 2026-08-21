@@ -1716,10 +1716,15 @@ check('src の js が全部そのまま構文として通る（頁が黙って�
 });
 
 check('地図が画像アセットを使っていない（線画と塗り分けだけ）', () => {
+  // 禁じたいのは**外部の画像ファイルを読み込むこと**（07 A-1「スプライトは入れない」）。
+  // canvas → canvas の転送は画像素材ではないので通す（旧15-設計-描画.md §13-0 が名指しで
+  // 「これはスプライトではない」と書いている）。drawImage を一律で禁じると、
+  // 肖像や、村を箱にして焼くズームアウト（A-19）が作れなくなる。
   const ui = FILES.filter(f => f.includes(`${'/'}ui${'/'}`));
   for (const f of ui) {
-    if (/new\s+Image\s*\(|\.png|\.jpg|\.svg|drawImage\s*\(/.test(code(f))) {
-      return `${relative(GAME2, f)} が画像を読んでいる`;
+    // 拡張子は語末でだけ拾う。`p.gifts` の `.gif` に当たると誤検知する
+    if (/new\s+Image\s*\(|createImageBitmap\s*\(|\.(png|jpe?g|gif|webp|svg)\b(?!\w)/.test(code(f))) {
+      return `${relative(GAME2, f)} が外部の画像を読んでいる`;
     }
   }
   return true;
@@ -1938,6 +1943,49 @@ check('成長率の倍率（天賦1.3／剛健1.2はからだだけ）', () => {
   if (GIFT.growthMul(pp, i, body) !== 1.2) return '剛健がからだに効いていない';
   if (GIFT.growthMul(pp, i, head) !== 1) return '剛健があたまにも効いてしまっている';
   return true;
+});
+
+check('**循環参照が無い**（import の順番に助けられていない）', () => {
+  // UI班が踏んだ事故：looks.js が people.js から ST_HUNGRY を引き、
+  // people.js は looks.js から LOOK_SPEC を引いていた。
+  // それでも検査は緑だった。import の順番がたまたま逃げていただけで、
+  // flow/run.js を直に叩くと 'Cannot access LOOK_SPEC before initialization' で落ちる。
+  const edges = new Map();
+  for (const f of FILES) {
+    if (!f.endsWith('.js')) continue;
+    const from = relative(GAME2, f);
+    const outs = [];
+    for (const m of code(f).matchAll(/(?:^|\n)\s*(?:import|export)[^;]*?from\s*['"]([^'"]+)['"]/g)) {
+      const spec = m[1];
+      if (!spec.startsWith('.')) continue;
+      outs.push(relative(GAME2, join(dirname(f), spec)));
+    }
+    edges.set(from, outs);
+  }
+  const state = new Map();   // 0=未訪問 1=訪問中 2=済
+  let cycle = null;
+  const walk = (n, path) => {
+    if (state.get(n) === 2) return false;
+    if (state.get(n) === 1) { cycle = path.slice(path.indexOf(n)).concat(n); return true; }
+    state.set(n, 1);
+    for (const m of (edges.get(n) || [])) if (walk(m, path.concat(n))) return true;
+    state.set(n, 2);
+    return false;
+  };
+  for (const n of edges.keys()) if (walk(n, [])) break;
+  return cycle ? `循環している: ${cycle.join(' → ')}` : true;
+});
+
+check('入口（flow/run.js）を直に読み込んでも落ちない', () => {
+  // 循環参照は「どこから読み始めたか」で落ちたり落ちなかったりする。
+  // 検査が world から読み始めているせいで逃げていた事故があったので、UI と同じ入口からも試す。
+  const r = spawnSync(process.execPath,
+    ['--input-type=module', '-e',
+     `import * as R from ${JSON.stringify(join(GAME2, 'src', 'flow', 'run.js'))};` +
+     `const run = new R.Run({dev:true}); run.fastForwardYears(5);` +
+     `if (!run.person(0)) throw new Error('person(0) が null');`],
+    { encoding: 'utf8' });
+  return r.status === 0 ? true : (r.stderr || '').split('\n').slice(0, 3).join(' / ');
 });
 
 // ===========================================================================

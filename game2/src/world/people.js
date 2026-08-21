@@ -16,6 +16,7 @@
 import * as S from '../core/stats.js';
 import * as C from '../core/calendar.js';
 import { make } from '../core/arrays.js';
+import { ST_PREGNANT, ST_HUNGRY, ST_SICK, ST_GRIEF, ST_NURSING } from '../core/states.js';
 import { LOOK_SPEC, FOUNDER_COUNT } from './looks.js';
 import { lifespanOverride, deathless } from './gifts.js';
 
@@ -36,11 +37,8 @@ export const NO_VILLAGE = 0xFFFF;
 export const NO_ONE = -1;
 
 // 状態異常（A-3 の「状態」。1ヶ月単位で計算する）。u32 のビット
-export const ST_PREGNANT = 1 << 0;   // 妊娠。10ヶ月
-export const ST_HUNGRY   = 1 << 1;   // 飢え
-export const ST_SICK     = 1 << 2;   // 病
-export const ST_GRIEF    = 1 << 3;   // 喪
-export const ST_NURSING  = 1 << 4;   // 産後。次の子までの間
+// 状態のビットは core/states.js にある（循環参照を避けるため）。ここからも出しておく
+export { ST_PREGNANT, ST_HUNGRY, ST_SICK, ST_GRIEF, ST_NURSING } from '../core/states.js';
 export const STATE_NAMES = [
   [ST_PREGNANT, '妊娠'], [ST_HUNGRY, '飢え'], [ST_SICK, '病'],
   [ST_GRIEF, '喪'], [ST_NURSING, '産後'],
@@ -135,7 +133,6 @@ export const SPEC = {
   house: 'u32',
   village: 'u16',
   rank: 'u8',
-  post: 'u8',
   job: 'u8',             // どのエリアで働いているか（village.js の AREA）
   wealth: 'f32',
   state: 'u32',
@@ -194,7 +191,6 @@ export class People {
   get house() { return this.a.house; }
   get village() { return this.a.village; }
   get rank() { return this.a.rank; }
-  get post() { return this.a.post; }
   get job() { return this.a.job; }
   get state() { return this.a.state; }
   get wealth() { return this.a.wealth; }
