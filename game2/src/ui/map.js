@@ -70,7 +70,14 @@ const COL = {
   // 死んでいることは**×という形**が言っている。色はいらない
   dead:         'rgba(214,206,186,0.85)',
   snow:         'rgba(190,210,235,0.10)',
+  storeBack:    '#191710',
+  store:        '#6e6142',
+  storeEdge:    '#8a7c58',
 };
+
+// 蔵の帯。**住居の下端（514）と畑の上端（548）のあいだ。ここには誰も立たない。**
+// A-10「常に動いているものを3つ」の3つ目。細胞が増える／**蔵が満ちる**／季節が変わる
+export const STORE_BAR = { x: 60, y: 522, w: 920, h: 20 };
 
 // ---- 決まった散らし（乱数ではない。同じ i からは必ず同じ位置が出る） --------
 function hash01(n) {
@@ -438,6 +445,9 @@ export class MapView {
       this._houseBox(g, b, hm, z);
     }
 
+    // ---- 蔵（A-10：常に動いているもの3つの3つ目） ----
+    this._granary(g, vv, z);
+
     // ---- エリアの名札 ----
     this._areaLabel(g, F, `森（狩り）　${vv.byArea[AREA_FOREST]}人`, z);
     this._areaLabel(g, T, `訓練場　${vv.byArea[AREA_TRAIN]}人`, z);
@@ -479,6 +489,63 @@ export class MapView {
       if (p.v !== vv.v) continue;
       const at = spotOf(p.i, p.at, p.at === AREA_HOME ? p.slot : -1);
       this._person(g, at, p, z, sel === p.i, selH >= 0 && p.h === selH);
+    }
+  }
+
+  /**
+   * 蔵。**A-10 の「常に動いているもの3つ」の3つ目。**
+   *
+   * 満ち／減りは**数字ではなく形**で読ませる（A-1：まず絵で分かる。数字は裏づけ）。
+   * **色は使わない**（A-5）。足りないことは**塗りを縞に割る**ことで言う。
+   * 人が立たない帯に置く——隠れたら「動いているもの」の役をしない。
+   */
+  _granary(g, vv, z) {
+    const B = STORE_BAR;
+    const cap = Math.max(1, vv.foodCap);
+    const fill = Math.max(0, Math.min(1, vv.food / cap));
+    // 1年ぶんの食い扶持。**「1世代ぶん」ではない**（1世代は26年。UI班の数が来たら差し替える）
+    const yearNeed = vv.eaten * 12;
+    const markAt = Math.max(0, Math.min(1, yearNeed / cap));
+    const thin = vv.food < yearNeed;                 // 線より下＝来年までもたない
+
+    g.fillStyle = COL.storeBack;
+    g.fillRect(B.x, B.y, B.w, B.h);
+
+    const w = B.w * fill;
+    if (w > 0.5) {
+      g.fillStyle = COL.store;
+      if (!thin) {
+        g.fillRect(B.x, B.y, w, B.h);
+      } else {
+        // **足りない＝塗りが縞に割れる。**色ではなく形で言う（A-5）
+        const step = Math.max(2.5, 5 / z);
+        for (let x = B.x; x < B.x + w; x += step) {
+          g.fillRect(x, B.y, Math.max(0.8, step * 0.45), B.h);
+        }
+      }
+    }
+
+    g.strokeStyle = COL.storeEdge;
+    g.lineWidth = 1.2 / z;
+    g.strokeRect(B.x, B.y, B.w, B.h);
+
+    // 1年線。**線より下は来年までもたない**
+    const mx = B.x + B.w * markAt;
+    g.strokeStyle = COL.labelHi;
+    g.lineWidth = 1.6 / z;
+    g.beginPath();
+    g.moveTo(mx, B.y - 4); g.lineTo(mx, B.y + B.h + 4);
+    g.stroke();
+
+    if (z > 0.42) {
+      const fs = 11 / z;
+      g.font = `${fs}px system-ui, sans-serif`;
+      g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillStyle = COL.labelHi;
+      g.fillText(`蔵 ${vv.food.toFixed(0)} / ${cap}`, B.x + 6, B.y + B.h / 2);
+      g.textAlign = 'right';
+      g.fillStyle = COL.label;
+      g.fillText(thin ? '一年もたない' : '一年ぶん', mx - 5, B.y + B.h / 2);
     }
   }
 
