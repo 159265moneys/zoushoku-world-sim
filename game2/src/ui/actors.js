@@ -23,10 +23,12 @@ layout(location=0) in vec2 a_corner;
 layout(location=1) in vec4 a_pos;      // x, y, r, dark
 layout(location=2) in vec4 a_blood;    // hue1, hue2, sediment, sat
 layout(location=3) in vec4 a_form;     // corners, special, stripeV, stripeH
+layout(location=4) in vec4 a_extra;    // cells（＝熟練）, 空き3つ
 uniform vec2 u_res;
-out vec2 v_uv; out vec4 v_blood; out vec4 v_form; out float v_px; out float v_dark;
+out vec2 v_uv; out vec4 v_blood; out vec4 v_form; out vec4 v_extra;
+out float v_px; out float v_dark;
 void main(){
-  v_uv = a_corner; v_blood = a_blood; v_form = a_form;
+  v_uv = a_corner; v_blood = a_blood; v_form = a_form; v_extra = a_extra;
   v_px = a_pos.z; v_dark = a_pos.w;
   vec2 p = a_pos.xy + a_corner * a_pos.z;
   gl_Position = vec4(p / u_res * 2.0 - 1.0, 0.0, 1.0);
@@ -35,7 +37,8 @@ void main(){
 
 const FS = `#version 300 es
 precision highp float;
-in vec2 v_uv; in vec4 v_blood; in vec4 v_form; in float v_px; in float v_dark;
+in vec2 v_uv; in vec4 v_blood; in vec4 v_form; in vec4 v_extra;
+in float v_px; in float v_dark;
 out vec4 o;
 const float TAU = 6.2831853;
 
@@ -90,6 +93,17 @@ void main(){
     else if (nv > 0.5 || nh > 0.5) ink = 1.0 - smoothstep(th*0.7, th, min(mv, mh));
     col = mix(col, col * 0.62, ink * 0.85);
   }
+  // 細胞＝熟練（A-4：数えられること／A-10：常に動いているもの3つの1つ）。
+  // 模様（暗い墨）の上に**光の粒**として置く。明暗が逆なので、模様と喧嘩しない。
+  // 22px 未満では数えられないので出さない——数えられないなら意味がない
+  float cells = v_extra.x;
+  if (v_px > 11.0 && cells > 0.5) {
+    float seg = TAU / cells;
+    float ca  = floor((atan(uv.y, uv.x) + 1.5708) / seg + 0.5) * seg - 1.5708;
+    float cd  = length(uv - vec2(cos(ca), sin(ca)) * 0.66);
+    col = mix(col, vec3(1.0, 0.99, 0.93), (1.0 - smoothstep(0.085, 0.115, cd)) * 0.82);
+  }
+
   if (v_px > 9.0) {                            // 目。18px 以下では読めないので出さない
     float e = min(length(uv - vec2(-0.34,-0.20)), length(uv - vec2(0.34,-0.20)));
     col = mix(col, vec3(0.09,0.08,0.07), 1.0 - smoothstep(0.13, 0.17, e));
@@ -100,7 +114,7 @@ void main(){
 // 生きている者の彩度。**彩度が言うのは生死だけ**（A-5）。死ぬと 0 へ落ちる
 export const SAT_ALIVE = 0.46;
 
-const FLOATS = 12;              // pos4 + blood4 + form4
+const FLOATS = 16;              // pos4 + blood4 + form4 + extra4
 
 export class ActorLayer {
   /** @param {HTMLCanvasElement} canvas 2Dの盤面に重ねる、透明なキャンバス */
@@ -138,7 +152,7 @@ export class ActorLayer {
     // （実測：split と full で±10%。差が出るのは50万から）。実装を単純にする
     this.buf = gl.createBuffer();
     const stride = FLOATS * 4;
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < 4; k++) {
       gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
       gl.enableVertexAttribArray(1 + k);
       gl.vertexAttribPointer(1 + k, 4, gl.FLOAT, false, stride, k * 16);
@@ -164,12 +178,13 @@ export class ActorLayer {
    * 1体積む。**座標は画面座標（devicePixelRatio を掛けたあと）**。
    * sim は座標を知らないので、掛け算は呼び手（map.js）の仕事。
    */
-  push(x, y, r, dark, hue1, hue2, sediment, sat, corners, special, stripeV, stripeH) {
+  push(x, y, r, dark, hue1, hue2, sediment, sat, corners, special, stripeV, stripeH, cells = 0) {
     if (!this.ok || this.n >= this.cap) return;
     const d = this.data, o = this.n * FLOATS;
     d[o]    = x; d[o+1] = y; d[o+2] = r; d[o+3] = dark;
     d[o+4]  = hue1; d[o+5] = hue2; d[o+6] = sediment; d[o+7] = sat;
     d[o+8]  = corners; d[o+9] = special; d[o+10] = stripeV; d[o+11] = stripeH;
+    d[o+12] = cells; d[o+13] = 0; d[o+14] = 0; d[o+15] = 0;
     this.n++;
   }
 

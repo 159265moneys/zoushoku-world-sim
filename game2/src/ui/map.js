@@ -562,7 +562,8 @@ export class MapView {
       p.weak,                                           // 明度＝弱っている、それだけ
       p.hue1, p.hue2, p.sediment,
       SAT_ALIVE,                                        // 彩度＝生死。生きている者は固定
-      p.corners, p.special, p.stripeV, p.stripeH);
+      p.corners, p.special, p.stripeV, p.stripeH,
+      p.cells);        // 細胞＝熟練（A-4／A-10）
   }
 
   /** WebGL2 が無い環境の落とし先。丸と色相だけ。**記号は諦める** */
