@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>増殖 game2</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 24px;
+    font: 14px/1.7 system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background: #14150f; color: #e8e4d8;
+  }
+  h1 { font-size: 16px; letter-spacing: .12em; margin: 0 0 4px; font-weight: 600; }
+  p.note { margin: 0 0 20px; color: #8d8a7c; font-size: 12px; }
+  table { border-collapse: collapse; }
+  td { padding: 2px 16px 2px 0; vertical-align: top; }
+  td:first-child { color: #8d8a7c; white-space: nowrap; }
+  .ok { color: #7fbf5f; }
+  .ng { color: #d9614c; }
+  code { color: #c9b98a; }
+</style>
+</head>
+<body>
+<h1>増殖 game2</h1>
+<p class="note">
+  土台（core）だけの起動確認。UI ができたらこの頁は差し替える。<br>
+  <code>python3 -m http.server</code> で開くこと（ESモジュールは file:// では読めない）。<br>
+  継ぎ目の検査は <code>node game2/test/check.js</code>。
+</p>
+<table id="out"></table>
+
+<script type="module">
+import { RNG } from './src/core/rng.js';
+import * as C from './src/core/calendar.js';
+import { make } from './src/core/arrays.js';
+import * as S from './src/core/stats.js';
+
+const rows = [];
+function line(label, value, ok = true) {
+  rows.push(`<tr><td>${label}</td><td class="${ok ? 'ok' : 'ng'}">${value}</td></tr>`);
+}
+
+try {
+  const r = new RNG(20260821);
+  const a = [r.next(), r.next(), r.next()].map(v => v.toFixed(6)).join(' ');
+  const r2 = new RNG(20260821);
+  const b = [r2.next(), r2.next(), r2.next()].map(v => v.toFixed(6)).join(' ');
+  line('乱数（種 20260821）', a, a === b);
+  line('同じ種で同じ列', a === b ? '合う' : '食い違う', a === b);
+
+  // 創世から10年。1日1tick で回してみる
+  const cal = new C.Calendar(0);
+  let winters = 0, months = 0;
+  for (let i = 0; i < C.DAYS_PER_YEAR * 10; i++) {
+    const e = cal.step();
+    if (e.monthStart) { months++; if (cal.winter) winters++; }
+  }
+  line('10年ぶん進めた', `${cal.toString()} ／ ${months}ヶ月・冬 ${winters}ヶ月`, months === 120);
+
+  // 骨組みどおりの列を確保して、十匹を置く
+  const people = make(64, {
+    age: 'u16', sex: 'u8', house: 'u32', village: 'u16',
+    rank: 'u8', post: 'u8', state: 'u32', wealth: 'f32', alive: 'u8',
+    gene: 'f32*104', ev: 'f32*104',
+  });
+  const g = new RNG(1);
+  for (let i = 0; i < 10; i++) {
+    const at = people.alloc();
+    people.alive[at] = 1;
+    people.sex[at] = g.int(2);                        // 性別は完全ランダムで1/2
+    people.age[at] = C.yearsToMonths(18 + g.int(9));  // 月齢で持つ
+    for (let s = 0; s < S.COUNT; s++) people.gene[s][at] = g.clampNormal(50, 18, 0, 100);
+  }
+  const women = [...people.sex.slice(0, people.len)].filter(v => v === 1).length;
+  line('創世の十匹', `${people.len}体（女 ${women}）`, people.len === 10);
+  line('1人あたり', `${people.bytesPerRow()} バイト（10万人で ${(people.bytesPerRow() * 1e5 / 1e6).toFixed(1)}MB）`);
+
+  let armA = 0;
+  for (let i = 0; i < S.COUNT; i++) if (S.ARM[i] === S.ARM_A) armA++;
+  line('ステの数', `${S.COUNT}（からだ${S.BY_CATEGORY[0].length}・あたま${S.BY_CATEGORY[1].length}・こころ${S.BY_CATEGORY[2].length}）`, S.COUNT === 104);
+  line('染色体と腕', `${S.CHROMOSOME_COUNT}本 ／ A${armA} 対 B${S.COUNT - armA}`, armA === 52);
+  const id = S.needId('野心');
+  line('例：野心', `${S.CHROMOSOME[id]}番染色体${S.armOf(id)}腕 ／ 対=${S.STATS[id].pairName ?? 'なし'} ／ ${S.inheritOf(id)} ／ レア度${S.rarityOf(id)}`);
+} catch (e) {
+  line('起動', String(e && e.message || e), false);
+}
+document.getElementById('out').innerHTML = rows.join('');
+</script>
+</body>
+</html>

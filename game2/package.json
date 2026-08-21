@@ -1,0 +1,10 @@
+{
+  "name": "zoushoku-game2",
+  "private": true,
+  "type": "module",
+  "description": "増殖 game2。素のESモジュール。バンドラもフレームワークも使わない",
+  "scripts": {
+    "check": "node test/check.js",
+    "gen": "node tools/gen-stats.mjs"
+  }
+}
