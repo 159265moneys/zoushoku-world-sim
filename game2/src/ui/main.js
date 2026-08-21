@@ -194,7 +194,7 @@ function drawDetail() {
     <div class="kv"><span>世代</span><b>${p.generation}代目</b></div>
     <div class="kv"><span>寿命</span><b>${p.lifespan}年${p.baseLifespan !== p.lifespan ? `（素は${p.baseLifespan}年）` : ''}</b></div>
     <div class="kv"><span>からだの倍率</span><b>${fix(p.bodyDebuff, 2)}<span class="dim">　老い・古傷・状態</span></b></div>
-    <div class="kv"><span>熟練</span><b>${fix(p.mastery, 1)}<span class="dim">　${p.jobName}で積んだぶん</span></b></div>
+    <div class="kv"><span>熟練</span><b>${fix(p.mastery, 1)}<span class="dim">　${p.jobName}で積んだぶん／盤面の粒 ${p.cells}個</span></b></div>
     <div class="kv"><span>状態</span><b>${p.states.length ? p.states.join('・') : '<span class="dim">なし</span>'}</b></div>
     <div class="kv"><span>家族</span><b>${fam.length ? fam.join('　') : '<span class="dim">ひとり</span>'}</b></div>
     ${p.births ? `<div class="kv"><span>産んだ数</span><b>${p.births}回</b></div>` : ''}
