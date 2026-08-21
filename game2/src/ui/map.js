@@ -19,7 +19,9 @@ import {
   AREA_NAMES, AREA_HOME, AREA_FIELD, AREA_FOREST, AREA_TRAIN, AREA_FRONTIER,
   HOUSES_PER_VILLAGE,
 } from '../flow/run.js';
-import { ActorLayer } from './actors.js';
+import { ActorLayer, SAT_ALIVE } from './actors.js';
+
+export { SAT_ALIVE };
 
 // ---- 村1つぶんの大きさ（世界座標） ----------------------------------------
 export const VW = 1040, VH = 760;
@@ -69,9 +71,6 @@ const COL = {
   dead:         'rgba(214,206,186,0.85)',
   snow:         'rgba(190,210,235,0.10)',
 };
-
-// 生きている者の彩度。**彩度が言うのは生死だけ**（A-5）。死ぬと 0 へ落ちる
-export const SAT_ALIVE = 0.46;
 
 // ---- 決まった散らし（乱数ではない。同じ i からは必ず同じ位置が出る） --------
 function hash01(n) {

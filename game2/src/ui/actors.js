@@ -97,6 +97,9 @@ void main(){
   o = vec4(col, alpha);
 }`;
 
+// 生きている者の彩度。**彩度が言うのは生死だけ**（A-5）。死ぬと 0 へ落ちる
+export const SAT_ALIVE = 0.46;
+
 const FLOATS = 12;              // pos4 + blood4 + form4
 
 export class ActorLayer {
