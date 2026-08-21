@@ -141,6 +141,11 @@ export function ringsOf(ageYears) {
 /**
  * 弱っている度合い 0〜1。**明度が言うのはこれだけ**（A-5）。
  * 内訳（何で弱っているか）は言わない。それは個体票のアイコンの仕事。
+ *
+ * ※ キャラビジュアル班の持ち物だが、`world/looks.js` へは移せない。
+ *   people.js が looks.js を import しているので、looks.js から people.js（ST_*）を
+ *   引くと循環参照になり、`LOOK_SPEC` が初期化前に読まれて落ちる（実際に踏んだ）。
+ *   状態のビットを core へ出すまでは、ここに置く。**中身は触らないこと。**
  */
 export function weaknessOf(P, i, state) {
   const A = P.a;
@@ -610,6 +615,18 @@ export class Run {
       blood: A.blood[i], hue: blood.hue, pure: blood.pure, lines: blood.lines,
       look: lookOf(P, i), bloodTop: bloodTop2(P, i, f => FOUNDER_HUE[f]),
       bloodMix: bloodBreakdown(P, i),
+      // 肖像（ui/portrait.js）は snapshot の folk と同じ平たい形を見る。
+      // **1体を2通りの形で持たない。**盤面と個体票で同じ個体が違う姿になるのを防ぐ
+      ...(() => {
+        const lk = lookOf(P, i), bt = bloodTop2(P, i, f => FOUNDER_HUE[f]);
+        return {
+          hue1: FOUNDER_HUE[bt.first], hue2: bt.secondHue,
+          sediment: bt.sediment, bloodLines: bt.lines,
+          corners: lk.corners, stripeV: lk.stripeV, stripeH: lk.stripeH,
+          special: lk.special,
+          grow: Math.min(1, months / (26 * C.MONTHS_PER_YEAR)),
+        };
+      })(),
       weak: weaknessOf(P, i, A.state[i]),
       states,
       spouse: A.spouse[i] === NO_ONE ? -1 : A.spouse[i],

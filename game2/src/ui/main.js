@@ -14,6 +14,7 @@
 
 import { Run, HOUSES_PER_VILLAGE, RATION_YEARS } from '../flow/run.js';
 import { MapView } from './map.js';
+import { Portrait, portraitLegend } from './portrait.js';
 
 // ---- 立ち上げ --------------------------------------------------------------
 const q = new URLSearchParams(location.search);
@@ -135,8 +136,15 @@ function statRow(s) {
 }
 const STAT_HEAD = '<tr class="hd"><td>ステ</td><td class="sum">実効</td><td>内訳</td><td></td></tr>';
 
+// 肖像は WebGL の面を1枚使う。**個体票を作り直す前に必ず返す**（portrait.js の約束）
+let portrait = null;
+function dropPortrait() {
+  if (portrait) { portrait.dispose(); portrait = null; }
+}
+
 function drawDetail() {
   const box = $('detail');
+  dropPortrait();
   if (run.selectedHouse >= 0) {
     const h = run.house(run.selectedHouse);
     if (!h) { box.innerHTML = empty(); return; }
@@ -159,7 +167,8 @@ function drawDetail() {
   const p = run.person(i);
   if (!p) { box.innerHTML = empty(); return; }
 
-  const swatch = `<span class="blood" style="background:hsl(${p.hue.toFixed(0)} ${(34 + 40 * p.pure).toFixed(0)}% 55%)"></span>`;
+  // 肖像は h2 の前に差し込む。**80px 未満だと模様の本数が数えられない**（portrait.js）
+  const legend = portraitLegend(p);
   const fam = [];
   if (p.spouse >= 0) fam.push(link('伴侶', p.spouse));
   if (p.father >= 0) fam.push(link('父', p.father));
@@ -170,7 +179,13 @@ function drawDetail() {
   const shownStats = p.stats.filter(s => s.has);
 
   box.innerHTML = `
-    <h2>${swatch}${p.i}番<small>${p.age}歳 ${p.sexName}${p.alive ? '' : '　（死んでいる）'}</small></h2>
+    <div class="face">
+      <div class="portslot"></div>
+      <div class="facetext">
+        <h2>${p.i}番<small>${p.age}歳 ${p.sexName}${p.alive ? '' : '　（死んでいる）'}</small></h2>
+        <p class="looks">${legend.map(esc).join('<br>')}</p>
+      </div>
+    </div>
     ${p.alive ? '' : `<p class="died">${p.deathCauseName}で死んだ</p>`}
     <div class="kv"><span>いま居る</span><b>${p.atName}${p.at !== p.job ? `<span class="dim">　仕事は${p.jobName}（身重なので出ない）</span>` : ''}</b></div>
     <div class="kv"><span>家</span><b>${p.house >= 0 ? `${p.house}の家（${p.houseGen}代目・${p.houseSize}人）` : '家なし'}${p.isHead ? '　△家長' : ''}</b></div>
@@ -179,7 +194,7 @@ function drawDetail() {
     <div class="kv"><span>世代</span><b>${p.generation}代目</b></div>
     <div class="kv"><span>寿命</span><b>${p.lifespan}年${p.baseLifespan !== p.lifespan ? `（素は${p.baseLifespan}年）` : ''}</b></div>
     <div class="kv"><span>からだの倍率</span><b>${fix(p.bodyDebuff, 2)}<span class="dim">　老い・古傷・状態</span></b></div>
-    <div class="kv"><span>熟練（細胞）</span><b>${p.cells}／9　<span class="dim">努力値 ${fix(p.mastery, 1)}</span></b></div>
+    <div class="kv"><span>熟練</span><b>${fix(p.mastery, 1)}<span class="dim">　${p.jobName}で積んだぶん</span></b></div>
     <div class="kv"><span>状態</span><b>${p.states.length ? p.states.join('・') : '<span class="dim">なし</span>'}</b></div>
     <div class="kv"><span>家族</span><b>${fam.length ? fam.join('　') : '<span class="dim">ひとり</span>'}</b></div>
     ${p.births ? `<div class="kv"><span>産んだ数</span><b>${p.births}回</b></div>` : ''}
@@ -208,6 +223,14 @@ function drawDetail() {
           ? `${p.statsHidden}個は<b>この一体が持っていない</b>ので出していない（レア度S以上で才能ゼロ）。`
           : '<span class="dim">いまは104個すべてを持っている。レア度が初期値に効いていないため（設計班へ申し送り済み）。</span>'}</p>
     </details>`;
+
+  // 肖像を差す。**盤面と同じシェーダなので、同じ個体が同じ姿になる**
+  const slot = box.querySelector('.portslot');   // 動的に作る節点なので $ で引かない（検査が id の実在を見ている）
+  if (slot) {
+    portrait = new Portrait(96);
+    slot.appendChild(portrait.el);
+    portrait.render(p);
+  }
 
   for (const a of box.querySelectorAll('a[data-i]')) {
     a.onclick = e => { e.preventDefault(); run.select(Number(a.dataset.i)); drawDetail(); map.dirty = true; };
