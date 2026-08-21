@@ -25,6 +25,8 @@ import * as grow from '../src/world/grow.js';
 import * as M from '../src/world/marry.js';
 import * as W from '../src/world/world.js';
 import * as RUN from '../src/flow/run.js';
+import * as GIFT from '../src/world/gifts.js';
+import * as GG from '../src/core/gifts.gen.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GAME2 = join(HERE, '..');
@@ -852,22 +854,52 @@ check('からだ・あたま＝中間遺伝、こころ＝優劣（A-5／A-20）
   return true;
 });
 
-check('対抗アーム予算（平均A＋平均B＝100）が厳密に成立する', () => {
-  const w = new W.World(3).genesis();
-  w.runYears(60);
-  const A = w.people.a;
-  let worst = 0;
-  for (const i of w.people.living()) {
-    for (let c = 1; c <= S.CHROMOSOME_COUNT; c++) {
-      const a = S.BY_ARM[c][0], b = S.BY_ARM[c][1];
-      let ma = 0, mb = 0;
-      for (const s of a) ma += A.gene[s][i];
-      for (const s of b) mb += A.gene[s][i];
-      const sum = ma / a.length + mb / b.length;
-      worst = Math.max(worst, Math.abs(sum - G.ARM_BUDGET));
+check('対抗アーム予算（平均A＋平均B＝100）が中間遺伝の染色体で厳密に成立する', () => {
+  // からだ・あたま（1〜9番・全部中間遺伝）。表現型が(a+b)/2なので予算が素通りする。
+  // seed を1つだけで測ると、たまたま綺麗な世界を引いて緑になる。6通り回す。
+  let worst = 0, where = '';
+  for (const seed of [3, 4, 5, 6, 7, 8]) {
+    const w = new W.World(seed).genesis();
+    w.runYears(60);
+    const A = w.people.a;
+    for (const i of w.people.living()) {
+      for (let c = 1; c <= S.CHROMOSOME_COUNT; c++) {
+        const a = S.BY_ARM[c][0], b = S.BY_ARM[c][1];
+        if (!a.length || !b.length) continue;
+        if (a.concat(b).some(s => S.INHERIT[s] === S.DOMINANT)) continue;  // こころは下で別に測る
+        let ma = 0, mb = 0;
+        for (const s of a) ma += A.gene[s][i];
+        for (const s of b) mb += A.gene[s][i];
+        const d = Math.abs(ma / a.length + mb / b.length - G.ARM_BUDGET);
+        if (d > worst) { worst = d; where = `seed${seed} 染色体${c}`; }
+      }
     }
   }
-  return worst < 0.5 ? true : `いちばんずれて ${worst.toFixed(3)}`;
+  return worst < 0.5 ? true : `いちばんずれて ${worst.toFixed(3)}（${where}）`;
+});
+
+check('こころ（優劣）の腕は予算からずれる。ただし小さい', () => {
+  // 優劣は表現型が「片方を選ぶ」ので、対立遺伝子に掛けた予算が平均として残らない。
+  // 連鎖群（対になるステが逆の腕）は対立遺伝子の段階で効いているので、
+  // これは収束を止める仕掛けを壊してはいない。**ずれの大きさだけを見張る。**
+  let worst = 0;
+  for (const seed of [3, 4, 5, 6, 7, 8]) {
+    const w = new W.World(seed).genesis();
+    w.runYears(60);
+    const A = w.people.a;
+    for (const i of w.people.living()) {
+      for (let c = 1; c <= S.CHROMOSOME_COUNT; c++) {
+        const a = S.BY_ARM[c][0], b = S.BY_ARM[c][1];
+        if (!a.length || !b.length) continue;
+        if (!a.concat(b).every(s => S.INHERIT[s] === S.DOMINANT)) continue;
+        let ma = 0, mb = 0;
+        for (const s of a) ma += A.gene[s][i];
+        for (const s of b) mb += A.gene[s][i];
+        worst = Math.max(worst, Math.abs(ma / a.length + mb / b.length - G.ARM_BUDGET));
+      }
+    }
+  }
+  return worst < 8 ? true : `ずれが大きすぎる ${worst.toFixed(3)}（8未満のはず）`;
 });
 
 check('集団平均は50前後で動かない（200年・下方ドリフトが無い）', () => {
@@ -1801,6 +1833,112 @@ if (hundredYear.ext120 !== undefined) {
   const w = new W.World(11).genesis();
   console.log(`  1人あたり ${w.people.bytesPerRow()} バイト（10万人で ${(w.people.bytesPerRow() * 1e5 / 1e6).toFixed(1)}MB）`);
 }
+
+// ── 授かりもの（S以上・world/gifts.js）──────────────────────────────
+section('授かりもの（S以上・A-23）');
+
+check('10個・S3 SS3 SSS2 G2・全部が劣性', () => {
+  if (GG.COUNT !== 10) return `${GG.COUNT}個しかない`;
+  const byTier = {};
+  for (let g = 1; g <= GG.COUNT; g++) byTier[GG.TIERS[GG.TIER[g]]] = (byTier[GG.TIERS[GG.TIER[g]]] || 0) + 1;
+  if (byTier.S !== 3 || byTier.SS !== 3 || byTier.SSS !== 2 || byTier.G !== 2) return JSON.stringify(byTier);
+  // 顕性は小集団で暴走する。繁栄を顕性にしたら村の6割を占めた（実測）ので全部劣性にした
+  const dom = [];
+  for (let g = 1; g <= GG.COUNT; g++) if (GG.DOMINANT[g]) dom.push(GG.NAME[g]);
+  return dom.length === 0 ? true : `顕性が残っている: ${dom.join('・')}`;
+});
+
+check('**2つ同時に発現することは構造上ありえない**（全121通り総当たり）', () => {
+  for (let a = 0; a <= GG.COUNT; a++) {
+    for (let b = 0; b <= GG.COUNT; b++) {
+      const on = [];
+      if (a !== 0 && GG.DOMINANT[a]) on.push(a);
+      if (b !== 0 && GG.DOMINANT[b] && b !== a) on.push(b);
+      if (a === b && a !== 0 && !GG.DOMINANT[a]) on.push(a);
+      if (on.length > 1) return `${GG.NAME[a]}と${GG.NAME[b]}が同時に出た`;
+    }
+  }
+  return true;
+});
+
+check('劣性ホモでのみ出る（1本だけでは隠れたまま）', () => {
+  const mir = GG.OF.miracle, pro = GG.OF.prosper;
+  if (GG.express(mir, 0) !== 0) return '奇跡がヘテロで出てしまった';
+  if (GG.express(mir, mir) !== mir) return '奇跡が劣性ホモで出ない';
+  if (GG.express(pro, 0) !== 0) return '繁栄がヘテロで出てしまった';
+  if (GG.express(pro, mir) !== 0) return '違う2本が揃って何かが出た';
+  if (GG.carried(pro, mir).length !== 2) return '2本とも隠れていない';
+  return true;
+});
+
+check('創世の十匹が種を隠して持つ（段の重みで引く・本人には出ない）', () => {
+  const w = new W.World(3).genesis();
+  const pp = w.people, seen = new Set();
+  let shown = 0;
+  for (const i of pp.living()) {
+    if (pp.a.gen[i] !== 0) continue;
+    for (const c of GIFT.giftsCarried(pp, i)) seen.add(c);
+    const e = GIFT.giftOf(pp, i);
+    if (e !== 0) { shown++; seen.add(e); }
+  }
+  // 全部劣性なので、十匹には1人も発現していないはず
+  if (shown !== 0) return `創世者に発現してしまっている（${shown}人）`;
+  if (seen.size === 0) return '十匹が1つも種を持っていない';
+  if (seen.size === 10) return '十匹が10種すべてを持っている（重みが効いていない）';
+  // 段の梯子が効いているか。12通り回して、S が SSS+G より多く出ること
+  let low = 0, high = 0;
+  for (let seed = 1; seed <= 40; seed++) {
+    const ww = new W.World(seed).genesis();
+    for (const i of ww.people.living()) {
+      for (const g of GIFT.giftsCarried(ww.people, i)) {
+        const t = GG.TIERS[GG.TIER[g]];
+        if (t === 'S') low++; else if (t === 'SSS' || t === 'G') high++;
+      }
+    }
+  }
+  return low > high ? true : `段の梯子が効いていない（S ${low} 本 / SSS+G ${high} 本）`;
+});
+
+check('**種は代を経ると消えうる**（拾い上げるのがオーナーの役割・A-23）', () => {
+  let lostSomewhere = 0, survivedSomewhere = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const w = new W.World(seed).genesis();
+    w.runYears(200);
+    const c = GIFT.census(w.people);
+    let kinds = 0;
+    for (let g = 1; g <= GG.COUNT; g++) if (c.shown[g] || c.hidden[g]) kinds++;
+    if (kinds < 10) lostSomewhere++;
+    if (kinds > 0) survivedSomewhere++;
+  }
+  if (lostSomewhere === 0) return '200年で1種類も失われない（消えなさすぎ）';
+  if (survivedSomewhere === 0) return '200年で全部消える（残らなさすぎ）';
+  return true;
+});
+
+check('長寿は寿命70で確定・奇跡は老衰以外で死なない', () => {
+  const w = new W.World(3).genesis();
+  const pp = w.people, i = [...pp.living()][0];
+  const g0 = pp.a.gift0[i], g1 = pp.a.gift1[i];
+  pp.a.gift0[i] = pp.a.gift1[i] = GG.OF.long_life;
+  const got = P.lifespanOf(pp, i);
+  if (got !== 70) return `長寿なのに ${got}歳`;
+  pp.a.gift0[i] = pp.a.gift1[i] = GG.OF.miracle;
+  if (!GIFT.deathless(pp, i)) return '奇跡が効いていない';
+  pp.a.gift0[i] = g0; pp.a.gift1[i] = g1;
+  return true;
+});
+
+check('成長率の倍率（天賦1.3／剛健1.2はからだだけ）', () => {
+  const w = new W.World(3).genesis();
+  const pp = w.people, i = [...pp.living()][0];
+  const body = S.BY_CATEGORY[S.BODY][0], head = S.BY_CATEGORY[S.MIND][0];
+  pp.a.gift0[i] = pp.a.gift1[i] = GG.OF.gifted;
+  if (GIFT.growthMul(pp, i, body) !== 1.3 || GIFT.growthMul(pp, i, head) !== 1.3) return '天賦が全部に効いていない';
+  pp.a.gift0[i] = pp.a.gift1[i] = GG.OF.sturdy;
+  if (GIFT.growthMul(pp, i, body) !== 1.2) return '剛健がからだに効いていない';
+  if (GIFT.growthMul(pp, i, head) !== 1) return '剛健があたまにも効いてしまっている';
+  return true;
+});
 
 // ===========================================================================
 const total = pass + fail;

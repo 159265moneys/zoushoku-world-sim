@@ -12,6 +12,7 @@
 //   A-14 収束計。毎回走らせて前回と比較する
 
 import * as S from '../core/stats.js';
+import { seedFounder } from './gifts.js';
 import { foundLook } from './looks.js';
 import * as C from '../core/calendar.js';
 import { RNG } from '../core/rng.js';
@@ -71,7 +72,8 @@ export class World {
       P.a.birthTick[i] = -P.a.ageMonths[i] * C.DAYS_PER_MONTH;
       P.a.rank[i] = RANK_COMMON;
       P.a.blood[i] = 1 << k;   // 十匹それぞれに1本の旗を立てる
-      foundLook(P, i, k, rng);  // 見た目も十匹それぞれ違う（キャラビジュアル.md §3）
+      foundLook(P, i, k, rng);
+      seedFounder(P, i, k, rng);     // 授かりものの種を1本ずつ隠して持たせる（A-23）  // 見た目も十匹それぞれ違う（キャラビジュアル.md §3）
       P.a.gen[i] = 0;
       P.a.lifespan[i] = lifespanOf(P, i);
       P.a.job[i] = AREA_HOME;

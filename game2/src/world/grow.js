@@ -22,6 +22,7 @@
 //   ・年齢減衰（この下の evDecay）… 努力値が積まれる速さ。7歳が最速
 
 import * as S from '../core/stats.js';
+import { growthMul } from './gifts.js';
 import * as C from '../core/calendar.js';
 import { NO_VILLAGE, WORK_START_AGE } from './people.js';
 import { AREA_STATS, AREA_HOME, WHERE_CENTER } from './village.js';
@@ -84,7 +85,8 @@ export function evGain(P, i, s, weight, where) {
   if (dec <= 0) return 0;
   return EV_PER_MONTH * weight * room * dec
        * talentBonus(talent)
-       * S.placeMultiplier(s, where);
+       * S.placeMultiplier(s, where)
+       * growthMul(P, i, s);          // 授かりもの（天賦・剛健・明晰）A-23
 }
 
 /**

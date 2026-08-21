@@ -17,6 +17,7 @@ import * as S from '../core/stats.js';
 import * as C from '../core/calendar.js';
 import { make } from '../core/arrays.js';
 import { LOOK_SPEC, FOUNDER_COUNT } from './looks.js';
+import { lifespanOverride, deathless } from './gifts.js';
 
 // ---- 属性の番号 -----------------------------------------------------------
 export const SEX_MALE = 0, SEX_FEMALE = 1;
@@ -159,6 +160,11 @@ export const SPEC = {
   gen: 'u16',            // 何代目か（家族の単位。A-12）
   blood: 'u16',          // 創世の十匹のうち誰の血が入っているか。10ビットの旗。
                          // 子は 父の旗 | 母の旗。収束計「血統の生き残り数」がこれを数える
+
+  // 授かりもの（S以上・A-23）。**104ステとは別枠の1座位。**
+  // 0=野生型、1〜10=授かりもの。繁栄だけ顕性、残り9つは劣性ホモでのみ発現。
+  // 同じ座位なので、1人が2つ発現することは構造上ありえない
+  gift0: 'u8', gift1: 'u8',
 
   // 見た目（キャラビジュアル.md §2/§3）。**ステではない。**何にも効かない血統の指紋。
   // blood（旗）は「誰の血が入ったか」の有無しか言えないので、割合は別に持つ。
@@ -310,6 +316,9 @@ export function baseLifespanOf(P, i) {
  * 荷重が無ければ素のまま。近親が続いた家系は短くなる。
  */
 export function lifespanOf(P, i) {
+  // 長寿（S・A-23）は素の寿命も荷重も無視して70で確定する
+  const gift = lifespanOverride(P, i);
+  if (gift > 0) return gift;
   const base = baseLifespanOf(P, i);
   const v = Math.round(base * (0.75 + 0.25 * P.a.vitality[i]));
   return v < 20 ? 20 : v > 255 ? 255 : v;
@@ -341,6 +350,9 @@ export function agingAndDeath(P, tick, rng) {
         continue;
       }
     }
+
+    // 奇跡（G・A-23）。老衰以外では死なない。この先の病・飢え・お産・戦を全部素通りする
+    if (deathless(P, i)) continue;
 
     // 中世並の死亡率（確定事項の表）。ここが素の値。
     // 生存力（遺伝的荷重）はその上に乗る。閉じた血統は劣性ホモが溜まって死にやすくなる

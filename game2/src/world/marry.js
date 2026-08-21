@@ -20,6 +20,7 @@ import {
   ST_PREGNANT, ST_NURSING, ST_HUNGRY, DEATH_BIRTH, lifespanOf,
 } from './people.js';
 import { breed } from './genetics.js';
+import { deathless } from './gifts.js';
 
 // ---- 確定している数 -------------------------------------------------------
 export const MARRY_MIN_AGE = 18;
@@ -238,7 +239,8 @@ export function birthDay(P, houses, V, tick, rng) {
     // お産。軽さが高いほど死なない。多胎ほど重い
     const easy = A.gene[ID_EASY_BIRTH][mother] / 100;
     const risk = BIRTH_DEATH_P * (1.6 - easy) * count / A.vitality[mother];
-    if (rng.next() < risk) { P.kill(mother, tick, DEATH_BIRTH); mothersLost++; }
+    // 奇跡（G・A-23）はお産でも死なない
+    if (!deathless(P, mother) && rng.next() < risk) { P.kill(mother, tick, DEATH_BIRTH); mothersLost++; }
   }
   return { born: babies.length, mothersLost, babies };
 }

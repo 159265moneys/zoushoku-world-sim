@@ -20,6 +20,7 @@
 //   等式にすると保存則になりドリフトが消える。
 
 import * as S from '../core/stats.js';
+import { breedGift, hasProsper } from './gifts.js';
 import { HEART0, HEART_COUNT, ALLELE_Q } from './people.js';
 
 // ---- 定数（旧 game/src/sim/constants.js の値。SCALE 倍しただけ） ----------
@@ -282,7 +283,9 @@ export function crossoverRate(plasticity) {
 /** 減数分裂。染色体ごとに A腕→B腕 の並びを歩いて、交叉率で乗り換える */
 export function gamete(P, i, rng, out) {
   const A = P.a;
-  const xrate = crossoverRate(A.plast[i]);
+  // 繁栄（S・A-23）は交叉が起きない。染色体が1本まるごと、混ざらずに子へ渡る。
+  // **良い個体の組み合わせをそのまま複製できる。**逆に欠陥もそのまま渡る
+  const xrate = hasProsper(P, i) ? 0 : crossoverRate(A.plast[i]);
   const b0 = A.dom0[i], b1 = A.dom1[i];
   for (let ci = 0; ci < CH_LIST.length; ci++) {
     const ch = CH_LIST[ci];
@@ -341,6 +344,8 @@ export function breed(P, child, father, mother, rng) {
   P.a.pl0[child] = GF.pl;
   P.a.pl1[child] = GM.pl;
   refreshPhenotype(P, child);
+  // 授かりもの（S以上）。104ステの交叉とは独立の1座位（A-23）
+  breedGift(P, child, father, mother, rng);
   const fired = enforceChromosomeCeiling(P, child, father, mother);
   return { ceilingFired: fired };
 }

@@ -30,6 +30,8 @@ import {
 } from '../world/village.js';
 import { explain } from '../world/grow.js';
 import { lookOf, bloodTop2, bloodBreakdown, FOUNDER_COUNT } from '../world/looks.js';
+import { giftInfo, giftsCarried } from '../world/gifts.js';
+import * as GIFTS from '../core/gifts.gen.js';
 
 // ---- UI へ渡す名前（UI が world を import しなくて済むように、ここで中継する） ----
 export {
@@ -525,6 +527,13 @@ export class Run {
     const states = [];
     for (const [bit, name] of STATE_NAMES) if (A.state[i] & bit) states.push(name);
 
+    // 授かりもの（S以上・A-23）。**ほぼ全員が空配列。**持っている者にだけ中身がある。
+    // 0〜100の値ではないので棒グラフにならない。バッジで出す想定（設計班→UI班）。
+    // carried は保因（本人には出ていないが子に渡りうる）。オーナーだけが見える（A-7）
+    const gifts = giftInfo(P, i);
+    const giftsCarriedNames = giftsCarried(P, i)
+      .map(g => ({ key: GIFTS.KEY[g], name: GIFTS.NAME[g], tier: GIFTS.TIERS[GIFTS.TIER[g]] }));
+
     // **仕事と、いま立っている場所は別**。身重の女は畑にも森にも出ない
     const job = A.job[i];
     const at = (job !== AREA_HOME && (A.state[i] & ST_PREGNANT)) ? AREA_HOME : job;
@@ -629,6 +638,8 @@ export class Run {
       })(),
       weak: weaknessOf(P, i, A.state[i]),
       states,
+      gifts,                       // 授かりもの（S以上）。持っていなければ空配列（A-23）
+      giftsCarried: giftsCarriedNames,   // 保因。オーナーだけが見える（A-7）
       spouse: A.spouse[i] === NO_ONE ? -1 : A.spouse[i],
       mother: A.mother[i] === NO_ONE ? -1 : A.mother[i],
       father: A.father[i] === NO_ONE ? -1 : A.father[i],
