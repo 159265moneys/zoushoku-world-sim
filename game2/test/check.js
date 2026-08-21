@@ -7,7 +7,9 @@
 // いまは土台（core）だけ。world/flow/ui が生えたら、ここに足していく。
 // 1項目1行で緑/赤を出し、最後に n/m 緑 を出す。
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync, writeFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +18,12 @@ import { RNG, rng } from '../src/core/rng.js';
 import * as C from '../src/core/calendar.js';
 import { make, Store, growArray } from '../src/core/arrays.js';
 import * as S from '../src/core/stats.js';
+import * as P from '../src/world/people.js';
+import * as G from '../src/world/genetics.js';
+import * as V from '../src/world/village.js';
+import * as grow from '../src/world/grow.js';
+import * as M from '../src/world/marry.js';
+import * as W from '../src/world/world.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GAME2 = join(HERE, '..');
@@ -611,6 +619,807 @@ check('生成物は手で直さない印が入っている', () => {
   const bad = gen.filter(f => !readFileSync(f, 'utf8').startsWith('// 自動生成'));
   return bad.length === 0 || bad.map(f => relative(GAME2, f)).join(' ');
 });
+
+
+// ===========================================================================
+//  ここから世界（world/）。個体・家・村・成長・結婚出産・遺伝
+// ===========================================================================
+
+// 才能をそろえた1人だけの器。grow の式を素で確かめるのに使う
+function loner(talent, ageYears) {
+  const p = new P.People(1);
+  const i = p.spawn(0);
+  for (let s = 0; s < S.COUNT; s++) p.a.gene[s][i] = talent;
+  p.a.ageMonths[i] = ageYears * 12;
+  p.a.lifespan[i] = 55;
+  return p;
+}
+
+// 上位20%だけを親にして N 体・G世代まわす。確定事項 A-5／A-18 の実測の再現。
+// linked=false にすると対抗アーム予算（＝連鎖群）を外す。外すと世界が終わることを見る。
+function selectiveBreed(N, gens, seed, linked, targets = null) {
+  const saved = [...G.ARM_EXEMPT];
+  // 連鎖ありのときは ARM_EXEMPT に触らない（本物の設定のまま測る）。
+  // 連鎖なしのときだけ全染色体を予算の対象外にして、あとで元へ戻す
+  if (!linked) for (let c = 1; c <= S.CHROMOSOME_COUNT; c++) G.ARM_EXEMPT.add(c);
+  const r = new RNG(seed);
+  const p = new P.People(N * (gens + 2));
+  const score = (i) => {
+    let s = 0;
+    if (targets) { for (const t of targets) s += p.a.gene[t][i]; }
+    else for (let k = 0; k < S.COUNT; k++) s += p.a.gene[k][i];
+    return s;
+  };
+  let cur = [];
+  for (let k = 0; k < N; k++) { const i = p.spawn(0); G.foundGenome(p, i, r); cur.push(i); }
+  for (let g = 0; g < gens; g++) {
+    const sc = cur.map(i => [i, score(i)]).sort((a, b) => b[1] - a[1]);
+    const top = sc.slice(0, Math.max(2, Math.floor(N * 0.2))).map(x => x[0]);
+    const next = [];
+    for (let k = 0; k < N; k++) {
+      const f = top[r.int(top.length)];
+      let m = top[r.int(top.length)];
+      if (m === f) m = top[(top.indexOf(f) + 1) % top.length];
+      const c = p.spawn(0); G.breed(p, c, f, m, r); next.push(c);
+    }
+    for (const i of cur) p.kill(i, 0);
+    cur = next;
+  }
+  G.ARM_EXEMPT.clear();
+  for (const c of saved) G.ARM_EXEMPT.add(c);
+  let best = cur[0], bs = -Infinity, popMean = 0;
+  for (const i of cur) { const v = score(i); if (v > bs) { bs = v; best = i; } }
+  for (const i of cur) { let s = 0; for (let k = 0; k < S.COUNT; k++) s += p.a.gene[k][i]; popMean += s / S.COUNT; }
+  popMean /= cur.length;
+  const tset = new Set(targets || []);
+  let above80 = 0, below40 = 0, tSum = 0, oSum = 0, oN = 0;
+  for (let k = 0; k < S.COUNT; k++) {
+    const v = p.a.gene[k][best];
+    if (v >= 80) above80++;
+    if (v < 40) below40++;
+    if (tset.has(k)) tSum += v; else { oSum += v; oN++; }
+  }
+  return {
+    above80, below40, popMean,
+    targetMean: targets ? tSum / targets.length : null,
+    otherMean: oSum / oN,
+    bestMean: (tSum + oSum) / S.COUNT,
+  };
+}
+
+const breedResult = {};
+const hundredYear = {};
+// ===========================================================================
+section('個体（world/people.js）');
+// ===========================================================================
+
+check('十匹が立つ。女は5人、家は5軒、うち3人が身ごもっている', () => {
+  const w = new W.World(1).genesis();
+  const s = w.summary();
+  if (s.pop !== 10) return `人口 ${s.pop}`;
+  if (s.women !== W.GENESIS_WOMEN) return `女 ${s.women}`;
+  if (s.houses !== 5) return `家 ${s.houses}軒`;
+  if (s.pregnant !== W.GENESIS_PREGNANT) return `妊娠 ${s.pregnant}人`;
+  return true;
+});
+
+check('十匹の妊娠は2ヶ月ずつずれている（出産が3回起きる）', () => {
+  const w = new W.World(1).genesis();
+  const due = [];
+  for (const i of w.people.living()) if (w.people.a.pregDue[i] >= 0) due.push(w.people.a.pregDue[i]);
+  due.sort((a, b) => a - b);
+  if (due.length !== 3) return `${due.length}人`;
+  const gap = C.DAYS_PER_MONTH * W.GENESIS_STAGGER_MONTHS;
+  if (due[1] - due[0] !== gap || due[2] - due[1] !== gap) return `間隔 ${due.join(',')}`;
+  return true;
+});
+
+check('歳を取る（1年で12ヶ月ぶん・月齢で持つ）', () => {
+  const w = new W.World(1).genesis();
+  const i = [...w.people.living()][0];
+  const before = w.people.a.ageMonths[i];
+  w.runYears(1);
+  const got = w.people.a.ageMonths[i] - before;
+  return got === 12 ? true : `1年で ${got}ヶ月`;
+});
+
+check('死ぬ（100年も回せば創世の十匹は1人も残らない）', () => {
+  const w = new W.World(1).genesis();
+  w.runYears(100);
+  for (let i = 0; i < 10; i++) if (w.people.a.alive[i]) return `${i}番が生きている`;
+  for (let i = 0; i < 10; i++) if (w.people.a.deathTick[i] < 0) return `${i}番に死んだ日が無い`;
+  return true;
+});
+
+check('死んでも添字は動かない（しがらみの辺が壊れない）', () => {
+  const w = new W.World(1).genesis();
+  const born = [];
+  w.runYears(40);
+  for (let i = 0; i < w.people.len; i++) born.push(w.people.a.birthTick[i]);
+  w.runYears(40);
+  for (let i = 0; i < born.length; i++) {
+    if (w.people.a.birthTick[i] !== born[i]) return `${i}番の生まれた日が動いた`;
+  }
+  return true;
+});
+
+check('実効値 ＝（才能 ＋ 努力値）× デバフ（A-4）', () => {
+  const w = new W.World(1).genesis();
+  const i = [...w.people.living()][0];
+  const s = S.needId('最大筋力');
+  w.people.a.ev[s][i] = 12.5;
+  const want = (w.people.a.gene[s][i] + 12.5) * w.people.debuff(i, s);
+  const got = w.people.effective(i, s);
+  return Math.abs(got - want) < 1e-9 ? true : `${got} ≠ ${want}`;
+});
+
+check('デバフは素の値を汚さない（才能は動かない）', () => {
+  const w = new W.World(1).genesis();
+  const i = [...w.people.living()][0];
+  const s = S.needId('持久力');
+  const before = w.people.a.gene[s][i];
+  w.people.a.state[i] |= P.ST_HUNGRY | P.ST_SICK;
+  w.people.effective(i, s);
+  return w.people.a.gene[s][i] === before ? true : '才能が動いた';
+});
+
+check('デバフ倍率の下限は0.25（B-2）', () => {
+  const w = new W.World(1).genesis();
+  const i = [...w.people.living()][0];
+  const s = S.needId('最大筋力');
+  w.people.a.state[i] |= P.ST_HUNGRY | P.ST_SICK | P.ST_PREGNANT;
+  w.people.a.scar[i] = 0.9;
+  w.people.a.ageMonths[i] = 69 * 12;
+  w.people.a.lifespan[i] = 70;
+  const d = w.people.debuff(i, s);
+  if (P.DEBUFF_FLOOR !== 0.25) return `床が ${P.DEBUFF_FLOOR}（B-2 は0.25）`;
+  return Math.abs(d - 0.25) < 1e-9 ? true : `${d}`;
+});
+
+check('老いは からだ にしか掛からない（A-4：恒久デバフはからだのみ）', () => {
+  const w = new W.World(1).genesis();
+  const i = [...w.people.living()][0];
+  w.people.a.ageMonths[i] = 50 * 12;
+  w.people.a.lifespan[i] = 55;
+  w.people.a.scar[i] = 0.5;
+  const body = w.people.debuff(i, S.needId('最大筋力'));
+  const mind = w.people.debuff(i, S.needId('論理'));
+  const heart = w.people.debuff(i, S.needId('野心'));
+  if (!(body < 0.5)) return `からだ ${body}`;
+  if (mind !== 1 || heart !== 1) return `あたま ${mind} こころ ${heart}`;
+  return true;
+});
+
+check('年齢曲線が A-6 の表7点に合う（ピーク26歳固定）', () => {
+  // 確定事項 A-6 の表。誤差2%まで
+  const table = [
+    [40, 35, 0.54], [55, 35, 0.83], [70, 35, 0.91],
+    [55, 45, 0.53], [70, 45, 0.74],
+    [55, 55, 0.15], [70, 55, 0.53],
+  ];
+  for (const [life, age, want] of table) {
+    const got = P.ageCurve(age, life);
+    if (Math.abs(got - want) > 0.02) return `寿命${life}・${age}歳 → ${got.toFixed(3)}（表は${want}）`;
+  }
+  // 26歳はどの寿命でも100%
+  for (const life of [40, 55, 70]) {
+    if (Math.abs(P.ageCurve(26, life) - 1) > 1e-9) return `寿命${life}の26歳が100%でない`;
+  }
+  return true;
+});
+
+check('寿命は40〜70・平均55（乱数ではなく寿命ステから出る）', () => {
+  const w = new W.World(7).genesis();
+  const R = new RNG(99);
+  const base = [], real = [];
+  for (let k = 0; k < 600; k++) {
+    const i = w.people.spawn(0);
+    G.foundGenome(w.people, i, R);
+    base.push(P.baseLifespanOf(w.people, i));
+    real.push(P.lifespanOf(w.people, i));
+  }
+  const mean = base.reduce((a, b) => a + b, 0) / base.length;
+  const lo = Math.min(...base), hi = Math.max(...base);
+  if (lo < P.LIFESPAN_MIN || hi > P.LIFESPAN_MAX) return `幅 ${lo}〜${hi}`;
+  if (Math.abs(mean - 55) > 2) return `平均 ${mean.toFixed(1)}`;
+  // 遺伝的荷重は寿命を縮めることしかしない
+  for (let k = 0; k < base.length; k++) if (real[k] > base[k]) return '荷重で寿命が伸びた';
+  return true;
+});
+
+check('死亡率の表が確定事項のまま入っている（中世並）', () => {
+  const want = [[0, 0.20], [2, 0.06], [10, 0.012], [25, 0.010], [45, 0.020], [60, 0.050]];
+  for (const [age, r] of want) {
+    if (P.annualDeathRate(age) !== r) return `${age}歳 ${P.annualDeathRate(age)} ≠ ${r}`;
+  }
+  // 月率を12回かけると年率に戻る
+  const m = P.monthlyDeathRate(0);
+  const y = 1 - Math.pow(1 - m, 12);
+  return Math.abs(y - 0.20) < 1e-9 ? true : `12ヶ月で ${y}`;
+});
+
+// ===========================================================================
+section('遺伝（world/genetics.js）');
+// ===========================================================================
+
+check('からだ・あたま＝中間遺伝、こころ＝優劣（A-5／A-20）', () => {
+  for (let s = 0; s < S.COUNT; s++) {
+    const want = S.CATEGORY[s] === S.HEART ? S.DOMINANT : S.BLEND;
+    if (S.INHERIT[s] !== want) return `${S.NAME[s]}`;
+    if (G.isDominantMode(s) !== (want === S.DOMINANT)) return `${S.NAME[s]} の判定`;
+  }
+  return true;
+});
+
+check('対抗アーム予算（平均A＋平均B＝100）が厳密に成立する', () => {
+  const w = new W.World(3).genesis();
+  w.runYears(60);
+  const A = w.people.a;
+  let worst = 0;
+  for (const i of w.people.living()) {
+    for (let c = 1; c <= S.CHROMOSOME_COUNT; c++) {
+      const a = S.BY_ARM[c][0], b = S.BY_ARM[c][1];
+      let ma = 0, mb = 0;
+      for (const s of a) ma += A.gene[s][i];
+      for (const s of b) mb += A.gene[s][i];
+      const sum = ma / a.length + mb / b.length;
+      worst = Math.max(worst, Math.abs(sum - G.ARM_BUDGET));
+    }
+  }
+  return worst < 0.5 ? true : `いちばんずれて ${worst.toFixed(3)}`;
+});
+
+check('集団平均は50前後で動かない（200年・下方ドリフトが無い）', () => {
+  for (let seed = 1; seed <= 12; seed++) {
+    const w = new W.World(seed).genesis();
+    w.runYears(200);
+    if (w.people.aliveCount() < 20) continue;
+    const sp = W.spread(w.people);
+    return Math.abs(sp.mean - 50) < 2 ? true : `種${seed} で平均 ${sp.mean.toFixed(2)}`;
+  }
+  return '200年で20人以上残った世界が無い';
+});
+
+check('劣性が潜伏する（保因者がいて、劣性ホモで表に出る）', () => {
+  const w = new W.World(5).genesis();
+  w.runYears(60);
+  let carriers = 0, homo = 0;
+  for (const i of w.people.living()) {
+    if (G.carriers(w.people, i).length) carriers++;
+    if (G.recessiveHomo(w.people, i).length) homo++;
+  }
+  if (!carriers) return '保因者が1人もいない';
+  if (!homo) return '劣性ホモが1人もいない';
+  return true;
+});
+
+check('遺伝的荷重で生存力が落ちる（近親交配の罰）', () => {
+  if (G.vitalityOf(0) !== 1) return '荷重0で生存力1でない';
+  if (!(G.vitalityOf(2) < 1)) return '荷重があっても落ちない';
+  if (G.vitalityOf(100) !== G.LOAD_FLOOR) return '床が効いていない';
+  const w = new W.World(11).genesis();
+  w.runYears(80);
+  let load = 0, n = 0;
+  for (const i of w.people.living()) { load += G.geneticLoad(w.people, i); n++; }
+  return n && load > 0 ? true : '閉じた村なのに荷重が溜まらない';
+});
+
+check('可塑が交叉率を決める（旧版と同じ式）', () => {
+  if (G.crossoverRate(0) !== G.CROSSOVER_MIN) return '可塑0';
+  if (Math.abs(G.crossoverRate(1) - G.CROSSOVER_MAX) > 1e-12) return '可塑1';
+  const mid = G.crossoverRate(0.5);
+  return mid > G.CROSSOVER_MIN && mid < G.CROSSOVER_MAX ? true : `中間 ${mid}`;
+});
+
+check('**連鎖群が効いている。全ステ最強が出ない**（A-5）', () => {
+  const r = selectiveBreed(300, 60, 1, true);
+  breedResult.linked = r;
+  if (r.above80 > 40) return `80以上が ${r.above80}/104 個`;
+  if (r.popMean > 60) return `集団平均が ${r.popMean.toFixed(1)} まで上がった`;
+  if (r.popMean < 45) return `集団平均が ${r.popMean.toFixed(1)} まで下がった（下方ドリフト）`;
+  return true;
+});
+
+check('連鎖を外すと世界が終わる（この検査が本物である証拠）', () => {
+  const r = selectiveBreed(300, 60, 1, false);
+  breedResult.unlinked = r;
+  if (r.above80 < 80) return `外しても ${r.above80}/104 しか上がらない`;
+  if (r.popMean < 80) return `外しても平均 ${r.popMean.toFixed(1)}`;
+  return true;
+});
+
+check('育種そのものに代償がある（欲張るほど酷くなる・A-18）', () => {
+  const one = selectiveBreed(200, 40, 2, true, [0]);
+  const ten = selectiveBreed(200, 40, 2, true, [0, 9, 18, 27, 36, 51, 60, 69, 80, 95]);
+  breedResult.one = one; breedResult.ten = ten;
+  if (!(one.targetMean > 90)) return `1つ狙って ${one.targetMean.toFixed(1)}`;
+  if (!(ten.otherMean < one.otherMean)) {
+    return `10個狙っても他が落ちない（1つ:${one.otherMean.toFixed(1)} 10個:${ten.otherMean.toFixed(1)}）`;
+  }
+  if (!(ten.below40 > one.below40)) return `40未満が増えない（${one.below40} → ${ten.below40}）`;
+  return true;
+});
+
+// ===========================================================================
+section('家と村（world/house.js／world/village.js）');
+// ===========================================================================
+
+check('村は30軒で止まる（A-19b：30世帯＝約100人）', () => {
+  let filled = 0, maxPop = 0;
+  for (let seed = 1; seed <= 8; seed++) {
+    const w = new W.World(seed).genesis();
+    let worst = 0;
+    for (let y = 0; y < 300; y++) {
+      w.runYears(1);
+      const h = w.villages.a.houses[0];
+      if (h > worst) worst = h;
+      if (h > V.HOUSES_PER_VILLAGE) return `種${seed} で ${h}軒まで建った`;
+      if (w.houses.countIn(0) !== h) return `種${seed} で家の数の勘定が合わない`;
+      if (w.people.aliveCount() > maxPop) maxPop = w.people.aliveCount();
+      if (w.people.aliveCount() === 0) break;
+    }
+    if (worst === V.HOUSES_PER_VILLAGE) {
+      filled++;
+      if (!w.counters.blocked) return `種${seed} は30軒に届いたのに溢れが数えられていない`;
+    }
+  }
+  if (filled < 3) return `8通り試して30軒まで埋まったのが ${filled} だけ`;
+  // 30世帯＝約100人（A-19b）。1世帯3.3人なので100人前後で頭打ちになる
+  if (maxPop > 200) return `30軒なのに ${maxPop} 人まで増えた`;
+  hundredYear.maxPop = maxPop;
+  hundredYear.filled = filled;
+  return true;
+});
+
+check('家が空になったら畳まれる（家系が1本消える）', () => {
+  const w = new W.World(1).genesis();
+  w.runYears(120);
+  const HA = w.houses.a;
+  const inside = new Map();
+  for (const i of w.people.living()) {
+    const h = w.people.a.house[i];
+    if (h !== P.NO_HOUSE) inside.set(h, (inside.get(h) || 0) + 1);
+  }
+  for (let h = 0; h < HA.len; h++) {
+    if (HA.alive[h] && !inside.has(h)) return `${h}番の家が空なのに畳まれていない`;
+    if (!HA.alive[h] && inside.has(h)) return `${h}番の家が畳まれたのに人がいる`;
+  }
+  return true;
+});
+
+check('冬は作物ができない（A-11）', () => {
+  const w = new W.World(1).genesis();
+  w.runYears(30);
+  w.villages.a.food[0] = 0;
+  const spring = V.produceAndEat(w.people, w.villages, C.tickOf(31, 5, 1))[0];
+  w.villages.a.food[0] = 0;
+  const winter = V.produceAndEat(w.people, w.villages, C.tickOf(31, 11, 1))[0];
+  if (!winter.winter || spring.winter) return '季節の判定が違う';
+  if (!(winter.produced < spring.produced * 0.3)) {
+    return `冬 ${winter.produced.toFixed(1)} ／ 春 ${spring.produced.toFixed(1)}`;
+  }
+  return true;
+});
+
+check('配給は創世から10年ちょうどで切れる（A-10）', () => {
+  const w = new W.World(1).genesis();
+  for (const i of w.people.living()) w.people.a.job[i] = V.AREA_TRAIN;  // 誰も食べ物を作らない
+  w.villages.a.food[0] = 0;
+  const during = V.produceAndEat(w.people, w.villages, 0)[0];
+  if (during.shortage !== 0) return `配給中なのに ${during.shortage} 足りない`;
+  if (!(during.rationed > 0)) return '配給が足されていない';
+  w.villages.a.food[0] = 0;
+  const last = V.produceAndEat(w.people, w.villages, V.RATION_YEARS * C.DAYS_PER_YEAR - 1)[0];
+  if (last.shortage !== 0) return '10年目の最後の日に切れてしまった';
+  w.villages.a.food[0] = 0;
+  const after = V.produceAndEat(w.people, w.villages, V.RATION_YEARS * C.DAYS_PER_YEAR)[0];
+  if (!(after.shortage > 0)) return '10年を過ぎても守られている';
+  return true;
+});
+
+check('創世から10年のあいだは1人も飢え死にしない（10通り）', () => {
+  for (let seed = 1; seed <= 10; seed++) {
+    const w = new W.World(seed).genesis();
+    w.runYears(10);
+    if (w.counters.byCause[P.DEATH_HUNGER] > 0) return `種${seed} で餓死`;
+  }
+  return true;
+});
+
+check('家長が死んだら誰かが継ぐ', () => {
+  const w = new W.World(1).genesis();
+  w.runYears(80);
+  const members = w.houses.index(w.people);
+  const HA = w.houses.a;
+  for (let h = 0; h < HA.len; h++) {
+    if (!HA.alive[h]) continue;
+    const head = HA.head[h];
+    if (head < 0) return `${h}番の家に家長がいない`;
+    if (!w.people.a.alive[head]) return `${h}番の家長が死んだまま`;
+    const list = members.get(h) || [];
+    if (!list.includes(head)) return `${h}番の家長が家の中にいない`;
+  }
+  return true;
+});
+
+// ===========================================================================
+section('成長（world/grow.js）');
+// ===========================================================================
+
+check('才能 < 閾値 なら何年やっても積まれない（A-4）', () => {
+  const s = S.BY_CATEGORY[S.BODY].find(k => S.thresholdOf(k) >= 50 && S.growthRoomOf(k) > 0);
+  if (s === undefined) return '閾値50以上のステが無い';
+  const th = S.thresholdOf(s);
+  if (grow.evGain(loner(th - 1, 20), 0, s, 1, 0) !== 0) return '閾値の下でも積まれた';
+  if (!(grow.evGain(loner(th + 1, 20), 0, s, 1, 0) > 0)) return '閾値の上でも積まれない';
+  // 20年やっても1つも積まれないこと
+  const p = loner(th - 1, 20);
+  for (let m = 0; m < 240; m++) p.a.ev[s][0] += grow.evGain(p, 0, s, 1, 0);
+  return p.a.ev[s][0] === 0 ? true : `20年で ${p.a.ev[s][0]} 積まれた`;
+});
+
+check('こころ29個には努力値が積まれない（閾値が原理的に無い）', () => {
+  for (const s of S.BY_CATEGORY[S.HEART]) {
+    if (S.thresholdOf(s) !== S.THRESHOLD_NONE) return `${S.NAME[s]} に閾値がある`;
+    if (grow.evGain(loner(100, 20), 0, s, 1, 0) !== 0) return `${S.NAME[s]} が積まれた`;
+  }
+  return true;
+});
+
+check('才能ボーナスは0.80〜0.90（ほぼ効かない）', () => {
+  if (Math.abs(grow.talentBonus(0) - 0.80) > 1e-12) return `才能0 → ${grow.talentBonus(0)}`;
+  if (Math.abs(grow.talentBonus(100) - 0.90) > 1e-12) return `才能100 → ${grow.talentBonus(100)}`;
+  const ratio = grow.talentBonus(100) / grow.talentBonus(0);
+  return ratio < 1.13 ? true : `天才が凡人の ${ratio.toFixed(3)} 倍`;
+});
+
+check('年齢減衰。若いほど積まれ、下げ止まりは0.25', () => {
+  if (grow.evDecay(6) !== 0) return '働き始める前に積まれた';
+  if (Math.abs(grow.evDecay(7) - 1) > 1e-12) return `7歳 → ${grow.evDecay(7)}`;
+  for (let a = 8; a < 70; a++) if (grow.evDecay(a) > grow.evDecay(a - 1)) return `${a}歳で増えた`;
+  if (grow.evDecay(70) !== grow.EV_DECAY_FLOOR) return `70歳 → ${grow.evDecay(70)}`;
+  const at30 = grow.evDecay(30);
+  return at30 > 0.3 && at30 < 0.4 ? true : `30歳 → ${at30.toFixed(3)}（A-8 の境目）`;
+});
+
+check('伸びる場所で向きが変わる（A-21：全部が都会有利ではない）', () => {
+  let center = 0, frontier = 0;
+  for (let s = 0; s < S.COUNT; s++) {
+    const c = S.placeMultiplier(s, V.WHERE_CENTER), f = S.placeMultiplier(s, V.WHERE_FRONTIER);
+    if (c > f) center++; else if (f > c) frontier++;
+  }
+  if (!center) return '中央が有利なステが1つも無い';
+  if (!frontier) return '辺境が有利なステが1つも無い';
+  // あたま は中央、野外の からだ は辺境
+  if (!(S.placeMultiplier(S.needId('論理'), V.WHERE_CENTER) > S.placeMultiplier(S.needId('論理'), V.WHERE_FRONTIER))) {
+    return '論理が中央で伸びない';
+  }
+  if (!(S.placeMultiplier(S.needId('持久力'), V.WHERE_FRONTIER) > S.placeMultiplier(S.needId('持久力'), V.WHERE_CENTER))) {
+    return '持久力が辺境で伸びない';
+  }
+  return true;
+});
+
+check('職に就いていると努力値が積まれる（100年で実際に増える）', () => {
+  const w = new W.World(11).genesis();
+  w.runYears(100);
+  let best = 0, who = -1;
+  for (const i of w.people.living()) {
+    for (let s = 0; s < S.COUNT; s++) if (w.people.a.ev[s][i] > best) { best = w.people.a.ev[s][i]; who = i; }
+  }
+  if (!(best > 5)) return `いちばん積んだ者で ${best.toFixed(2)}`;
+  // こころ には1つも積まれていないこと
+  for (const i of w.people.living()) {
+    for (const s of S.BY_CATEGORY[S.HEART]) if (w.people.a.ev[s][i] !== 0) return `${S.NAME[s]} に積まれた`;
+  }
+  return true;
+});
+
+// ===========================================================================
+section('結婚と出産（world/marry.js）');
+// ===========================================================================
+
+check('妊娠はちょうど10ヶ月（300日）で終わる', () => {
+  if (M.PREGNANCY_DAYS !== 10 * C.DAYS_PER_MONTH) return `${M.PREGNANCY_DAYS}日`;
+  const w = new W.World(11).genesis();
+  const start = new Map();      // 誰が、いつ身ごもったか
+  // 創世の3人は最初から身ごもっている（残り6・8・10ヶ月）ので数から外す
+  for (const i of w.people.living()) if (w.people.a.state[i] & P.ST_PREGNANT) start.set(i, null);
+  let checked = 0;
+  for (let d = 0; d < C.DAYS_PER_YEAR * 50; d++) {
+    const b = w.stepDay();
+    for (const c of b.babies) {
+      const m = w.people.a.mother[c];
+      if (!start.has(m)) continue;
+      const from = start.get(m);
+      start.delete(m);
+      if (from === null) continue;            // 創世ぶん
+      const took = w.tick - from;
+      if (took !== M.PREGNANCY_DAYS) return `${took}日かかった`;
+      checked++;
+    }
+    for (const i of w.people.living()) {
+      if ((w.people.a.state[i] & P.ST_PREGNANT) && !start.has(i)) start.set(i, w.tick);
+    }
+  }
+  return checked > 20 ? true : `確かめられたのが ${checked} 件だけ`;
+});
+
+check('出産は18〜40歳のあいだだけ（A-12）', () => {
+  const w = new W.World(11).genesis();
+  w.runYears(150);
+  const A = w.people.a;
+  for (let i = 0; i < w.people.len; i++) {
+    const m = A.mother[i];
+    if (m < 0) continue;
+    const age = (A.birthTick[i] - A.birthTick[m]) / C.DAYS_PER_YEAR;
+    // 身ごもるのが18〜40歳のあいだなので、産むのは18歳10ヶ月〜40歳10ヶ月
+    if (age < M.BIRTH_MIN_AGE) return `${age.toFixed(2)}歳で産んだ`;
+    if (age > M.BIRTH_MAX_AGE + 10 / 12 + 1e-6) return `${age.toFixed(2)}歳で産んだ`;
+  }
+  return true;
+});
+
+check('双子5%・三つ子0.1%（A-12。四つ子以上は無い）', () => {
+  if (M.TWIN_P !== 0.05 || M.TRIPLET_P !== 0.001) return `${M.TWIN_P} / ${M.TRIPLET_P}`;
+  const w = new W.World(11).genesis();
+  w.runYears(200);
+  const A = w.people.a;
+  const sameDay = new Map();
+  for (let i = 0; i < w.people.len; i++) {
+    const m = A.mother[i];
+    if (m < 0) continue;
+    const k = m + ':' + A.birthTick[i];
+    sameDay.set(k, (sameDay.get(k) || 0) + 1);
+  }
+  let single = 0, twin = 0, triple = 0, more = 0;
+  for (const n of sameDay.values()) {
+    if (n === 1) single++; else if (n === 2) twin++; else if (n === 3) triple++; else more++;
+  }
+  if (more) return `四つ子以上が ${more} 件`;
+  const total = single + twin + triple;
+  if (total < 50) return `件数が ${total} 件しかない`;
+  const rate = twin / total;
+  return rate > 0.01 && rate < 0.12 ? true : `双子率 ${(rate * 100).toFixed(1)}%（${twin}/${total}）`;
+});
+
+check('きょうだい・親子とは結ばれない', () => {
+  const w = new W.World(11).genesis();
+  w.runYears(150);
+  const A = w.people.a;
+  for (let i = 0; i < w.people.len; i++) {
+    const sp = A.spouse[i];
+    if (sp < 0) continue;
+    if (M.tooClose(w.people, i, sp)) return `${i} と ${sp}`;
+  }
+  return true;
+});
+
+check('原則1対1（伴侶は必ず両思い）', () => {
+  const w = new W.World(11).genesis();
+  w.runYears(150);
+  const A = w.people.a;
+  for (let i = 0; i < w.people.len; i++) {
+    if (!A.alive[i]) continue;
+    const sp = A.spouse[i];
+    if (sp < 0) continue;
+    if (A.spouse[sp] !== i) return `${i} → ${sp} → ${A.spouse[sp]}`;
+  }
+  return true;
+});
+
+check('1組6人前後で産む（B-11）', () => {
+  const w = new W.World(11).genesis();
+  w.runYears(200);
+  const A = w.people.a;
+  let n = 0, sum = 0;
+  for (let i = 0; i < w.people.len; i++) {
+    if (A.sex[i] !== P.SEX_FEMALE) continue;
+    const end = A.alive[i] ? A.ageMonths[i] / 12 : (A.deathTick[i] - A.birthTick[i]) / C.DAYS_PER_YEAR;
+    if (end < M.BIRTH_MAX_AGE) continue;         // 産み終わるまで生きた女だけ
+    if (A.spouse[i] < 0 && A.births[i] === 0) continue;
+    n++; sum += A.births[i];
+  }
+  if (n < 10) return `数えられた女が ${n} 人`;
+  const mean = sum / n;
+  return mean > 4.5 && mean < 8 ? true : `1組 ${mean.toFixed(2)} 人`;
+});
+
+// ===========================================================================
+section('世界（world/world.js）');
+// ===========================================================================
+
+check('**同じ種から同じ歴史が出る**（人口・食料・誰がいつ何で死んだか）', () => {
+  const trace = (seed) => {
+    const w = new W.World(seed).genesis();
+    const t = [];
+    for (let y = 0; y < 80; y++) {
+      w.runYears(1);
+      t.push(`${w.tick}:${w.people.aliveCount()}:${w.houses.count}:${w.villages.a.food[0].toFixed(4)}`);
+    }
+    const A = w.people.a;
+    for (let i = 0; i < w.people.len; i++) {
+      if (!A.alive[i]) t.push(`d${i}@${A.deathTick[i]}/${A.deathCause[i]}`);
+    }
+    for (let i = 0; i < w.people.len; i++) t.push(`g${i}=${A.gene[0][i].toFixed(5)}`);
+    return t.join('|');
+  };
+  const a = trace(12345), b = trace(12345);
+  if (a !== b) {
+    for (let k = 0; k < Math.max(a.length, b.length); k++) {
+      if (a[k] !== b[k]) return `${k}文字目で食い違う`;
+    }
+    return '長さが違う';
+  }
+  return true;
+});
+
+check('違う種なら違う歴史になる', () => {
+  const pop = (seed) => {
+    const w = new W.World(seed).genesis();
+    w.runYears(80);
+    return `${w.people.aliveCount()}/${w.houses.count}/${w.people.born}/${w.people.dead}`;
+  };
+  return pop(1) !== pop(2) ? true : '種を変えても同じ歴史になった';
+});
+
+check('**人口が爆発も絶滅もしない**（100年・20通り）', () => {
+  const pops = [];
+  for (let seed = 1; seed <= 20; seed++) {
+    const w = new W.World(seed).genesis();
+    w.runYears(100);
+    pops.push(w.people.aliveCount());
+    if (w.villages.a.houses[0] > V.HOUSES_PER_VILLAGE) return `種${seed} で家が ${w.villages.a.houses[0]}軒`;
+  }
+  hundredYear.pops = pops.slice();
+  const ext = pops.filter(x => x === 0).length;
+  const max = Math.max(...pops);
+  const sorted = pops.slice().sort((a, b) => a - b);
+  hundredYear.median = sorted[10];
+  hundredYear.extinct = ext;
+  if (max > 250) return `いちばん増えた世界で ${max} 人（爆発）`;
+  if (ext > 6) return `20通り中 ${ext} が絶滅`;
+  if (sorted[10] < 5) return `中央値が ${sorted[10]} 人`;
+  return true;
+});
+
+check('絶滅率が実測（創世十匹で10%）と近い（120年・40通り）', () => {
+  let ext = 0; const pops = [];
+  for (let seed = 1; seed <= 40; seed++) {
+    const w = new W.World(seed).genesis();
+    w.runYears(120);
+    const n = w.people.aliveCount();
+    pops.push(n);
+    if (n === 0) ext++;
+  }
+  const rate = ext / 40;
+  hundredYear.ext120 = rate;
+  hundredYear.mean120 = pops.reduce((a, b) => a + b, 0) / pops.length;
+  return rate >= 0.02 && rate <= 0.25 ? true : `絶滅率 ${(rate * 100).toFixed(0)}%`;
+});
+
+check('NaN が1つも出ない（200年）', () => {
+  const w = new W.World(11).genesis();
+  w.runYears(200);
+  const A = w.people.a;
+  for (let i = 0; i < w.people.len; i++) {
+    for (let s = 0; s < S.COUNT; s++) {
+      if (!Number.isFinite(A.gene[s][i])) return `gene[${S.NAME[s]}][${i}]`;
+      if (!Number.isFinite(A.ev[s][i])) return `ev[${S.NAME[s]}][${i}]`;
+    }
+    if (!Number.isFinite(A.vitality[i]) || !Number.isFinite(A.wealth[i])) return `個体 ${i}`;
+  }
+  for (let v = 0; v < w.villages.len; v++) if (!Number.isFinite(w.villages.a.food[v])) return `村 ${v} の食料`;
+  return true;
+});
+
+check('血統の生き残り数が数えられる（収束計・A-14）', () => {
+  // 創世の十匹には10本の旗が立っていて、子は父と母の旗を両方受け継ぐ。
+  // 減ることはあっても増えることは無い
+  let checked = 0;
+  for (let seed = 1; seed <= 12 && checked < 3; seed++) {
+    const w = new W.World(seed).genesis();
+    if (W.lineages(w.people).size !== 10) return `種${seed} の創世で ${W.lineages(w.people).size} 家系`;
+    let prev = 10;
+    for (let y = 0; y < 200; y++) {
+      w.runYears(1);
+      if (w.people.aliveCount() === 0) break;
+      const n = W.lineages(w.people).size;
+      if (n > prev) return `種${seed}・${y}年目に血統が ${prev} → ${n} と増えた`;
+      prev = n;
+    }
+    if (w.people.aliveCount() >= 10) checked++;
+  }
+  return checked >= 3 ? true : `200年生き延びた世界が ${checked} しか無い`;
+});
+
+check('収束計4つのうち3つが出る（ステの分散／全ステ最強／血統）', () => {
+  const w = new W.World(3).genesis();
+  w.runYears(150);
+  const c = W.converge(w);
+  if (!(c.sdOfStats > 3)) return `ばらつきが ${c.sdOfStats.toFixed(2)} まで潰れた`;
+  if (!(c.bestAbove80 >= 0 && c.bestAbove80 < 60)) return `最良個体の80超が ${c.bestAbove80}`;
+  if (!(c.lineages >= 1)) return '血統が数えられない';
+  return true;
+});
+
+check('UI も flow も知らない（world は core しか import しない）', () => {
+  const world = FILES.filter(f => f.includes(`${'/'}world${'/'}`));
+  if (!world.length) return 'world にファイルが無い';
+  for (const f of world) {
+    const src = code(f);
+    const m = src.match(/from\s+['"]([^'"]+)['"]/g) || [];
+    for (const s of m) {
+      if (/\/(flow|ui)\//.test(s)) return `${relative(GAME2, f)} が ${s}`;
+    }
+    if (/\b(document|window|localStorage|requestAnimationFrame)\b/.test(src)) {
+      return `${relative(GAME2, f)} が DOM を触っている`;
+    }
+  }
+  return true;
+});
+
+// ===========================================================================
+section('繋いだ状態（index.html）');
+// ===========================================================================
+// 旧版の教訓そのもの：「13項目が緑のままゲームが起動していなかった」。
+// 中身をいくら検査しても、頁が構文で落ちていたら誰も気づかない。
+
+const PAGE = readFileSync(join(GAME2, 'index.html'), 'utf8');
+const PAGE_SCRIPT = (PAGE.match(/<script type="module">([\s\S]*?)<\/script>/) || [])[1];
+
+check('index.html に起動するスクリプトが入っている', () => {
+  if (!PAGE_SCRIPT) return '<script type="module"> が見つからない';
+  return /import\s/.test(PAGE_SCRIPT) ? true : 'import が1つも無い';
+});
+
+check('index.html のスクリプトが構文として通る（頁が黙って落ちない）', () => {
+  if (!PAGE_SCRIPT) return 'スクリプトが無い';
+  const tmp = join(tmpdir(), `zoushoku-page-${process.pid}.mjs`);
+  writeFileSync(tmp, PAGE_SCRIPT);
+  const r = spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
+  rmSync(tmp, { force: true });
+  if (r.status !== 0) return (r.stderr || '').split('\n').filter(Boolean).slice(0, 3).join(' / ');
+  return true;
+});
+
+check('index.html が読んでいるファイルが実在する', () => {
+  if (!PAGE_SCRIPT) return 'スクリプトが無い';
+  const paths = [...PAGE_SCRIPT.matchAll(/['"](\.\/[^'"]+\.js)['"]/g)].map(m => m[1]);
+  if (!paths.length) return 'import しているファイルが1つも無い';
+  for (const rel of paths) {
+    if (!existsSync(join(GAME2, rel))) return `${rel} が無い`;
+  }
+  return paths.some(p => p.includes('/world/')) ? true : 'world を1つも読んでいない';
+});
+
+// ---- 実測の控え（検査ではない。報告のために出す） ------------------------
+console.log('');
+console.log('── 実測 ──');
+if (breedResult.linked) {
+  console.log(`  上位20%だけを親に60世代（300体）  連鎖あり：最良の80以上 ${breedResult.linked.above80}/104・集団平均 ${breedResult.linked.popMean.toFixed(1)}`);
+}
+if (breedResult.unlinked) {
+  console.log(`                                    連鎖なし：最良の80以上 ${breedResult.unlinked.above80}/104・集団平均 ${breedResult.unlinked.popMean.toFixed(1)}`);
+}
+if (breedResult.one && breedResult.ten) {
+  console.log(`  育種の代償  狙い1つ：他が ${breedResult.one.otherMean.toFixed(1)}・40未満 ${breedResult.one.below40}個 ／ バラバラ10個：他が ${breedResult.ten.otherMean.toFixed(1)}・40未満 ${breedResult.ten.below40}個`);
+}
+if (hundredYear.pops) {
+  const s = hundredYear.pops.slice().sort((a, b) => a - b);
+  console.log(`  100年・20通りの人口  ${s.join(',')}`);
+  console.log(`    絶滅 ${hundredYear.extinct}/20 ／ 中央値 ${hundredYear.median}`);
+}
+if (hundredYear.filled !== undefined) {
+  console.log(`  300年・8通り  30軒まで埋まった世界 ${hundredYear.filled}／いちばん増えた人口 ${hundredYear.maxPop}人（30世帯＝約100人）`);
+}
+if (hundredYear.ext120 !== undefined) {
+  console.log(`  120年・40通り  絶滅率 ${(hundredYear.ext120 * 100).toFixed(0)}%（確定事項の実測は10%）／ 平均人口 ${hundredYear.mean120.toFixed(1)}（実測は56）`);
+}
+{
+  const w = new W.World(11).genesis();
+  console.log(`  1人あたり ${w.people.bytesPerRow()} バイト（10万人で ${(w.people.bytesPerRow() * 1e5 / 1e6).toFixed(1)}MB）`);
+}
 
 // ===========================================================================
 const total = pass + fail;
