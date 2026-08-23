@@ -56,10 +56,13 @@ let zoom = ZMAX;
 let dpr = 1;
 
 // ---- 移植ぶん（読めたら本物、読めなければこの既定値で 2D に落とす） --------
+// **種族の見た目は既定値を自前で持つ。**`looks.js` の `DEFAULT_RACE` と `FOUNDER_HUE` は
+// A-24 の作業中のもので、**まだ main に入っていない**（手元にしか無い）。
+// 手元では本物が読まれ、Pages では既定値になる。値は同じなので絵は変わらない。
 let actors = null;                                  // ActorLayer（WebGL2）
-let SAT_ALIVE = 0.46;
+let SAT_ALIVE = 0.46;                               // actors.js SAT_ALIVE
 let RACE = { corners: 6, stripeV: 0, stripeH: 2 };  // looks.js DEFAULT_RACE
-let HUES = [142, 155];                              // looks.js FOUNDER_HUE のあたり
+let HUES = [142.0, 147.3];                          // looks.js FOUNDER_HUE の 0番目と3番目
 const SPECIAL_NONE = 0;
 
 // 住人2体。**同じ種族**（A-24）なので色も形も揃う。違うのは血の枠と熟練だけ
@@ -203,21 +206,24 @@ addEventListener('resize', resize);
 
 // ---- 立ち上げ --------------------------------------------------------------
 (async () => {
+  // 個体の描画層。**これだけは本物を使う。**読めなければ丸に落とす
   try {
-    const [A, L] = await Promise.all([
-      import('../src/ui/actors.js'),
-      import('../src/world/looks.js'),
-    ]);
+    const A = await import('../src/ui/actors.js');
     SAT_ALIVE = A.SAT_ALIVE;
-    RACE = L.DEFAULT_RACE;
-    HUES = [L.FOUNDER_HUE[0], L.FOUNDER_HUE[3]];
     const layer = new A.ActorLayer(glcv);
     if (layer.ok) actors = layer;
     else note.textContent = 'WebGL2 が無い。個体は丸で描く';
   } catch (e) {
-    // **黒い画面のまま黙らない。**理由と直し方をその場に出す
-    note.textContent = 'file:// では移植ぶんを読めない（簡易表示）。サーバー経由で開くと本物の個体になる';
+    // **黒い画面のまま黙らない。理由をそのまま出す。**
+    // file:// で開くと CORS で読めない（サーバー経由なら読める）。それ以外の理由もありうる
+    note.textContent = `個体の層を読めない（${e.message}）。丸で描く`;
   }
+  // 種族の見た目。**無くてもいい。**上の既定値で描けるので、ここで転ばせない
+  try {
+    const L = await import('../src/world/looks.js');
+    if (L.DEFAULT_RACE) RACE = L.DEFAULT_RACE;
+    if (L.FOUNDER_HUE && L.FOUNDER_HUE.length >= 4) HUES = [L.FOUNDER_HUE[0], L.FOUNDER_HUE[3]];
+  } catch (e) { /* main にはまだ無い。既定の種族で描く */ }
   resize();
 })();
 </script>
