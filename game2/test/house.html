@@ -12,6 +12,7 @@
   #hint{position:fixed;left:12px;bottom:10px;color:#5d666e;
         font:12px/1.6 -apple-system,"Hiragino Sans",sans-serif;pointer-events:none;user-select:none}
   #hint b{color:#8b959d;font-weight:600}
+  #note{color:#c08a5a}
 </style>
 </head>
 <body>
@@ -19,7 +20,7 @@
   <canvas id="map"></canvas>
   <canvas id="actors"></canvas>
 </div>
-<div id="hint">ホイールで拡大縮小　<b id="z">×1.00</b>　<span id="px"></span></div>
+<div id="hint">ホイールで拡大縮小　<b id="z">×1.00</b>　<span id="px"></span>　<span id="note"></span></div>
 
 <script type="module">
 // 家だけの画面。**この頁は世界（sim）を一切読み込まない。**
@@ -35,15 +36,18 @@
 //   ・寄り切り（×1）＝ 屋根のない箱を真上から。中に2体
 //   ・引くと屋根が被さり、中は見えなくなる
 //   ・中の2体は屋根より先に消える。屋根の下から透ける絵にならないように
-
-import { ActorLayer, SAT_ALIVE } from '../src/ui/actors.js';
-import { DEFAULT_RACE, FOUNDER_HUE, SPECIAL_NONE } from '../src/world/looks.js';
+//
+// **読み込みで転んでも黒い画面にしない。**
+// static な import にすると `file://`（ダブルクリックで開いた場合）でブラウザが
+// CORS で止め、**スクリプトごと死んで何も出ない。**動的 import にして拾い、
+// 拾えなければ個体だけ 2D の丸に落とす（map.js の `_person2d` と同じ落とし先）。
 
 const cv  = document.getElementById('map');
 const ctx = cv.getContext('2d');
-const actors = new ActorLayer(document.getElementById('actors'));
+const glcv = document.getElementById('actors');
 const zlabel = document.getElementById('z');
 const pxlabel = document.getElementById('px');
+const note = document.getElementById('note');
 
 const BOX = 72;                  // 家の箱の一辺（世界単位）。map.js の boxRect().w と同じ
 const R_ADULT = 3.2 + 5.2;       // 成人の半径。map.js の radiusOf(grow=1)
@@ -51,10 +55,17 @@ const ZMIN = 0.12, ZMAX = 1.0;   // ×1 が寄り切り。**家の最大は 72px
 let zoom = ZMAX;
 let dpr = 1;
 
+// ---- 移植ぶん（読めたら本物、読めなければこの既定値で 2D に落とす） --------
+let actors = null;                                  // ActorLayer（WebGL2）
+let SAT_ALIVE = 0.46;
+let RACE = { corners: 6, stripeV: 0, stripeH: 2 };  // looks.js DEFAULT_RACE
+let HUES = [142, 155];                              // looks.js FOUNDER_HUE のあたり
+const SPECIAL_NONE = 0;
+
 // 住人2体。**同じ種族**（A-24）なので色も形も揃う。違うのは血の枠と熟練だけ
 const FOLK = [
-  { dx: -0.20, dy:  0.07, hue: FOUNDER_HUE[0], cells: 3, weak: 0 },
-  { dx:  0.19, dy: -0.09, hue: FOUNDER_HUE[3], cells: 6, weak: 0 },
+  { dx: -0.20, dy:  0.07, h: 0, cells: 3, weak: 0 },
+  { dx:  0.19, dy: -0.09, h: 1, cells: 6, weak: 0 },
 ];
 
 // 0→1 の滑らかな渡し。t が a のとき 0、b のとき 1
@@ -68,7 +79,7 @@ function resize() {
   cv.width  = Math.round(innerWidth  * dpr);
   cv.height = Math.round(innerHeight * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  actors.resize(innerWidth, innerHeight, dpr);
+  if (actors) actors.resize(innerWidth, innerHeight, dpr);
   draw();
 }
 
@@ -141,22 +152,34 @@ function draw() {
 
   drawOpenBox(cx, cy, size);
 
-  actors.begin(FOLK.length);
-  if (seen > 0.01) {
-    for (const f of FOLK) {
-      actors.push(
-        (cx + f.dx * size) * dpr, (cy + f.dy * size) * dpr,
-        Math.max(1.1, R_ADULT * zoom * dpr),
-        f.weak,                                     // 明度＝弱っている、それだけ
-        f.hue, f.hue, 0,                            // 同じ種族なので沈殿は出ない
-        SAT_ALIVE,                                  // 彩度＝生死
-        DEFAULT_RACE.corners, SPECIAL_NONE,
-        DEFAULT_RACE.stripeV, DEFAULT_RACE.stripeH,
-        f.cells);                                   // 細胞＝熟練
+  const r = Math.max(1.1, R_ADULT * zoom);
+  if (actors) {
+    actors.begin(FOLK.length);
+    if (seen > 0.01) {
+      for (const f of FOLK) {
+        actors.push(
+          (cx + f.dx * size) * dpr, (cy + f.dy * size) * dpr, r * dpr,
+          f.weak,                                   // 明度＝弱っている、それだけ
+          HUES[f.h], HUES[f.h], 0,                  // 同じ種族なので沈殿は出ない
+          SAT_ALIVE,                                // 彩度＝生死
+          RACE.corners, SPECIAL_NONE, RACE.stripeV, RACE.stripeH,
+          f.cells);                                 // 細胞＝熟練
+      }
     }
+    actors.flush();
+    glcv.style.opacity = seen.toFixed(3);
+  } else if (seen > 0.01) {                        // 落とし先。丸と色相だけ（map.js _person2d）
+    ctx.save();
+    ctx.globalAlpha = seen;
+    for (const f of FOLK) {
+      ctx.beginPath();
+      ctx.arc(cx + f.dx * size, cy + f.dy * size, r, 0, Math.PI * 2);
+      ctx.fillStyle = `hsl(${HUES[f.h].toFixed(0)} ${(SAT_ALIVE * 100).toFixed(0)}% `
+        + `${(66 * (1 - 0.42 * f.weak)).toFixed(0)}%)`;
+      ctx.fill();
+    }
+    ctx.restore();
   }
-  actors.flush();
-  actors.canvas.style.opacity = seen.toFixed(3);
 
   if (roof > 0.01) {
     ctx.save();
@@ -177,7 +200,26 @@ addEventListener('wheel', e => {
 }, { passive: false });
 
 addEventListener('resize', resize);
-resize();
+
+// ---- 立ち上げ --------------------------------------------------------------
+(async () => {
+  try {
+    const [A, L] = await Promise.all([
+      import('../src/ui/actors.js'),
+      import('../src/world/looks.js'),
+    ]);
+    SAT_ALIVE = A.SAT_ALIVE;
+    RACE = L.DEFAULT_RACE;
+    HUES = [L.FOUNDER_HUE[0], L.FOUNDER_HUE[3]];
+    const layer = new A.ActorLayer(glcv);
+    if (layer.ok) actors = layer;
+    else note.textContent = 'WebGL2 が無い。個体は丸で描く';
+  } catch (e) {
+    // **黒い画面のまま黙らない。**理由と直し方をその場に出す
+    note.textContent = 'file:// では移植ぶんを読めない（簡易表示）。サーバー経由で開くと本物の個体になる';
+  }
+  resize();
+})();
 </script>
 </body>
 </html>
