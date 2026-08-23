@@ -5,32 +5,57 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>家（単体・新規）</title>
 <style>
-  html,body{margin:0;height:100%;background:#0d1013;overflow:hidden}
-  canvas{display:block;width:100vw;height:100vh;cursor:crosshair}
+  html,body{margin:0;height:100%;background:#0d0f0a;overflow:hidden}
+  #stage{position:fixed;inset:0}
+  #stage canvas{position:absolute;inset:0;width:100%;height:100%}
+  #actors{pointer-events:none}
   #hint{position:fixed;left:12px;bottom:10px;color:#5d666e;
         font:12px/1.6 -apple-system,"Hiragino Sans",sans-serif;pointer-events:none;user-select:none}
   #hint b{color:#8b959d;font-weight:600}
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
-<div id="hint">ホイールで拡大縮小　<b id="z">×1.00</b></div>
+<div id="stage">
+  <canvas id="map"></canvas>
+  <canvas id="actors"></canvas>
+</div>
+<div id="hint">ホイールで拡大縮小　<b id="z">×1.00</b>　<span id="px"></span></div>
 
-<script>
-// 家だけの画面。**この頁は他の一切を読み込まない。**素の Canvas2D で完結する。
+<script type="module">
+// 家だけの画面。**この頁は世界（sim）を一切読み込まない。**
+// 読むのは葉っぱの2つだけ：個体の描画層（WebGL2）と、種族の見た目の定数。
 //
-// 決めごとは3つだけ：
-//   ・最大拡大（zoom = 1）＝ 屋根のない箱を真上から見た絵。中にキャラが2体
+// 寸法は本編に合わせてある（勝手な大きさを持たない）：
+//   家の箱   `map.js boxRect()` ＝ 幅72・高さ26（世界単位）。ここでは要件どおり 72×72 の正方形
+//   個体     `map.js radiusOf()` ＝ 3.2 + 5.2×育ち。成人で r=8.4
+//   ×1.00   本編の村ズーム等倍。**家はこれ以上大きくならない**
+//            （縮めていくと村・街・国・世界地図の段に入る。その段はまだ無い）
+//
+// 見えかたの決めごと：
+//   ・寄り切り（×1）＝ 屋根のない箱を真上から。中に2体
 //   ・引くと屋根が被さり、中は見えなくなる
-//   ・その間は混ぜて渡す。ぶつっと切り替わると「隠れた」ではなく「消えた」に見える
+//   ・中の2体は屋根より先に消える。屋根の下から透ける絵にならないように
 
-const cv  = document.getElementById('c');
+import { ActorLayer, SAT_ALIVE } from '../src/ui/actors.js';
+import { DEFAULT_RACE, FOUNDER_HUE, SPECIAL_NONE } from '../src/world/looks.js';
+
+const cv  = document.getElementById('map');
 const ctx = cv.getContext('2d');
+const actors = new ActorLayer(document.getElementById('actors'));
 const zlabel = document.getElementById('z');
+const pxlabel = document.getElementById('px');
 
-const ZMIN = 0.16, ZMAX = 1.0;   // 1.0 が最大拡大。それ以上は寄れない
-const HOUSE = 440;               // 最大拡大時の家の外寸（px）
+const BOX = 72;                  // 家の箱の一辺（世界単位）。map.js の boxRect().w と同じ
+const R_ADULT = 3.2 + 5.2;       // 成人の半径。map.js の radiusOf(grow=1)
+const ZMIN = 0.12, ZMAX = 1.0;   // ×1 が寄り切り。**家の最大は 72px**
 let zoom = ZMAX;
+let dpr = 1;
+
+// 住人2体。**同じ種族**（A-24）なので色も形も揃う。違うのは血の枠と熟練だけ
+const FOLK = [
+  { dx: -0.20, dy:  0.07, hue: FOUNDER_HUE[0], cells: 3, weak: 0 },
+  { dx:  0.19, dy: -0.09, hue: FOUNDER_HUE[3], cells: 6, weak: 0 },
+];
 
 // 0→1 の滑らかな渡し。t が a のとき 0、b のとき 1
 const ramp = (t, a, b) => {
@@ -39,82 +64,47 @@ const ramp = (t, a, b) => {
 };
 
 function resize() {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width  = Math.round(innerWidth  * dpr);
   cv.height = Math.round(innerHeight * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  actors.resize(innerWidth, innerHeight, dpr);
   draw();
-}
-
-// ---- 個体 ------------------------------------------------------------------
-// 頭と胴だけ。**意味は何も載せていない。**ここでは2体いることだけが要件
-function drawPerson(x, y, s, skin, cloth) {
-  ctx.save();
-  ctx.translate(x, y);
-
-  // 足元の影。これが無いと床に貼り付いた紙に見える
-  ctx.fillStyle = 'rgba(0,0,0,.28)';
-  ctx.beginPath();
-  ctx.ellipse(0, s * 0.62, s * 0.42, s * 0.16, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 胴。下すぼまりの台形
-  ctx.fillStyle = cloth;
-  ctx.beginPath();
-  ctx.moveTo(-s * 0.30, -s * 0.05);
-  ctx.lineTo( s * 0.30, -s * 0.05);
-  ctx.lineTo( s * 0.24,  s * 0.60);
-  ctx.lineTo(-s * 0.24,  s * 0.60);
-  ctx.closePath();
-  ctx.fill();
-
-  // 頭
-  ctx.fillStyle = skin;
-  ctx.beginPath();
-  ctx.arc(0, -s * 0.36, s * 0.30, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.restore();
 }
 
 // ---- 家 --------------------------------------------------------------------
 // 屋根のない箱。外枠を壁の色で塗って、内側を床の色で塗り返すだけ
 function drawOpenBox(cx, cy, size) {
   const h = size / 2;
-  const wall = Math.max(2, size * 0.055);
+  const wall = Math.max(1.5, size * 0.075);
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,.5)';
-  ctx.shadowBlur = size * 0.08;
-  ctx.shadowOffsetY = size * 0.02;
-  ctx.fillStyle = '#6a5744';                       // 壁
+  ctx.shadowBlur = size * 0.10;
+  ctx.shadowOffsetY = size * 0.03;
+  ctx.fillStyle = '#7d7159';                       // 壁。map.js の boxEdge
   ctx.fillRect(cx - h, cy - h, size, size);
   ctx.restore();
 
-  ctx.fillStyle = '#3b332b';                       // 床
+  ctx.fillStyle = '#232019';                       // 床。map.js の box
   ctx.fillRect(cx - h + wall, cy - h + wall, size - wall * 2, size - wall * 2);
 
-  // 壁の内側の落ち影。箱に深さが出る
-  ctx.strokeStyle = 'rgba(0,0,0,.35)';
-  ctx.lineWidth = Math.max(1, wall * 0.5);
-  ctx.strokeRect(cx - h + wall + ctx.lineWidth / 2, cy - h + wall + ctx.lineWidth / 2,
-                 size - wall * 2 - ctx.lineWidth, size - wall * 2 - ctx.lineWidth);
-
-  ctx.strokeStyle = 'rgba(0,0,0,.45)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(cx - h + .5, cy - h + .5, size - 1, size - 1);
+  ctx.strokeStyle = 'rgba(0,0,0,.40)';             // 壁の内側の落ち影。箱に深さが出る
+  ctx.lineWidth = Math.max(1, wall * 0.45);
+  const o = wall + ctx.lineWidth / 2;
+  ctx.strokeRect(cx - h + o, cy - h + o, size - o * 2, size - o * 2);
 }
 
 // 屋根。真上から見た寄棟。四隅から中央へ稜線が集まる
 function drawRoof(cx, cy, size) {
-  const h = size / 2 * 1.07;                       // 軒が壁より少し出る
+  const h = size / 2 * 1.10;                       // 軒が壁より少し出る
   const p = [[cx - h, cy - h], [cx + h, cy - h], [cx + h, cy + h], [cx - h, cy + h]];
-  const face = ['#8d6f52', '#6b543e', '#5a4634', '#7a6046']; // 上・右・下・左（光は左上から）
+  const face = ['#8d7f5f', '#6b6047', '#59503b', '#7a6e51']; // 上・右・下・左（光は左上から）
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,.55)';
-  ctx.shadowBlur = size * 0.10;
-  ctx.shadowOffsetY = size * 0.03;
+  ctx.shadowBlur = size * 0.12;
+  ctx.shadowOffsetY = size * 0.04;
   ctx.fillStyle = face[0];
   ctx.fillRect(cx - h, cy - h, h * 2, h * 2);      // 影は一度だけ落とす
   ctx.restore();
@@ -129,45 +119,54 @@ function drawRoof(cx, cy, size) {
     ctx.fill();
   }
 
-  ctx.strokeStyle = 'rgba(0,0,0,.30)';
-  ctx.lineWidth = Math.max(1, size * 0.006);
-  for (const q of p) { ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(cx, cy); ctx.stroke(); }
-  ctx.strokeStyle = 'rgba(0,0,0,.45)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(cx - h + .5, cy - h + .5, h * 2 - 1, h * 2 - 1);
+  if (size > 26) {                                 // 小さいと稜線は潰れて汚れになるだけ
+    ctx.strokeStyle = 'rgba(0,0,0,.28)';
+    ctx.lineWidth = Math.max(1, size * 0.008);
+    for (const q of p) { ctx.beginPath(); ctx.moveTo(q[0], q[1]); ctx.lineTo(cx, cy); ctx.stroke(); }
+  }
 }
 
 // ---- 一枚 ------------------------------------------------------------------
 function draw() {
   const W = innerWidth, H = innerHeight;
-  ctx.fillStyle = '#0d1013';
+  ctx.fillStyle = '#0d0f0a';
   ctx.fillRect(0, 0, W, H);
 
   const cx = W / 2, cy = H / 2;
-  const size = HOUSE * zoom;
+  const size = BOX * zoom;
 
-  // 寄っているほど 1。中が見えるかどうかはこれ1つで決める
-  const inside = ramp(zoom, 0.50, 0.80);
+  // 中の2体は屋根より先に消える。両方が半端に濃い区間を作らない
+  const seen = ramp(zoom, 0.60, 0.80);             // 中の見え具合
+  const roof = 1 - ramp(zoom, 0.46, 0.66);         // 屋根の被さり具合
 
   drawOpenBox(cx, cy, size);
 
-  if (inside > 0.01) {                              // 中の2体
-    ctx.save();
-    ctx.globalAlpha = inside;
-    const s = size * 0.20;
-    drawPerson(cx - size * 0.20, cy + size * 0.06, s, '#e6c69b', '#4f7fa8');
-    drawPerson(cx + size * 0.19, cy - size * 0.08, s, '#d9b184', '#a85f52');
-    ctx.restore();
+  actors.begin(FOLK.length);
+  if (seen > 0.01) {
+    for (const f of FOLK) {
+      actors.push(
+        (cx + f.dx * size) * dpr, (cy + f.dy * size) * dpr,
+        Math.max(1.1, R_ADULT * zoom * dpr),
+        f.weak,                                     // 明度＝弱っている、それだけ
+        f.hue, f.hue, 0,                            // 同じ種族なので沈殿は出ない
+        SAT_ALIVE,                                  // 彩度＝生死
+        DEFAULT_RACE.corners, SPECIAL_NONE,
+        DEFAULT_RACE.stripeV, DEFAULT_RACE.stripeH,
+        f.cells);                                   // 細胞＝熟練
+    }
   }
+  actors.flush();
+  actors.canvas.style.opacity = seen.toFixed(3);
 
-  if (inside < 0.99) {                              // 屋根が被さる
+  if (roof > 0.01) {
     ctx.save();
-    ctx.globalAlpha = 1 - inside;
+    ctx.globalAlpha = roof;
     drawRoof(cx, cy, size);
     ctx.restore();
   }
 
   zlabel.textContent = '×' + zoom.toFixed(2);
+  pxlabel.textContent = `家 ${size.toFixed(0)}px`;
 }
 
 // ---- 入力 ------------------------------------------------------------------
