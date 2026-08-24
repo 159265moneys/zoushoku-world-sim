@@ -29,7 +29,7 @@ import {
   AREA_STATS, HOUSES_PER_VILLAGE, RATION_YEARS, WHERE_NAMES,
 } from '../world/village.js';
 import { explain } from '../world/grow.js';
-import { lookOf, bloodTop2, bloodBreakdown, FOUNDER_COUNT } from '../world/looks.js';
+import { lookOf, bloodTop2, bloodBreakdown, FOUNDER_COUNT, FOUNDER_HUE } from '../world/looks.js';
 import { giftInfo, giftsCarried } from '../world/gifts.js';
 import * as GIFTS from '../core/gifts.gen.js';
 
@@ -92,8 +92,8 @@ export const FADE_DAYS = 15;
 export const MAX_FOLK = 3000;
 
 // 十匹それぞれの色相。**色相は血統だけ。色に意味を載せない**（A-4/A-5）
-export const FOUNDER_HUE = [];
-for (let k = 0; k < 10; k++) FOUNDER_HUE.push((k * 36 + 12) % 360);
+// 十匹の色相。**同じ種族なので狭い帯**（A-24）。中身は world/looks.js が持つ
+export { FOUNDER_HUE };
 
 // ===========================================================================
 // 色相＝血統

@@ -11,6 +11,57 @@
 
 export const FOUNDER_COUNT = 10;      // 創世の十匹。血の枠もこの数
 
+// ===========================================================================
+// 種族（A-24・2026-08-21 オーナー指摘）
+// ===========================================================================
+// > **戦争して移民・捕虜入れない限り種族は全部同じだっての。**
+//
+// **創世の十匹は、開幕の診断で決まった1つの種族＝同じ民族。**
+// よその血が入るのは**戦争の捕虜だけ**（開拓も移住も血を混ぜない・A-19b）。
+//
+// **血統 ≠ 種族。**`bloodMix` の10枠は「誰の子孫か」を数える指標で、これは残す
+// （収束計の「血統の生き残り 10/10」がこれを読む）。**見た目は種族のほう。**
+//
+// 私の最初の実装は十匹に10色・6種類の形・9通りの模様を配っていた。
+// **一つの民族が10色に分かれて立っていた。**しかも見た目5チャンネルが全部
+// 「誰の子孫か」を言うので、**意味のある3つ（大きさ＝年齢／暗さ＝弱り／細胞＝熟練）が
+// その中に埋もれていた。**
+//
+// 揃えると Phase 1 の盤面はほぼ単色になり、動くもの3つが読める。
+// そして**戦争でよその血が入った瞬間、盤面が初めて色を持つ。**
+
+/** この世界の種族。**いずれ開幕の診断（A-6-1）から決まる。**いまは固定 */
+export const DEFAULT_RACE = {
+  hue: 150,          // 種族の色
+  corners: 6,        // 種族の形（六角）
+  stripeV: 0,        // 種族の模様
+  stripeH: 2,
+};
+
+/** 同じ種族の中の個体差。**狭い。**はっきり違う色と形は、よその血のために取っておく */
+export const RACE_HUE_SPREAD = 8;      // 色相の幅（度）
+const RACE_LOOK_SPREAD = 0.30;         // 形と模様のゆらぎ。丸めれば全員同じ値になる幅
+
+/**
+ * よその血と見なす色相の隔たり（度）。
+ * **これより近い血は、同じ種族なので沈殿を描かない。**
+ * 十匹は同じ帯にいるので、Phase 1 では誰にも沈殿が出ない——それが正しい。
+ */
+export const FOREIGN_MIN_DEGREES = 22;
+
+/** 十匹の色相。**同じ種族なので狭い帯に収める**（旧実装は36度ずつ離した10色だった） */
+export const FOUNDER_HUE = [];
+for (let k = 0; k < FOUNDER_COUNT; k++) {
+  const t = FOUNDER_COUNT === 1 ? 0 : (k / (FOUNDER_COUNT - 1)) * 2 - 1;   // -1〜1
+  FOUNDER_HUE.push((DEFAULT_RACE.hue + t * RACE_HUE_SPREAD + 360) % 360);
+}
+
+/** 色相の隔たり（0〜180度）。色相環は循環しているので引き算では出ない */
+export function hueGap(a, b) {
+  const d = Math.abs(((a - b) % 360 + 540) % 360 - 180);
+  return 180 - d;
+}
+
 // 見た目の座位（中間遺伝するもの）
 export const LK_CORNERS = 0;          // 角の数 0〜8。0〜2は丸
 export const LK_STRIPE_V = 1;         // 縦の線数 0〜5
@@ -27,9 +78,11 @@ export const SPECIAL_NONE = 0, SPECIAL_STAR = 1, SPECIAL_HEART = 2;
 // 沈殿がこれ未満なら描かない（1px を割ると読めない）
 export const SEDIMENT_MIN = 0.06;
 
-const JITTER = 1.15;                  // 中間遺伝のゆらぎ。中間遺伝は分散が毎代半分になるので、
-                                      // これが無いと10代で全員が同じ形になる（実際にそうなった）
-const MUT = 0.02;                     // 見た目の突然変異率
+// 中間遺伝のゆらぎ。**1.15 まで上げていたのを 0.18 に戻した。**
+// 上げた理由は「10代で全員が同じ形になる」だったが、**A-24 でそれが正しいと分かった。**
+// よその血が入らない限り種族は変わらない。**揃うのが正しい挙動だった。**
+const JITTER = 0.18;
+const MUT = 0.004;                    // 見た目の突然変異率。何百年かに一度、少しだけ動く
 
 export const LOOK_SPEC = {
   bloodMix: `f32*${FOUNDER_COUNT}`,   // 十匹それぞれの血の割合。合計1。子は親の平均
@@ -40,16 +93,16 @@ export const LOOK_SPEC = {
 const clamp = (v, hi) => (v < 0 ? 0 : v > hi ? hi : v);
 
 /** 創世の十匹。**それぞれ違う見た目にする。**ここが世界の血統の出発点になる */
-export function foundLook(P, i, k, rng) {
+export function foundLook(P, i, k, rng, race = DEFAULT_RACE) {
   const A = P.a;
   for (let f = 0; f < FOUNDER_COUNT; f++) A.bloodMix[f][i] = 0;
   A.bloodMix[k % FOUNDER_COUNT][i] = 1;                    // 1人1枠。まだ混ざっていない
 
-  // 十匹の形を散らす。丸が多め（丸が最も原初的）
-  const SHAPES = [0, 0, 3, 4, 5, 6, 0, 8, 4, 3];
-  A.look[LK_CORNERS][i] = SHAPES[k % 10] + (rng.next() - 0.5) * 0.8;
-  A.look[LK_STRIPE_V][i] = clamp(rng.int(6) + (rng.next() - 0.5) * 0.6, 5);
-  A.look[LK_STRIPE_H][i] = clamp(rng.int(6) + (rng.next() - 0.5) * 0.6, 5);
+  // **十匹は同じ種族**（A-24）。個体差は丸めれば消える狭いゆらぎだけ
+  const wob = () => (rng.next() - 0.5) * 2 * RACE_LOOK_SPREAD;
+  A.look[LK_CORNERS][i] = clamp(race.corners + wob(), LOOK_MAX[LK_CORNERS]);
+  A.look[LK_STRIPE_V][i] = clamp(race.stripeV + wob(), LOOK_MAX[LK_STRIPE_V]);
+  A.look[LK_STRIPE_H][i] = clamp(race.stripeH + wob(), LOOK_MAX[LK_STRIPE_H]);
 
   // 潜性は最初から潜らせておく。**出るのは何代もあと**
   for (let r = 0; r < REC_COUNT; r++) {
@@ -70,7 +123,7 @@ export function breedLook(P, c, dad, mom, rng) {
   // 形と模様：中間遺伝＋ゆらぎ
   for (let k = 0; k < LOOK_COUNT; k++) {
     let v = (A.look[k][dad] + A.look[k][mom]) * 0.5 + (rng.next() - 0.5) * 2 * JITTER;
-    if (rng.next() < MUT) v += (rng.next() - 0.5) * 4;
+    if (rng.next() < MUT) v += (rng.next() - 0.5) * 1.2;
     A.look[k][c] = clamp(v, LOOK_MAX[k]);
   }
 
@@ -128,11 +181,16 @@ export function bloodTop2(P, i, hueOf) {
   let h2 = Math.atan2(y, x) * 180 / Math.PI;
   if (h2 < 0) h2 += 360;
 
+  // **同じ種族の血は沈殿させない**（A-24）。沈殿が言うのは「よその血」であって
+  // 「誰の子孫か」ではない。十匹は同じ帯にいるので、Phase 1 では誰にも沈殿が出ない
+  const h1 = hueOf(a);
+  const foreign = rest > 0 && hueGap(h1, h2) >= FOREIGN_MIN_DEGREES;
+
   return {
     first: a,
-    secondHue: rest > 0 ? h2 : hueOf(a),
+    secondHue: foreign ? h2 : h1,
     // 半分で頭打ち。これ以上沈むと「体の色」と「沈殿」が入れ替わって読めなくなる
-    sediment: rest < SEDIMENT_MIN ? 0 : Math.min(0.5, rest),
+    sediment: (!foreign || rest < SEDIMENT_MIN) ? 0 : Math.min(0.5, rest),
     lines,
     pure: av,                          // 1位の割合。1なら純血
   };
