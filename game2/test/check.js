@@ -1891,48 +1891,45 @@ check('劣性ホモでのみ出る（1本だけでは隠れたまま）', () => 
   return true;
 });
 
-check('創世の十匹が種を隠して持つ（段の重みで引く・本人には出ない）', () => {
+check('授かりものは遺伝しない。出生ごとの抽選（正典3-5）', () => {
+  // 親を一切見ない。同じ親から続けて生んでも、親の授かりものは伝わらない
   const w = new W.World(3).genesis();
-  const pp = w.people, seen = new Set();
-  let shown = 0;
+  const pp = w.people;
   for (const i of pp.living()) {
-    if (pp.a.gen[i] !== 0) continue;
-    for (const c of GIFT.giftsCarried(pp, i)) seen.add(c);
-    const e = GIFT.giftOf(pp, i);
-    if (e !== 0) { shown++; seen.add(e); }
+    if (GIFT.giftsCarried(pp, i).length !== 0) return '保因という状態が残っている';
+    if (pp.a.gift1[i] !== 0) return '2本目の対立遺伝子が残っている';
   }
-  // 全部劣性なので、十匹には1人も発現していないはず
-  if (shown !== 0) return `創世者に発現してしまっている（${shown}人）`;
-  if (seen.size === 0) return '十匹が1つも種を持っていない';
-  if (seen.size === 10) return '十匹が10種すべてを持っている（重みが効いていない）';
-  // 段の梯子が効いているか。12通り回して、S が SSS+G より多く出ること
-  let low = 0, high = 0;
-  for (let seed = 1; seed <= 40; seed++) {
-    const ww = new W.World(seed).genesis();
-    for (const i of ww.people.living()) {
-      for (const g of GIFT.giftsCarried(ww.people, i)) {
-        const t = GG.TIERS[GG.TIER[g]];
-        if (t === 'S') low++; else if (t === 'SSS' || t === 'G') high++;
-      }
-    }
-  }
-  return low > high ? true : `段の梯子が効いていない（S ${low} 本 / SSS+G ${high} 本）`;
+  if (GIFT.breedGift.length !== 5) return 'breedGift の形が変わっている';
+  return true;
 });
 
-check('**種は代を経ると消えうる**（拾い上げるのがオーナーの役割・A-23）', () => {
-  let lostSomewhere = 0, survivedSomewhere = 0;
-  for (let seed = 1; seed <= 12; seed++) {
-    const w = new W.World(seed).genesis();
-    w.runYears(200);
-    const c = GIFT.census(w.people);
-    let kinds = 0;
-    for (let g = 1; g <= GG.COUNT; g++) if (c.shown[g] || c.hidden[g]) kinds++;
-    if (kinds < 10) lostSomewhere++;
-    if (kinds > 0) survivedSomewhere++;
+check('抽選の実効値が正典3-5の表と合う（天井こみ）', () => {
+  const P = {}, rng = new RNG(11), N = 2000000;
+  const by = new Float64Array(GG.COUNT + 1);
+  let any = 0;
+  for (let k = 0; k < N; k++) {
+    const g = GIFT.drawGift(P, rng);
+    if (g !== 0) { any++; by[g]++; }
   }
-  if (lostSomewhere === 0) return '200年で1種類も失われない（消えなさすぎ）';
-  if (survivedSomewhere === 0) return '200年で全部消える（残らなさすぎ）';
-  return true;
+  // S級1個は 1/1万、G級1個は 1/10万（±25%）
+  for (const [g, want] of [[1, 10000], [9, 100000]]) {
+    const got = N / by[g];
+    if (!(got > want * 0.75 && got < want * 1.25)) return `${GG.NAME[g]} 1/${Math.round(got)}（狙い 1/${want}）`;
+  }
+  const all = N / any;                       // 何か持っている率 1/1,887
+  return (all > 1500 && all < 2400) || `何か持っている率 1/${Math.round(all)}`;
+});
+
+check('天井：その段が出ないまま続いたら、確定で出る（正典3-5）', () => {
+  const P = {}, rng = new RNG(13);
+  const need = GIFT.pityOf(9);               // 天賦（G級）の天井
+  if (!(need > 100000 && need < 300000)) return `G級の天井が ${need}`;
+  GIFT.drawGift(P, rng);                     // カウンタを作らせる
+  P._giftPity[9] = need - 1;                 // あと1回で天井
+  if (GIFT.drawGift(P, rng) !== 9) return '天井に届いても出なかった';
+  if (P._giftPity[9] !== 0) return '出たのに天井がリセットされていない';
+  // S級のほうが天井は近い（重みが大きい＝出やすい）
+  return GIFT.pityOf(1) < GIFT.pityOf(9) ? true : 'S級の天井がG級より遠い';
 });
 
 check('長寿は寿命70で確定・奇跡は老衰以外で死なない', () => {

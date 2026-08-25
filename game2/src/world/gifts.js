@@ -1,17 +1,25 @@
 /**
- * 授かりもの（S以上）。A-23。
+ * 授かりもの（S以上）。**正典3-5（オーナー裁定で遺伝を廃止し、抽選に置き換えた）。**
  *
  * **104ステとは別枠。**0〜100の値ではなく「持っている／いない」。
- * 1つの座位が11種類の値を取る（野生型＋10個）ので、**1人が2つ発現することはありえない**。
+ * 席は1つで10種類の値を取るので、**1人が2つ持つことはありえない。**
  *
- * 繁栄だけ顕性。残り9つは劣性ホモでのみ発現する。
+ * **遺伝しない。出生のたびに1回抽選する。**
+ *   確率 ＝ K × 重み、K = 1/200,000
+ *     S（長寿・繁栄・勇敢）   重み20 → 各 1/1万
+ *     SS（心眼・剛健・明晰）  重み10 → 各 1/2万
+ *     SSS（軍師・豊穣）       重み 6 → 各 1/3.3万
+ *     G（天賦・奇跡）         重み 2 → 各 1/10万
+ *   何か持っている率は 106/200,000 ≒ 1/1,887。10万人で53人。
  *
- * 供給は2本立て（どちらも実測して決めた・A-23）：
- *   1. 創世の十匹が10種を1本ずつ隠して持つ。600年以内に必ずどこかで出るが、
- *      **49%の確率で16世代目までに全部消える**（拾い上げるのがオーナーの役割）
- *   2. 出産1回につき 1/4700 で新規変異。国家規模になって初めて効き始める
- *      （村100人だとSの種が1つ出るまで6000年、Gは63000年かかる）
+ * **天井（ガチャと同じ）。**段ごとに「確率の逆数」の出産数で確定する。
+ * 出たらその段の天井はリセット。
  *
+ * **最初の村には出ない。それでよい**（オーナー裁定）。
+ * 1つの村を300年回した累積出産は約1,000回なので、S級で0.1体。
+ * 天井が効き始めるのは人口が万を超えてから（10万人ならS級2.5年・G級25年）。
+ *
+ * 廃止したもの：劣性ホモの判定／創世の種／出産ごと1/4700の変異／親からの受け渡し。
  * ここは腕の予算にも normalizeArms にも一切触らない。連鎖群とも無関係。
  */
 import * as G from '../core/gifts.gen.js';
@@ -20,14 +28,14 @@ import * as S from '../core/stats.js';
 export { G };
 export const NONE = G.NONE;
 
-/** その個体に発現している授かりもの。0なら無し */
+/** その個体が持っている授かりもの。0なら無し */
 export function giftOf(P, i) {
-  return G.express(P.a.gift0[i], P.a.gift1[i]);
+  return P.a.gift0[i];
 }
 
-/** 発現はしていないが隠して運んでいるもの（オーナーだけが見える・A-7） */
+/** 保因という状態は無くなった（遺伝を廃止したので）。空を返す */
 export function giftsCarried(P, i) {
-  return G.carried(P.a.gift0[i], P.a.gift1[i]);
+  return [];
 }
 
 /** UI に渡す形。持っていなければ空配列 */
@@ -46,40 +54,64 @@ export function has(P, i, key) { return giftOf(P, i) === G.OF[key]; }
 /** 繁栄：交叉が起きない。自分の染色体がまるごと子へ渡る */
 export function hasProsper(P, i) { return giftOf(P, i) === G.OF.prosper; }
 
-// ---- 創世の十匹に種を配る --------------------------------------------------
+// ---- 抽選と天井 ------------------------------------------------------------
 /**
- * 創世者に授かりものの種を1本だけ持たせる。**本人には発現しない**
- * （繁栄だけは顕性なので出てしまう）。
- *
- * **段の重みで引く。**十匹に10種を1つずつ配ると、村ほどの小集団では
- * すぐ劣性ホモが揃って、300年で奇跡が人口の10%を占めた（実測）。
- * 重みで引けば S が過半・G は十匹に0.4本しか入らない。段の梯子が村でも効く。
- *
- * FOUNDER_SEED_P … 種を持って生まれる創世者の割合。
+ * 確率 ＝ K × 重み。K を「S級1個が 1/1万」に合わせる。
+ * 重みは gifts.gen.js の WEIGHT（S=20 / SS=10 / SSS=6 / G=2）。
  */
-export const FOUNDER_SEED_P = 0.6;
+/**
+ * **正典3-5の表は「天井こみの実効値」。**S級1個で 1/1万、G級1個で 1/10万。
+ * 素の確率をそのまま 1/1万 にすると、天井があるぶん実効が 1/6,300 まで上がってしまう
+ * （天井 N＝1/p のとき、平均は (1−e⁻¹)/p ＝ 0.632/p）。
+ * **だから素の確率を 0.632倍にして、天井を通したあとに表の値へ着地させる。**
+ */
+export const DRAW_K = 1 / 200000;              // 実効値。K × 重み が表の確率
+const PITY_ADJUST = 1 - Math.exp(-1);          // 0.6321…
 
+/** 素の確率（天井を通す前） */
+export function baseRateOf(g) { return DRAW_K * G.WEIGHT[g] * PITY_ADJUST; }
+/** 段ごとの天井。この出産数で確定する */
+export function pityOf(g) { return Math.round(1 / baseRateOf(g)); }
+
+/**
+ * 天井のカウンタ。**世界に1本。**P（人の器）にぶら下げるので、呼ぶ側は持ち回らなくていい。
+ */
+function pityCounter(P) {
+  if (!P._giftPity) P._giftPity = new Float64Array(G.COUNT + 1);
+  return P._giftPity;
+}
+
+/**
+ * 出生のたびに1回。**遺伝しない。**
+ * @returns 引いた授かりもの（G.NONE なら無し）
+ */
+export function drawGift(P, rng) {
+  const pity = pityCounter(P);
+  // 天井。届いているものがあれば確定で出す
+  for (let g = 1; g <= G.COUNT; g++) {
+    pity[g] += 1;
+    if (pity[g] >= pityOf(g)) { pity[g] = 0; return g; }
+  }
+  // 届いていなければ、重みで抽選
+  const r = rng.next();
+  let acc = 0;
+  for (let g = 1; g <= G.COUNT; g++) {
+    acc += baseRateOf(g);
+    if (r < acc) { pity[g] = 0; return g; }
+  }
+  return G.NONE;
+}
+
+/** 創世の8人にも同じ抽選を回すだけ。種は持たせない */
 export function seedFounder(P, i, k, rng) {
-  const g = rng.next() < FOUNDER_SEED_P ? G.rollGift(rng) : G.NONE;
-  P.a.gift0[i] = g;
+  P.a.gift0[i] = drawGift(P, rng);
   P.a.gift1[i] = G.NONE;
 }
 
-// ---- 子への受け渡し --------------------------------------------------------
-/**
- * 親それぞれから1本ずつ引く。引いたあとに新規変異が乗る。
- * breed() の最後から呼ぶ。104ステの交叉とは完全に独立。
- */
+/** 子。**親を一切見ない。**出生の抽選をそのまま入れる */
 export function breedGift(P, child, father, mother, rng) {
-  const A = P.a;
-  let a = rng.bool() ? A.gift0[father] : A.gift1[father];
-  let b = rng.bool() ? A.gift0[mother] : A.gift1[mother];
-  // 新規変異。全国民に平等（オーナー指定）。1回の出産につき MUT_PER_BIRTH
-  if (rng.next() < G.MUT_PER_BIRTH) {
-    if (rng.bool()) a = G.rollGift(rng); else b = G.rollGift(rng);
-  }
-  A.gift0[child] = a;
-  A.gift1[child] = b;
+  P.a.gift0[child] = drawGift(P, rng);
+  P.a.gift1[child] = G.NONE;
 }
 
 // ---- 効果 ------------------------------------------------------------------
