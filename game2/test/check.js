@@ -1903,7 +1903,13 @@ check('授かりものは遺伝しない。出生ごとの抽選（正典3-5）'
   return true;
 });
 
-check('抽選の実効値が正典3-5の表と合う（天井こみ）', () => {
+check('素の確率が正典3-5の表と合う。天井は上乗せ（ソシャゲと同じ）', () => {
+  // 表の値＝素の確率。S級1個 1/1万、G級1個 1/10万
+  if (Math.round(1 / GIFT.baseRateOf(1)) !== 10000) return `S級 1/${Math.round(1 / GIFT.baseRateOf(1))}`;
+  if (Math.round(1 / GIFT.baseRateOf(9)) !== 100000) return `G級 1/${Math.round(1 / GIFT.baseRateOf(9))}`;
+  // 天井は素の確率の逆数
+  if (GIFT.pityOf(1) !== 10000 || GIFT.pityOf(9) !== 100000) return '天井が確率の逆数になっていない';
+  // 実際に手に入る速さは、天井のぶん 1.58倍くらい速い（(1−e⁻¹) 分の1）
   const P = {}, rng = new RNG(11), N = 2000000;
   const by = new Float64Array(GG.COUNT + 1);
   let any = 0;
@@ -1911,13 +1917,12 @@ check('抽選の実効値が正典3-5の表と合う（天井こみ）', () => {
     const g = GIFT.drawGift(P, rng);
     if (g !== 0) { any++; by[g]++; }
   }
-  // S級1個は 1/1万、G級1個は 1/10万（±25%）
-  for (const [g, want] of [[1, 10000], [9, 100000]]) {
-    const got = N / by[g];
-    if (!(got > want * 0.75 && got < want * 1.25)) return `${GG.NAME[g]} 1/${Math.round(got)}（狙い 1/${want}）`;
+  for (const [g, base] of [[1, 10000], [9, 100000]]) {
+    const got = N / by[g], want = base * (1 - Math.exp(-1));
+    if (!(got > want * 0.75 && got < want * 1.25)) return `${GG.NAME[g]} 実効 1/${Math.round(got)}（読み 1/${Math.round(want)}）`;
   }
-  const all = N / any;                       // 何か持っている率 1/1,887
-  return (all > 1500 && all < 2400) || `何か持っている率 1/${Math.round(all)}`;
+  const all = N / any;                       // 素 1/1,887 → 実効 1/1,200 くらい
+  return (all > 950 && all < 1500) || `何か持っている率 1/${Math.round(all)}`;
 });
 
 check('天井：その段が出ないまま続いたら、確定で出る（正典3-5）', () => {

@@ -60,17 +60,17 @@ export function hasProsper(P, i) { return giftOf(P, i) === G.OF.prosper; }
  * 重みは gifts.gen.js の WEIGHT（S=20 / SS=10 / SSS=6 / G=2）。
  */
 /**
- * **正典3-5の表は「天井こみの実効値」。**S級1個で 1/1万、G級1個で 1/10万。
- * 素の確率をそのまま 1/1万 にすると、天井があるぶん実効が 1/6,300 まで上がってしまう
- * （天井 N＝1/p のとき、平均は (1−e⁻¹)/p ＝ 0.632/p）。
- * **だから素の確率を 0.632倍にして、天井を通したあとに表の値へ着地させる。**
+ * **正典3-5の表は「素の確率」。**ソシャゲの天井と同じで、**天井は上乗せ。**
+ * S級1個で 1/1万、G級1個で 1/10万。天井は「確率の逆数」の出産数。
+ *
+ * 天井があるぶん、**実際に手に入る速さは表より1.58倍くらい速くなる**
+ * （天井 N＝1/p のとき平均は (1−e⁻¹)/p ＝ 0.632/p）。それでよい。
  */
-export const DRAW_K = 1 / 200000;              // 実効値。K × 重み が表の確率
-const PITY_ADJUST = 1 - Math.exp(-1);          // 0.6321…
+export const DRAW_K = 1 / 200000;
 
-/** 素の確率（天井を通す前） */
-export function baseRateOf(g) { return DRAW_K * G.WEIGHT[g] * PITY_ADJUST; }
-/** 段ごとの天井。この出産数で確定する */
+/** 素の確率。K × 重み */
+export function baseRateOf(g) { return DRAW_K * G.WEIGHT[g]; }
+/** 段ごとの天井。この出産数で確定する。＝ 素の確率の逆数 */
 export function pityOf(g) { return Math.round(1 / baseRateOf(g)); }
 
 /**
