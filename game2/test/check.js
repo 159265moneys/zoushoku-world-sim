@@ -1928,7 +1928,7 @@ check('素の確率が正典3-5の表と合う。天井は上乗せ（ソシャ�
 check('天井：その段が出ないまま続いたら、確定で出る（正典3-5）', () => {
   const P = {}, rng = new RNG(13);
   const need = GIFT.pityOf(9);               // 天賦（G級）の天井
-  if (!(need > 100000 && need < 300000)) return `G級の天井が ${need}`;
+  if (need !== 100000) return `G級の天井が ${need}`;
   GIFT.drawGift(P, rng);                     // カウンタを作らせる
   P._giftPity[9] = need - 1;                 // あと1回で天井
   if (GIFT.drawGift(P, rng) !== 9) return '天井に届いても出なかった';
