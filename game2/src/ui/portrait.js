@@ -63,9 +63,9 @@ export class Portrait {
       if (p) {
         this.layer.push(
           px * 0.5, px * 0.5, r,
-          p.weak ?? 0,
+          p.dark ?? 0,
           p.hue1, p.hue2, p.sediment, sat,
-          p.corners, p.special, p.stripeV, p.stripeH, p.cells ?? 0);
+          p.corners, p.special, p.stripeV, p.stripeH, 0);
       }
       this.layer.flush();
       return;
@@ -77,7 +77,7 @@ export class Portrait {
     g.beginPath();
     g.arc(px * 0.5, px * 0.5, r, 0, Math.PI * 2);
     g.fillStyle = `hsl(${p.hue1.toFixed(0)} ${(sat * 100).toFixed(0)}% `
-      + `${(66 * (1 - 0.42 * (p.weak ?? 0))).toFixed(0)}%)`;
+      + `${(66 * (1 - 0.42 * (p.dark ?? 0))).toFixed(0)}%)`;
     g.fill();
   }
 
@@ -104,7 +104,6 @@ export function portraitLegend(p) {
   else if (p.stripeV > 0) out.push(`縦縞${p.stripeV}本`);
   else if (p.stripeH > 0) out.push(`横縞${p.stripeH}本`);
   else out.push('無地');
-  if (p.cells > 0) out.push(`細胞${p.cells}個（熟練）`);
   out.push(p.sediment > 0
     ? `よその血が${Math.round(p.sediment * 200)}%ぶん沈んでいる`
     : '混ざっていない');

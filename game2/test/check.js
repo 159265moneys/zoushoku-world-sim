@@ -255,11 +255,13 @@ check('年齢：月齢で持って歳に直す（18歳=216ヶ月・妊娠10ヶ�
   return (C.yearsToMonths(70) < 65536) || '月齢が Uint16 を超える';
 });
 
-check('速さ：1倍で1日1分・60倍で1ヶ月30秒・1年6分', () => {
-  if (C.msPerTick(1) !== 60000) return `1倍 ${C.msPerTick(1)}ms`;
-  if (C.realSecondsPerMonth(60) !== 30) return `60倍 ${C.realSecondsPerMonth(60)}秒`;
-  if (C.realSecondsPerMonth(60) * 12 !== 360) return '1年が6分でない';
-  return (C.SPEED_MAX_RELEASE === 60 && C.SPEED_MAX_DEBUG === 500)
+check('速さ：×1で1ヶ月10分・×10で1ヶ月1分', () => {
+  if (C.realSecondsPerMonth(1) !== 600) return `×1 ${C.realSecondsPerMonth(1)}秒`;
+  if (C.realSecondsPerMonth(10) !== 60) return `×10 ${C.realSecondsPerMonth(10)}秒`;
+  if (C.realSecondsPerMonth(10) * 12 !== 720) return '×10 の1年が12分でない';
+  if (C.OFFLINE_SPEED !== 1) return `オフラインが ×${C.OFFLINE_SPEED}`;
+  if (C.OFFLINE_MAX_HOURS !== 24) return `オフラインの上限が ${C.OFFLINE_MAX_HOURS}時間`;
+  return (C.SPEED_MAX_RELEASE === 10 && C.SPEED_MAX_DEBUG === 500)
     || `${C.SPEED_MAX_RELEASE}/${C.SPEED_MAX_DEBUG}`;
 });
 
@@ -1427,30 +1429,31 @@ check('倍速でも早送りでも、同じ日数なら同じ歴史', () => {
   return true;
 });
 
-check('1倍は1日1分（A-11）', () => {
+check('×1は1ヶ月10分（正典3-1）', () => {
   const r = new RUN.Run({ seed: 1 });
   r.play();
-  if (r.msPerTick() !== 60000) return `1tick が ${r.msPerTick()}ms`;
-  // 頁は16msごとに刻む。60秒ぶん渡すと、ちょうど1日だけ進むこと
+  if (r.msPerTick() !== 20000) return `1tick が ${r.msPerTick()}ms`;
+  // 頁は16msごとに刻む。20秒ぶん渡すと、ちょうど1日だけ進むこと
   let days = 0;
-  for (let ms = 0; ms < 60000; ms += 16) days += r.pump(16);
-  if (days !== 1) return `60秒で ${days}日進んだ`;
-  for (let ms = 0; ms < 59000; ms += 16) days += r.pump(16);
-  return days === 1 ? true : `さらに59秒で ${days}日になった`;
+  for (let ms = 0; ms < 20000; ms += 16) days += r.pump(16);
+  if (days !== 1) return `20秒で ${days}日進んだ`;
+  for (let ms = 0; ms < 19000; ms += 16) days += r.pump(16);
+  return days === 1 ? true : `さらに19秒で ${days}日になった`;
 });
 
-check('60倍で1ヶ月30秒・1年6分（A-11）', () => {
+check('×10で1ヶ月1分・1年12分（正典3-1）', () => {
   const r = new RUN.Run({ seed: 1 });
-  r.setSpeed(60);
+  r.setSpeed(10);
   const sec = 30 * r.msPerTick() / 1000;
-  return Math.abs(sec - 30) < 1e-9 ? true : `1ヶ月 ${sec}秒`;
+  if (Math.abs(sec - 60) > 1e-9) return `1ヶ月 ${sec}秒`;
+  return Math.abs(sec * 12 - 720) < 1e-9 ? true : `1年 ${sec * 12}秒`;
 });
 
-check('本番の上限は60倍。500倍は ?dev=1 のときだけ（A-11）', () => {
+check('本番の上限は×10。500倍は ?dev=1 のときだけ（正典3-1）', () => {
   const rel = new RUN.Run({ seed: 1 });
   rel.setSpeed(500);
-  if (rel.speed !== 60) return `本番で ×${rel.speed} まで上がった`;
-  if (rel.speedChoices().some(s => s > 60)) return '本番の選択肢に60超が出ている';
+  if (rel.speed !== 10) return `本番で ×${rel.speed} まで上がった`;
+  if (rel.speedChoices().some(s => s > 10)) return '本番の選択肢に10超が出ている';
   const dev = new RUN.Run({ seed: 1, dev: true });
   dev.setSpeed(500);
   if (dev.speed !== 500) return `デバッグで ×${dev.speed} までしか上がらない`;
@@ -1568,26 +1571,38 @@ check('色相は血統だけ。同じ血なら同じ色相（A-4/A-5）', () => 
   return true;
 });
 
-check('大きさ＝年齢は26歳で頭打ち（A-6：ピークは26歳固定）', () => {
+check('大きさ＝身長は18歳で頭打ち（正典1-2⑤）', () => {
   const r = new RUN.Run({ seed: 31 });
   r.advance(360 * 40);
+  let big = 0, small = 0;
   for (const p of r.snapshot().folk) {
     if (p.grow < 0 || p.grow > 1) return `大きさが ${p.grow}`;
-    if (p.age >= 26 && p.grow !== 1) return `${p.age}歳で ${p.grow}`;
-    if (p.age < 26 && p.grow >= 1) return `${p.age}歳で頭打ちになっている`;
+    if (p.age < 3 && p.grow > 0.3) return `${p.age}歳が大きすぎる（${p.grow.toFixed(2)}）`;
+    if (p.age >= 18) { big++; if (p.grow > 0.62) small++; }   // 大人は身長で散る
   }
+  if (big > 20 && small === 0) return '大人が全員おなじ大きさ（身長が効いていない）';
   return true;
 });
 
-check('細胞の数＝熟練。0〜9で、働かない者は0', () => {
-  if (RUN.cellsOf(0) !== 0) return '熟練0で細胞がある';
-  if (RUN.cellsOf(1000) !== 9) return `上限が ${RUN.cellsOf(1000)}`;
+check('粒（細胞）は撤廃されている（正典1-2⑤）', () => {
+  if (RUN.cellsOf !== undefined) return 'cellsOf がまだ生きている';
   const r = new RUN.Run({ seed: 41 });
   r.advance(360 * 40);
+  for (const p of r.snapshot().folk) if (p.cells !== undefined) return '盤面にまだ細胞が出ている';
+  return true;
+});
+
+check('明度＝年齢。1歳が最も明るく、老衰間際が最も暗い（正典1-2⑤）', () => {
+  const r = new RUN.Run({ seed: 43 });
+  r.advance(360 * 40);
+  let young = null, old = null;
   for (const p of r.snapshot().folk) {
-    if (p.cells < 0 || p.cells > 9) return `細胞が ${p.cells}`;
-    if (p.age < 5 && p.cells > 0) return `${p.age}歳に熟練がある`;
+    if (p.dark === undefined) return '明度が出ていない';
+    if (p.dark < 0 || p.dark > 1) return `明度が ${p.dark}`;
+    if (p.age <= 2 && (young === null || p.dark < young)) young = p.dark;
+    if (p.age >= 45 && (old === null || p.dark > old)) old = p.dark;
   }
+  if (young !== null && old !== null && !(young < old)) return `幼${young} 老${old}`;
   return true;
 });
 

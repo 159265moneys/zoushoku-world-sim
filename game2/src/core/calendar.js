@@ -24,9 +24,16 @@ export const MONTHS_PER_SEASON = MONTHS_PER_YEAR / 4; // 3
 
 // ---- 速さ ----------------------------------------------------------------
 // 1倍 = 1日1分。倍率 r のとき 1tick = 60000/r ミリ秒。
-export const MS_PER_TICK_AT_1X = 60000;
-export const SPEED_MAX_RELEASE = 60;  // 本番の上限（1ヶ月30秒・1年6分）
+// 速さは1本のスケール（正典3-1・絶対固定ルール）。
+//   ×1（基本）  … 1ヶ月＝10分。オフライン進行もこの速さ
+//   ×10（最速） … 1ヶ月＝1分
+// 1ヶ月＝30日なので、×1 の1日は 10分/30 ＝ 20秒。
+export const MS_PER_TICK_AT_1X = 20000;
+export const SPEED_MAX_RELEASE = 10;  // 本番の上限（×10＝1ヶ月1分・1年12分）
 export const SPEED_MAX_DEBUG = 500;   // 収束計を回すため。開発用UIに隔離する
+// オフラインは ×1 で進む。ただし進むのは24時間ぶん＝12年まで（正典3-1）
+export const OFFLINE_SPEED = 1;
+export const OFFLINE_MAX_HOURS = 24;
 
 // ---- tick → 日付 ---------------------------------------------------------
 

@@ -626,11 +626,11 @@ export class MapView {
     const d = this.dpr;
     this.actors.push(
       s.x * d, s.y * d, Math.max(1.1, rs * d),
-      p.weak,                                           // 明度＝弱っている、それだけ
+      p.dark,                                           // 明度＝年齢。1歳が最も明るい
       p.hue1, p.hue2, p.sediment,
       SAT_ALIVE,                                        // 彩度＝生死。生きている者は固定
       p.corners, p.special, p.stripeV, p.stripeH,
-      p.cells);        // 細胞＝熟練（A-4／A-10）
+      0);              // 粒は撤廃（正典1-2⑤）
   }
 
   /** WebGL2 が無い環境の落とし先。丸と色相だけ。**記号は諦める** */
@@ -638,7 +638,7 @@ export class MapView {
     g.beginPath();
     g.arc(at.x, at.y, r, 0, Math.PI * 2);
     g.fillStyle = `hsl(${p.hue1.toFixed(0)} ${(SAT_ALIVE * 100).toFixed(0)}% `
-      + `${(66 * (1 - 0.42 * p.weak)).toFixed(0)}%)`;
+      + `${(66 * (1 - 0.42 * p.dark)).toFixed(0)}%)`;
     g.fill();
   }
 

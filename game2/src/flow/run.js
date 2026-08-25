@@ -76,9 +76,9 @@ export const GROW_FAST = 0.95;
 
 // ---- 速さ（A-11） ---------------------------------------------------------
 // 1倍＝1日1分。60倍で1ヶ月30秒・1年6分。
-export const SPEEDS = [1, 2, 5, 15, 60];               // 本番。上限は60（確定）
+export const SPEEDS = [1, 2, 5, 10];                   // ×1＝1ヶ月10分／×10＝1ヶ月1分
 export const SPEED_DEBUG = C.SPEED_MAX_DEBUG;          // 500。開発用UIに隔離する
-export const SPEED_MAX_RELEASE = C.SPEED_MAX_RELEASE;  // 60
+export const SPEED_MAX_RELEASE = C.SPEED_MAX_RELEASE;  // 10
 
 // 1回の pump で進める上限。タブが裏に回っていた時間ぶんを一気に流し込まない。
 // 世代をまたぐ時間は倍速ではなくオフライン進行で飛ばす（A-11）ので、ここは捨ててよい。
@@ -129,11 +129,8 @@ function masteryOf(P, i) {
   }
   return w > 0 ? sum / w : 0;
 }
-/** 熟練 → 細胞の数（0〜9）。増えるものが常に画面にあるように（A-10：細胞が増える） */
-export function cellsOf(mastery) {
-  const n = Math.round(mastery / 3.5);
-  return n < 0 ? 0 : n > 9 ? 9 : n;
-}
+// 粒（細胞＝熟練）は撤廃した（正典1-2⑤：オーナー裁定）。
+// 「そんなのいらないし描画できない」。cellsOf は消し、盤面にも個体票にも出さない。
 /** 年齢 → 年輪の数（0〜5） */
 export function ringsOf(ageYears) {
   const n = Math.floor(ageYears / 12);
@@ -141,24 +138,26 @@ export function ringsOf(ageYears) {
 }
 
 /**
- * 弱っている度合い 0〜1。**明度が言うのはこれだけ**（A-5）。
- * 内訳（何で弱っているか）は言わない。それは個体票のアイコンの仕事。
- *
- * ※ キャラビジュアル班の持ち物だが、`world/looks.js` へは移せない。
- *   people.js が looks.js を import しているので、looks.js から people.js（ST_*）を
- *   引くと循環参照になり、`LOOK_SPEC` が初期化前に読まれて落ちる（実際に踏んだ）。
- *   状態のビットを core へ出すまでは、ここに置く。**中身は触らないこと。**
+ * 暗さ 0〜1。**明度が言うのは年齢だけ**（正典1-2⑤：オーナー裁定）。
+ * **1歳がもっとも明るく、老衰間際がもっとも暗い。**
+ * 弱り（飢え・病・古傷）は明度から降ろした。それは個体票のアイコンの仕事。
  */
-export function weaknessOf(P, i, state) {
+export function darknessOf(P, i) {
   const A = P.a;
-  let w = A.scar[i] * 0.9;                       // 古傷。恒久
-  if (state & ST_HUNGRY) w += 0.34;
-  if (state & ST_SICK) w += 0.30;
-  // 老い。寿命の半分を過ぎてから効きはじめる
   const years = A.ageMonths[i] / C.MONTHS_PER_YEAR;
-  const half = A.lifespan[i] * 0.5;
-  if (years > half) w += Math.min(0.45, (years - half) / Math.max(1, A.lifespan[i] - half) * 0.45);
-  return w < 0 ? 0 : w > 1 ? 1 : w;
+  const life = Math.max(1, A.lifespan[i]);
+  const d = years / life;
+  return d < 0 ? 0 : d > 1 ? 1 : d;
+}
+
+/** 身長（0〜1）。大きさが言うのはこれ。遺伝の身長 × 育ちきるまでの成長曲線 */
+export const HEIGHT_STAT = 17;            // stats.gen.js の「身長」
+export const GROWN_AGE = 18;              // ここで背が止まる
+export function heightOf(P, i) {
+  const years = P.a.ageMonths[i] / C.MONTHS_PER_YEAR;
+  const grown = Math.min(1, years / GROWN_AGE);
+  const h = P.effective(i, HEIGHT_STAT) / 100;  // 0〜1くらい
+  return grown * (0.55 + 0.45 * (h < 0 ? 0 : h > 1 ? 1 : h));
 }
 
 // ===========================================================================
@@ -447,9 +446,9 @@ export class Run {
         sediment: bt.sediment, bloodLines: bt.lines,
         corners: look.corners, stripeV: look.stripeV, stripeH: look.stripeH,
         special: look.special,
-        weak: weaknessOf(P, i, st),
-        mastery, cells: cellsOf(mastery), rings: ringsOf(age),
-        grow: Math.min(1, months / (26 * C.MONTHS_PER_YEAR)),   // 大きさ＝年齢（ピーク26歳）
+        dark: darknessOf(P, i),          // 明度＝年齢。1歳が最も明るい
+        mastery, rings: ringsOf(age),
+        grow: heightOf(P, i),            // 大きさ＝身長（18歳で止まる）
         pregnant: !!(st & ST_PREGNANT),
         hungry: !!(st & ST_HUNGRY),
         sick: !!(st & ST_SICK),
@@ -636,7 +635,7 @@ export class Run {
           grow: Math.min(1, months / (26 * C.MONTHS_PER_YEAR)),
         };
       })(),
-      weak: weaknessOf(P, i, A.state[i]),
+      dark: darknessOf(P, i),
       states,
       gifts,                       // 授かりもの（S以上）。持っていなければ空配列（A-23）
       giftsCarried: giftsCarriedNames,   // 保因。オーナーだけが見える（A-7）
@@ -645,7 +644,7 @@ export class Run {
       father: A.father[i] === NO_ONE ? -1 : A.father[i],
       births: A.births[i],
       children,
-      mastery, cells: cellsOf(mastery), rings: ringsOf(age),
+      mastery, rings: ringsOf(age),
       stats, top, statsHidden: stats.length - shown.length,
       jobWeights: jobW,
       bodyDebuff: P.debuff(i, 0),
