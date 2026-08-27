@@ -3,6 +3,7 @@ import { generate, W, T } from '../src/world/mapgen.js';
 import { pickSeat, guarantee, enrich } from '../src/world/seat.js';
 import { expand } from '../src/world/parcel.js';
 import { settle } from '../src/world/settle.js';
+import { assignTiers, TIER } from '../src/world/tier.js';
 import { writeFileSync } from 'node:fs';
 
 const seed = Number(process.argv[2] || 1);
@@ -11,6 +12,8 @@ const r = pickSeat(g); if (!r.ok) { console.log('席が置けない'); process.e
 guarantee(g, r.seat); enrich(g, r.seat);
 const L = expand(g);
 const S_ = settle(g, L, r.seat);
+const TG = [400,350,40,16,8,3,1];
+const A = assignTiers(g, L, S_, TG);
 
 // 入植した範囲に合わせて切り取る（余白4里）
 let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
@@ -36,21 +39,19 @@ for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
   }
   for(let a=0;a<S;a++) for(let b=0;b<S;b++) put(x*S+b,y*S+a,c);
 }
-// 拠点ごとに色を振る（根のIDから決定論で）
-const hue=(k)=>{ const t=(k*0.61803398875)%1, s=0.72, l=0.55;
-  const f=(n)=>{ const a=s*Math.min(l,1-l); const kk=(n+t*12)%12;
-    return Math.round(255*(l-a*Math.max(-1,Math.min(kk-3,9-kk,1)))); };
-  return [f(0),f(8),f(4)]; };
-const seen=new Map();
-for (let i=0;i<S_.n;i++){
-  const rt=S_.root[i]; if(!seen.has(rt)) seen.set(rt,hue(seen.size));
-  const c=seen.get(rt);
+// 段ごとに大きさと色を変える（開拓地→首都）
+const TCOL = [[150,150,160],[190,190,120],[230,200,90],[255,160,60],[255,90,60],[240,50,140],[255,255,255]];
+const TRAD = [1,1,2,3,5,7,10];
+for (let t=0; t<7; t++) for (let i=0;i<S_.n;i++){        // 小さいものから描いて大を上に
+  if (A.tier[i]!==t) continue;
   const X=Math.round((S_.vx[i]/4-x0)*S), Y=Math.round((S_.vy[i]/4-y0)*S);
-  const rad = i===0 ? 4 : 2;
+  const rad=TRAD[t], c=TCOL[t];
   for(let a=-rad;a<=rad;a++) for(let b=-rad;b<=rad;b++)
-    if(a*a+b*b<=rad*rad) put(X+b,Y+a, i===0?[255,60,60]:c);
-  if (i===0) for(let a=-7;a<=7;a++){ if(Math.abs(a)<5)continue; put(X+a,Y,[255,60,60]); put(X,Y+a,[255,60,60]); }
+    if(a*a+b*b<=rad*rad) put(X+b,Y+a,c);
+  if (t>=4) for(let a=-rad-2;a<=rad+2;a++) for(let b=-rad-2;b<=rad+2;b++){   // 都市以上に輪
+    const d=a*a+b*b; if(d>(rad+1)*(rad+1)&&d<=(rad+2)*(rad+2)) put(X+b,Y+a,[20,20,24]); }
 }
 writeFileSync(`/tmp/settle-${seed}.ppm`, Buffer.concat([Buffer.from(`P6\n${D} ${D}\n255\n`), px]));
+console.log('段: '+A.stat.placed.map((n,i)=>TIER[i].name+n).join(' / ')+'   人口'+A.stat.pop.toLocaleString());
 console.log(`種${seed}  村${S_.n}  拠点${S_.hubs.count}  平均${S_.hubs.avg.toFixed(2)}村/拠点  最大${S_.hubs.max}村  1村だけ${S_.hubs.solo}`);
 console.log(`広がった範囲 ${w}×${h}里マス（${w*5}×${h*5}km）／ 世界は384×384里マス。使ったのは ${(w*h/(W*W)*100).toFixed(1)}%`);
