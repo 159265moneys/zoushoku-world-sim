@@ -379,11 +379,12 @@ export function lifespanOf(P, i) {
 // ---- 1ヶ月ぶんの加齢と死 ---------------------------------------------------
 /**
  * 歳を取り、死ぬ。月に1度だけ呼ぶ。
- * @returns {{aged:number, died:number, byCause:number[]}}
+ * @returns {{aged:number, died:number, byCause:number[], dead:number[]}}
  */
 export function agingAndDeath(P, tick, rng) {
   const A = P.a;
   const byCause = new Array(DEATH_COUNT).fill(0);
+  const dead = [];             // ★ その月に死んだ者。喪（第7部 §1 一時12）の入力になる
   let aged = 0, died = 0;
 
   for (let i = 0; i < A.len; i++) {
@@ -398,7 +399,7 @@ export function agingAndDeath(P, tick, rng) {
       const over = y - A.lifespan[i];
       const p = 1 - Math.pow(1 - Math.min(1, 0.20 + over * 0.15), 1 / 12);
       if (rng.next() < p) {
-        P.kill(i, tick, DEATH_AGE); died++; byCause[DEATH_AGE]++;
+        P.kill(i, tick, DEATH_AGE); died++; byCause[DEATH_AGE]++; dead.push(i);
         continue;
       }
     }
@@ -417,7 +418,7 @@ export function agingAndDeath(P, tick, rng) {
       // 5歳未満は原因を特定しない（#9-D の 7 乳幼児）。族を持たないので宗教の起源にならない。
       // ★ 乱数は1回も余分に引かない。名札を貼り替えるだけ
       const cause = y < INFANT_AGE ? DEATH_INFANT : DEATH_ILL;
-      P.kill(i, tick, cause); died++; byCause[cause]++;
+      P.kill(i, tick, cause); died++; byCause[cause]++; dead.push(i);
       continue;
     }
 
@@ -427,7 +428,7 @@ export function agingAndDeath(P, tick, rng) {
       if (A.hungerMonths[i] >= 3) {
         const q = 0.10 + 0.08 * (A.hungerMonths[i] - 3);
         if (rng.next() < Math.min(0.6, q)) {
-          P.kill(i, tick, DEATH_HUNGER); died++; byCause[DEATH_HUNGER]++;
+          P.kill(i, tick, DEATH_HUNGER); died++; byCause[DEATH_HUNGER]++; dead.push(i);
           continue;
         }
       }
@@ -435,5 +436,5 @@ export function agingAndDeath(P, tick, rng) {
       A.hungerMonths[i]--;
     }
   }
-  return { aged, died, byCause };
+  return { aged, died, byCause, dead };
 }

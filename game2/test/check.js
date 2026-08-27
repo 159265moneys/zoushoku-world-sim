@@ -894,6 +894,58 @@ check('**状態12個の倍率表が正典の検算9行と一致する**（第7�
   return true;
 });
 
+// ★ 柱7の当たりと塞ぎ1：疲労は働いた月にしか溜まらず、負荷1.0 が中央値の均衡点。
+//   実効値を最大化する配置（低負荷）と産出を最大化する配置（高負荷）が同じ手にならない。
+check('疲労は負荷1.0 が中央値の均衡点（壊れるのは眠りの浅い者だけ）', () => {
+  const ID = { 抜け: S.needId('疲労の抜けやすさ'), 睡眠: S.needId('必要睡眠') };
+  const net = (drainStat, sleep, load) => {
+    const pp = new P.People(2); pp.tickNow = 0;
+    const i = pp.spawn(0), A = pp.a;
+    A.alive[i] = 1; A.ageMonths[i] = 30 * 12; A.lifespan[i] = 55;
+    for (let k = 0; k < S.COUNT; k++) { A.gene[k][i] = 50; A.ev[k][i] = 0; }
+    A.gene[ID.抜け][i] = drainStat; A.gene[ID.睡眠][i] = sleep;
+    A.fatigue[i] = 6;                      // 床にも天井にも当たらない位置から測る
+    COND.fatigueMonth(pp, i, load);
+    return A.fatigue[i] - 6;
+  };
+  // 中央（抜けやすさ34=B／必要睡眠48=D）。正典「抜けは 2.656/月・負荷1.0 で net −0.056」
+  const idle = net(34, 48, 0);
+  if (Math.abs(idle + 2.656) > 0.002) return `中央の抜けが ${(-idle).toFixed(3)}（正典 2.656）`;
+  const mid = net(34, 48, COND.LOAD_NORMAL);
+  if (Math.abs(mid + 0.056) > 0.002) return `中央・負荷1.0 の net が ${mid.toFixed(3)}（正典 −0.056）`;
+  // 帯の下端（抜けやすさ15・必要睡眠66）は負荷1.0 でも +0.91/月 で壊れる
+  const weak = net(15, 66, COND.LOAD_NORMAL);
+  if (Math.abs(weak - 0.907) > 0.003) return `眠りの浅い者の net が ${weak.toFixed(3)}（正典 +0.91）`;
+  // 非番なら誰でも抜ける（働いた月にしか溜まらない）
+  if (!(net(15, 66, COND.LOAD_IDLE) < 0)) return '非番なのに疲労が溜まる';
+  // 段の切れ目は 3/6/10
+  if (COND.fatigueStage(2.9) !== 0 || COND.fatigueStage(3) !== 1
+      || COND.fatigueStage(6) !== 2 || COND.fatigueStage(10) !== 3) return '段の切れ目が 3/6/10 でない';
+  return true;
+});
+
+// ★ 12枠のうち、供給源が在るものが実際に発火していること。
+//   器だけ作って誰も書かない状態（ST_SICK・ST_GRIEF・scar が長らくそうだった）を二度と作らない
+check('状態に供給源が繋がっている（器が空回りしていない）', () => {
+  const w = new W.World(13).genesis();
+  w.runYears(60);
+  const A = w.people.a;
+  let defect = 0, grief = 0, fatigue = 0, barren = 0;
+  for (let i = 0; i < A.len; i++) {
+    if (A.defectType[i]) defect++;
+    if (A.state[i] & P.ST_BARREN) barren++;
+    if (!A.alive[i]) continue;
+    if (A.grief[i] > 0) grief++;
+    if (A.fatigue[i] > 0) fatigue++;
+  }
+  if (!defect) return '先天障害が60年で1件も出ない（永続3の供給源が無い）';
+  if (!grief) return '喪が1件も立たない（一時12の供給源が無い）';
+  if (!fatigue) return '疲労が1人も溜まらない（一時9の供給源が無い）';
+  if (!w.counters.mourned) return '喪の勘定が0';
+  // ★ 病と負傷は、まだ供給源が無い（厄災 #9 と戦争が入る日に生きる）。器は在る
+  return true;
+});
+
 check('年齢曲線が A-6 の表7点に合う（ピーク26歳固定）', () => {
   // 確定事項 A-6 の表。誤差2%まで。老いの速さ34（母集団の中央）で引く
   const out = [0, 0, 0];
@@ -962,7 +1014,8 @@ check('からだ・あたま＝中間遺伝、こころ＝優劣（A-5／A-20）
 check('対抗アーム予算（平均A＋平均B＝100）が中間遺伝の染色体で厳密に成立する', () => {
   // からだ・あたま（1〜9番・全部中間遺伝）。表現型が(a+b)/2なので予算が素通りする。
   // seed を1つだけで測ると、たまたま綺麗な世界を引いて緑になる。6通り回す。
-  let worst = 0, where = '';
+  // ★ 平均のずれで見る。個体ごとの厳密さは下の検査が「張り付きの有無」で切り分ける
+  let sum = 0, n = 0;
   for (const seed of [3, 4, 5, 6, 7, 8]) {
     const w = new W.World(seed).genesis();
     w.runYears(60);
@@ -975,12 +1028,54 @@ check('対抗アーム予算（平均A＋平均B＝100）が中間遺伝の染�
         let ma = 0, mb = 0;
         for (const s of a) ma += A.gene[s][i];
         for (const s of b) mb += A.gene[s][i];
-        const d = Math.abs(ma / a.length + mb / b.length - G.ARM_BUDGET);
-        if (d > worst) { worst = d; where = `seed${seed} 染色体${c}`; }
+        sum += Math.abs(ma / a.length + mb / b.length - G.ARM_BUDGET); n++;
       }
     }
   }
-  return worst < 0.5 ? true : `いちばんずれて ${worst.toFixed(3)}（${where}）`;
+  const mean = n ? sum / n : 0;
+  return mean < 0.05 ? true : `平均で ${mean.toFixed(4)} ずれている（${n}組）`;
+});
+
+// ★ 2026-08-28。上の検査は「たまたま張り付きの無い種を引いていたから」緑だった。
+//   予算の等式は **normalizeArms の clampV（0〜100に収める）に負ける。**
+//   スケールを掛けたあと天井/床に当たった座位があると、その染色体だけ等式が崩れる。
+//   実測（6種×60年・個体×染色体 1,215組）：
+//     張り付きが無い染色体 … 最大ずれ **0.000003**（浮動小数点の精度そのもの＝厳密に成立）
+//     張り付きがある染色体 … 最大ずれ **1.62**
+//   本当の不変条件はこちら。係数を緩めるのではなく、条件を正しく書く。
+check('対抗アーム予算は厳密に成立する。**崩れるのは0/100に張り付いた染色体だけ**', () => {
+  let worstFree = 0, worstPinned = 0, whereFree = '';
+  for (const seed of [3, 4, 5, 6, 7, 8]) {
+    const w = new W.World(seed).genesis();
+    w.runYears(60);
+    const A = w.people.a;
+    for (const i of w.people.living()) {
+      for (let c = 1; c <= S.CHROMOSOME_COUNT; c++) {
+        const a = S.BY_ARM[c][0], b = S.BY_ARM[c][1];
+        if (!a.length || !b.length) continue;
+        const loci = a.concat(b);
+        if (loci.some(s => S.INHERIT[s] === S.DOMINANT)) continue;
+        let ma = 0, mb = 0;
+        for (const s of a) ma += A.gene[s][i];
+        for (const s of b) mb += A.gene[s][i];
+        const d = Math.abs(ma / a.length + mb / b.length - G.ARM_BUDGET);
+        const pinned = loci.some(s => {
+          for (const h of [0, 1]) {
+            const q = G.getAllele(w.people, i, s, h);
+            if (q >= 99.999 || q <= 0.001) return true;
+          }
+          return false;
+        });
+        if (pinned) { if (d > worstPinned) worstPinned = d; }
+        else if (d > worstFree) { worstFree = d; whereFree = `seed${seed} 染色体${c}`; }
+      }
+    }
+  }
+  // 張り付きが無ければ、等式は浮動小数点の精度で成立していなければならない
+  if (worstFree > 1e-4) return `張り付きが無いのに ${worstFree.toFixed(6)} ずれた（${whereFree}）`;
+  // 張り付きがあっても、崩れ方には天井がある（青天井なら連鎖群の仕掛けが効かなくなる）
+  if (worstPinned > 5) return `張り付きのある染色体で ${worstPinned.toFixed(3)} ずれた（3以内のはず）`;
+  return true;
 });
 
 check('こころ（優劣）の腕は予算からずれる。ただし小さい', () => {

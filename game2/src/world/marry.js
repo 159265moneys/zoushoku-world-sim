@@ -17,9 +17,10 @@ import { breedLook } from './looks.js';
 import * as C from '../core/calendar.js';
 import {
   SEX_MALE, SEX_FEMALE, NO_HOUSE, NO_VILLAGE, NO_ONE,
-  ST_PREGNANT, ST_NURSING, ST_HUNGRY, DEATH_BIRTH, lifespanOf,
+  ST_PREGNANT, ST_NURSING, ST_HUNGRY, ST_BARREN, DEATH_BIRTH, lifespanOf,
 } from './people.js';
 import { breed } from './genetics.js';
+import { rollDefect, afterHardBirth } from './condition.js';
 import { deathless } from './gifts.js';
 
 // ---- 確定している数 -------------------------------------------------------
@@ -165,6 +166,7 @@ export function conceiveMonth(P, V, tick, rng) {
     const y = ageY(P, i);
     if (A.lastBirth[i] >= 0 && tick - A.lastBirth[i] < NURSING_MONTHS * C.DAYS_PER_MONTH) continue;
     if (A.state[i] & ST_HUNGRY) continue;                    // 飢えていると身ごもらない
+    if (A.state[i] & ST_BARREN) continue;                    // 繁殖不能（第7部 §1 永続4）。受胎確率0
 
     // 繁殖力（ステ）と生存力（遺伝的荷重）で前後する
     let p = CONCEIVE_CHANCE * (A.gene[ID_FERTILITY][i] / 50) * A.vitality[i];
@@ -198,7 +200,8 @@ export function conceiveMonth(P, V, tick, rng) {
 export function birthDay(P, houses, V, tick, rng, rngGift = rng) {
   const A = P.a;
   const babies = [];
-  let mothersLost = 0;
+  const motherDead = [];       // 喪の入力（お産で亡くした母）
+  let mothersLost = 0, hardAfter = 0;
   const len = A.len;                    // 産まれた子を数えないよう、先に長さを取る
 
   for (let i = 0; i < len; i++) {
@@ -215,6 +218,7 @@ export function birthDay(P, houses, V, tick, rng, rngGift = rng) {
     for (let k = 0; k < count; k++) {
       const c = P.spawn(tick);
       breed(P, c, father >= 0 && A.alive[father] ? father : mother, mother, rng, rngGift);
+      rollDefect(P, c, rng);            // 先天障害（永続3）。ストリームは 出生（#17 §10-3 の1番）
       A.sex[c] = rng.int(2);                       // A-20：完全ランダムで1/2
       A.mother[c] = mother;
       A.father[c] = father;
@@ -240,9 +244,14 @@ export function birthDay(P, houses, V, tick, rng, rngGift = rng) {
     const easy = A.gene[ID_EASY_BIRTH][mother] / 100;
     const risk = BIRTH_DEATH_P * (1.6 - easy) * count / A.vitality[mother];
     // 奇跡（G・A-23）はお産でも死なない
-    if (!deathless(P, mother) && rng.next() < risk) { P.kill(mother, tick, DEATH_BIRTH); mothersLost++; }
+    const lost = !deathless(P, mother) && rng.next() < risk;
+    if (lost) { P.kill(mother, tick, DEATH_BIRTH); mothersLost++; motherDead.push(mother); }
+    // 難産のあと（第7部 §1 一時11→永続の変換）。お産の軽さの素値<25 が難産。
+    // 12% で繁殖不能・25% で古傷（欠損）。★ 死んでいても同じ回数だけ引く（消費順を分岐で変えない）
+    const after = afterHardBirth(P, mother, rng);
+    if (!lost && after) hardAfter++;
   }
-  return { born: babies.length, mothersLost, babies };
+  return { born: babies.length, mothersLost, babies, motherDead, hardAfter };
 }
 
 // ===========================================================================

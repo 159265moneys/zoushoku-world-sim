@@ -28,6 +28,7 @@ import {
 import { growMonth, seedEffortForAge } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
 import { foundGenome, targetsFrom } from './genetics.js';
+import * as COND from './condition.js';   // 状態12個（第7部 §1）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -61,6 +62,7 @@ export class World {
       married: 0, blocked: 0, conceived: 0, twins: 0, triplets: 0,
       ceilingFired: 0,
       split: 0, splitFailed: 0,        // ★ 分村できた／r>12里で詰まった
+      mourned: 0, scarred: 0, stunted: 0,   // 状態12個（第7部 §1）
     };
   }
 
@@ -152,6 +154,7 @@ export class World {
     if (b.mothersLost) {
       this.counters.died += b.mothersLost;
       this.counters.byCause[DEATH_BIRTH] += b.mothersLost;
+      this.counters.mourned += COND.mourn(this.people, b.motherDead);
     }
     if (C.isMonthStart(t)) this.stepMonth();
     this.tick = t + 1;
@@ -164,6 +167,8 @@ export class World {
 
     const d = agingAndDeath(P, t, this.R[STREAM.DEATH]);
     this.counters.died += d.died;
+    // 喪（一時12）。★ 乱数を1つも引かない。死んだ者の近親をなめるだけ
+    this.counters.mourned += COND.mourn(P, d.dead);
     for (let k = 0; k < d.byCause.length; k++) this.counters.byCause[k] += d.byCause[k];
     if (d.byCause[DEATH_HUNGER] > 0 && this.once('hunger-death')) this.note('最初の餓死', '永久に戻らない');
 
@@ -178,6 +183,20 @@ export class World {
     for (const r of food) {
       if (r && r.shortage > 0 && this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');
     }
+
+    // 状態の月次（第7部 §1）。疲労・発育不全・喪の減衰・負傷の治癒。
+    // ★ 負荷は村と暦が知っていることなので、ここで決めて condition.js に渡す
+    //   （condition.js が village.js を読むと循環する）
+    const harvest = C.season(t) === 2;                 // 秋の3ヶ月＝収穫期
+    const cm = COND.conditionMonth(P, t, (i) => {
+      const job = P.a.job[i];
+      if (job === AREA_HOME) return COND.LOAD_IDLE;    // 非番
+      if (job === AREA_FIELD && harvest) return COND.LOAD_HARVEST;
+      return COND.LOAD_NORMAL;                         // 平時の畑・森・辺境・訓練
+    }, this.R[STREAM.DISASTER]);
+    this.counters.scarred += cm.scarred;
+    this.counters.stunted += cm.stunted;
+    if (cm.stunted > 0 && this.once('stunt')) this.note('育ちきらない子', '飢えが16歳までに18ヶ月を超えた');
 
     growMonth(P, V, t);
 

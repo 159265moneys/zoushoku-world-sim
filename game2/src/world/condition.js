@@ -347,3 +347,188 @@ export function addScar(P, i, part, w, lostPart = 0) {
   A.scarPart[k][i] = part; A.scarW[k][i] = w; A.scarLostPart[k][i] = lostPart;
   return k;
 }
+
+// ---------------------------------------------------------------------------
+// 供給源。ここが無いと器は空回りする
+// ---------------------------------------------------------------------------
+
+/**
+ * 先天障害を出生時に1回だけ抽選する（永続3）。ストリームは 出生（#17 §10-3 の1番）。
+ * ★ 既存の遺伝的荷重パイプラインをそのまま使う。荷重の死亡率補正 LOAD_MORTALITY とは
+ *   二重ではない（荷重＝死にやすさ／先天障害＝できなさ）。
+ * ★ 掟：分岐で呼び出し回数を変えない。当たらなくても同じ回数だけ引く
+ */
+export function rollDefect(P, i, rng) {
+  const A = P.a;
+  const hit = rng.next() < defectRate(A.vitality[i]);
+  const rt = rng.next();      // 型
+  const rw = rng.next();      // 重さ
+  const rp = rng.next();      // 「体」のときの部位
+  if (!hit) return 0;
+  let t = DEFECT_BODY, acc = 0;
+  for (let k = 0; k < DEFECT_SHARE.length; k++) {
+    acc += DEFECT_SHARE[k];
+    if (rt < acc) { t = k + 1; break; }
+  }
+  let w = 1; acc = 0;
+  for (let k = 0; k < DEFECT_W_SHARE.length; k++) {
+    acc += DEFECT_W_SHARE[k];
+    if (rw < acc) { w = k + 1; break; }
+  }
+  A.defectType[i] = t; A.defectW[i] = w;
+  if (t === DEFECT_BODY) {
+    // 部位を1つ抽選 ×(1 − 0.20w)。からだのステから引く
+    const body = S.BY_CATEGORY[S.BODY];
+    A.defectPart[i] = body[Math.min(body.length - 1, (rp * body.length) | 0)];
+  }
+  return t;
+}
+
+/**
+ * 疲労点（一時9）。働いた月に溜まり、毎月抜ける。
+ * 中央値（抜けやすさ34・必要睡眠48）の抜けは 2.656/月 で、**負荷1.0 が均衡点**（張り付かない）。
+ * 帯の下端（抜けやすさ15・必要睡眠66）は負荷1.0 でも +0.91/月 ＝ **壊れるのは眠りの浅い者だけ。**
+ */
+export function fatigueMonth(P, i, load) {
+  const A = P.a;
+  const raw = (s) => A.gene[s][i] + A.ev[s][i];
+  let pt = A.fatigue[i] + FATIGUE_GAIN * load;
+  pt -= FATIGUE_DRAIN
+      * (0.5 + raw(ID.疲労の抜けやすさ) / 100)
+      * (0.5 + (100 - raw(ID.必要睡眠)) / 100);
+  A.fatigue[i] = pt < 0 ? 0 : pt > FATIGUE_MAX ? FATIGUE_MAX : pt;
+}
+
+/** 喪に1本足す（一時12）。τ はその者の情と教義の死の受容から出る */
+export function addGrief(P, i, kinship, acceptance = 0) {
+  const A = P.a;
+  const mercy = A.gene[ID.情][i] + A.ev[ID.情][i];
+  A.griefTau[i] = griefTau(mercy, acceptance);
+  const g = A.grief[i] + kinship;
+  A.grief[i] = g > 1 ? 1 : g;                 // 複数の喪は合算し 1.0 で頭打ち
+  A.state[i] |= ST_GRIEF;
+}
+
+/** 喪の減衰。s = Σ k×exp(−経過月/τ) を、毎月 exp(−1/τ) を掛ける形で持つ（同じ式） */
+export function griefDecay(P, i) {
+  const A = P.a;
+  if (!(A.state[i] & ST_GRIEF)) return;
+  const tau = A.griefTau[i] > 0 ? A.griefTau[i] : 6;
+  const g = A.grief[i] * Math.exp(-1 / tau);
+  if (g < GRIEF_DROP) { A.grief[i] = 0; A.state[i] &= ~ST_GRIEF; }
+  else A.grief[i] = g;
+}
+
+/**
+ * 発育不全（永続5）。16歳までに 欠乏 段2以上の累計月数 M が
+ *   6 ≤ M < 18 → w=1 ／ 18 ≤ M → w=2
+ * ★ 16歳を過ぎたら二度と評価しない（永続なので確定させる）
+ */
+export function stuntMonth(P, i, ageYears, lackStage) {
+  const A = P.a;
+  if (ageYears > STUNT_AGE) return;
+  if (lackStage >= 2 && A.lackMonths[i] < 65535) A.lackMonths[i]++;
+  const m = A.lackMonths[i];
+  A.stunt[i] = m >= STUNT_M2 ? 2 : m >= STUNT_M1 ? 1 : 0;
+}
+
+/** 欠乏の段（0=なし／1軽=連続1〜2ヶ月／2中=3〜5／3重=6〜） */
+export function lackStage(P, i) {
+  const A = P.a;
+  if (!(A.state[i] & ST_HUNGRY)) return 0;
+  const m = A.hungerMonths[i];
+  return m >= 6 ? 3 : m >= 3 ? 2 : 1;
+}
+
+/**
+ * 負傷の治癒（一時8 → 永続2 の変換）。治り切ったら確率で古傷が残る。
+ *   段3、または手当ての担い手がいない村で治癒 → 古傷（同部位・w=段−1、最低1）確率 0.60
+ * ★ 掟：当たらなくても同じ回数だけ引く
+ */
+export const HURT_TO_SCAR = 0.60, SICK_TO_SCAR = 0.20, HARD_BIRTH_TO_SCAR = 0.25;
+export function healMonth(P, i, rng) {
+  const A = P.a;
+  if (!A.hurtStage[i]) return 0;
+  if (A.hurtHeal[i] > 0) A.hurtHeal[i]--;
+  if (A.hurtHeal[i] > 0) return 0;
+  const w = A.hurtStage[i], part = A.hurtPart[i] || PART_ARM;
+  const r = rng.next();
+  A.hurtStage[i] = 0; A.hurtPart[i] = 0;
+  if (w >= 3 && r < HURT_TO_SCAR) { addScar(P, i, part, Math.max(1, w - 1)); return 1; }
+  return 0;
+}
+
+/**
+ * 状態の月次。生きている全員を1度なめる（#15「逆引きテーブルを持たない」の掟どおり全走査）。
+ * @param loadOf (i) → 疲労の負荷。0非番／1.0平時／1.3収穫期・普請／1.5従軍／1.8突貫。
+ *               ★ どの職がどの負荷かは村と暦が知っていることなので、呼ぶ側が決める
+ *                  （condition.js が village.js を読むと循環する）
+ * @param rng    負傷が古傷に変わるときだけ引く。ストリームは 厄災（6番）
+ */
+export function conditionMonth(P, tick, loadOf, rng) {
+  const A = P.a;
+  let scarred = 0, stunted = 0;
+  for (let i = 0; i < A.len; i++) {
+    if (!A.alive[i]) continue;
+    const y = (A.ageMonths[i] / 12) | 0;
+    // 病臥は非番と同じ（負荷0）
+    fatigueMonth(P, i, A.sickStage[i] >= 2 ? LOAD_IDLE : loadOf(i));
+    const before = A.stunt[i];
+    stuntMonth(P, i, y, lackStage(P, i));
+    if (A.stunt[i] > before) stunted++;
+    griefDecay(P, i);
+    scarred += healMonth(P, i, rng);
+  }
+  return { scarred, stunted };
+}
+
+/**
+ * 喪（一時12）。その月に死んだ者の近親に s を積む。
+ * ★ 逆引きテーブルを作らない（#15）。死んだ側から辿れる線（親・伴侶）は死者を1周、
+ *   下向きの線（子・きょうだい・孫）は生者を1周して、上へ辿って拾う。O(死者)+O(生者)。
+ */
+export function mourn(P, dead) {
+  if (!dead.length) return 0;
+  const A = P.a;
+  const gone = new Set(dead);
+  const lostChild = new Set();        // 子を亡くした親（＝きょうだいの判定にも使う）
+  let n = 0;
+  const grieve = (i, k) => {
+    if (i < 0 || i >= A.len || !A.alive[i] || gone.has(i)) return;
+    addGrief(P, i, k); n++;
+  };
+  for (const d of dead) {
+    grieve(A.spouse[d], GRIEF_KIN.伴侶);
+    grieve(A.mother[d], GRIEF_KIN.子);
+    grieve(A.father[d], GRIEF_KIN.子);
+    if (A.mother[d] >= 0) lostChild.add(A.mother[d]);
+  }
+  for (let i = 0; i < A.len; i++) {
+    if (!A.alive[i] || gone.has(i)) continue;
+    const m = A.mother[i], f = A.father[i];
+    if (gone.has(m) || gone.has(f)) { addGrief(P, i, GRIEF_KIN.親); n++; continue; }
+    if (m >= 0 && lostChild.has(m)) { addGrief(P, i, GRIEF_KIN.きょうだい); n++; continue; }
+    // 孫。祖父母を亡くした
+    const gp = [m >= 0 ? A.mother[m] : -1, m >= 0 ? A.father[m] : -1,
+                f >= 0 ? A.mother[f] : -1, f >= 0 ? A.father[f] : -1];
+    for (const g of gp) if (g >= 0 && gone.has(g)) { addGrief(P, i, GRIEF_KIN.孫); n++; break; }
+  }
+  return n;
+}
+
+/**
+ * 難産のあと（一時11 → 永続 の変換）。ストリームは 出生（1番）。
+ * ★ 掟：当たらなくても同じ回数だけ引く
+ */
+export function afterHardBirth(P, mother, rng) {
+  const A = P.a;
+  const ease = A.gene[ID.お産の軽さ][mother] + A.ev[ID.お産の軽さ][mother];
+  const hard = ease < HARD_BIRTH_EASE;
+  const rBarren = rng.next(), rScar = rng.next();
+  A.hardBirth[mother] = hard ? 1 : 0;
+  if (!hard) return 0;
+  let out = 0;
+  if (rBarren < BARREN_AFTER_HARD_BIRTH) { A.state[mother] |= ST_BARREN; out |= 1; }
+  if (rScar < HARD_BIRTH_TO_SCAR) { addScar(P, mother, PART_LOST, 1, PART_ARM); out |= 2; }
+  return out;
+}
