@@ -292,20 +292,65 @@ export function generate(seed = 1, opts = {}) {
       ore[pool[p]] = kind; pool[p] = pool[pool.length - 1]; pool.pop();
     }
   };
-  const isM = (i) => ter[i] === T.MTN || ter[i] === T.HILL || ter[i] === T.ROCK || ter[i] === T.ALP;
-  place(ORE.STONE, 900, isM);                                  // 石＋石灰岩：均す
-  place(ORE.IRON, 320, (i) => isM(i) || h[i] >= qOre);          // 鉄：均す
-  place(ORE.COPPER, 120, (i) => h[i] >= qOre);                  // 銅：半均し
-  place(ORE.LEAD, 104, (i) => h[i] >= qOre);                    // 鉛（うち24が含銀）
-  place(ORE.ROCKSALT, 96, (i) => ter[i] === T.WASTE);           // 岩塩：雨陰の荒地のみ
-  place(ORE.TIN, 32, (i) => h[i] >= qOre);
-  place(ORE.GOLD, 8, (i) => river[i] >= 3);                     // 砂金：大河沿い
-  // 含銀の鉛（世界に3塊 × 8里マス ＝ 24）
+  // ★ 掘れる地形にしか置かない。高山・氷・砂地は §3-2 で「使用不可」に展開されるので、
+  //   そこに鉱脈を置くと層Bで鉱脈区画が1枚も作れず、**永久に掘れない鉱脈**になる。
+  //   （2026-08-27・層Bを書いて発覚。直す前は1,580里マスのうち288＝18%が高山の上にあった）
+  const diggable = (i) => ter[i] !== T.ALP && ter[i] !== T.ICE && ter[i] !== T.SAND;
+  // 造山帯 ＝ 傾き |∇h| の上位10%（§3-3 の銅の配り方）
+  const grad = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    if (!land[i]) continue;
+    const x = i % W, y = (i / W) | 0;
+    const gx = (x > 0 && x < W - 1) ? h[i + 1] - h[i - 1] : 0;
+    const gy = (y > 0 && y < W - 1) ? h[i + W] - h[i - W] : 0;
+    grad[i] = Math.hypot(gx, gy);
+  }
+  const qOro = quantile(grad, land, 0.10);
+
+  // 塊で置く（§3-3 の錫「世界に4塊 × 8里マス」）。種を1つ選び、条件を満たす近傍へ広げる
+  const clump = (kind, blocks, size, ok) => {
+    const pool = [];
+    for (let i = 0; i < N; i++) if (land[i] && !ore[i] && ok(i)) pool.push(i);
+    for (let b = 0; b < blocks && pool.length; b++) {
+      const c0 = pool[(rng.next() * pool.length) | 0];
+      const x0 = c0 % W, y0 = (c0 / W) | 0;
+      pool.sort((a, z) => (Math.hypot((a % W) - x0, ((a / W) | 0) - y0))
+                        - (Math.hypot((z % W) - x0, ((z / W) | 0) - y0)));
+      const took = Math.min(size, pool.length);
+      for (let t = 0; t < took; t++) ore[pool[t]] = kind;
+      pool.splice(0, took);
+    }
+  };
+  const isM = (i) => ter[i] === T.MTN || ter[i] === T.HILL || ter[i] === T.ROCK;  // 山・丘・岩場
+  place(ORE.STONE, 900, (i) => diggable(i) && isM(i));                    // 石：山・丘・岩場に一様
+  place(ORE.IRON, 320, (i) => diggable(i) && (ter[i] === T.MTN || ter[i] === T.HILL)); // 鉄：山・丘に一様
+  place(ORE.COPPER, 120, (i) => diggable(i) && grad[i] >= qOro);          // 銅：造山帯に寄せる
+  // 鉛：鉄の里マスから3里以内に寄せる（§3-3）
+  const nearIron = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    if (ore[i] !== ORE.IRON) continue;
+    const x0 = i % W, y0 = (i / W) | 0;
+    for (let dy = -3; dy <= 3; dy++) { const y = y0 + dy; if (y < 0 || y >= W) continue;
+      const w = Math.floor(Math.sqrt(9 - dy * dy));
+      for (let dx = -w; dx <= w; dx++) { const x = x0 + dx; if (x < 0 || x >= W) continue;
+        nearIron[y * W + x] = 1; } }
+  }
+  place(ORE.LEAD, 104, (i) => diggable(i) && nearIron[i] && h[i] >= qOre);
+  place(ORE.ROCKSALT, 96, (i) => diggable(i) && ter[i] === T.WASTE && Moist[i] < 0.28); // 雨陰の荒地のみ
+  // 錫：世界に4塊 × 8里マス（§3-3）
+  clump(ORE.TIN, 4, 8, (i) => diggable(i) && h[i] >= qOre);
+  place(ORE.GOLD, 8, (i) => diggable(i) && river[i] >= 3);                // 砂金：大河沿い
+
+  // 含銀の鉛 ── 世界に3塊 × 8里マス ＝ 24（§3-3）
   const silver = new Uint8Array(N);
-  { const leadIdx = []; for (let i = 0; i < N; i++) if (ore[i] === ORE.LEAD) leadIdx.push(i);
-    for (let k = 0; k < 24 && leadIdx.length; k++) {
-      const p = (rng.next() * leadIdx.length) | 0;
-      silver[leadIdx[p]] = 1; leadIdx[p] = leadIdx[leadIdx.length - 1]; leadIdx.pop();
+  { const lead = []; for (let i = 0; i < N; i++) if (ore[i] === ORE.LEAD) lead.push(i);
+    for (let k = 0; k < 3 && lead.length; k++) {
+      const c0 = lead[(rng.next() * lead.length) | 0];
+      const x0 = c0 % W, y0 = (c0 / W) | 0;
+      lead.sort((a, b) => (Math.hypot((a % W) - x0, ((a / W) | 0) - y0))
+                        - (Math.hypot((b % W) - x0, ((b / W) | 0) - y0)));
+      for (let t = 0; t < 8 && t < lead.length; t++) silver[lead[t]] = 1;
+      lead.splice(0, 8);
     } }
 
   // ── S6 肥沃度
