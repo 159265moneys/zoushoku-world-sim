@@ -236,7 +236,7 @@ export const NEED = {
 
 export function enrich(g, seat) {
   const x0 = seat % W, y0 = (seat / W) | 0;
-  const log = { wood: 0, food: 0 };
+  const log = { wood: 0, food: 0, seat: 0 };
 
   // 席から遠い順に並べた、半径 r 以内の里マス
   const ring = (r) => {
@@ -267,6 +267,22 @@ export function enrich(g, seat) {
       if (g.ter[j] !== T.PLAIN && g.ter[j] !== T.GRASS) continue;
       g.ter[j] = T.WOOD; g.recompute(j); have++; log.wood++;
     }
+  }
+
+  // ── 1b) 席の里マス自身に森林が1枚も無いなら、疎林に書き換える
+  //    §3-2 の展開表で森林が出るのは 疎林(森林7)・密林(森林13)・丘(森林4) の3つだけ。
+  //    席が 草原(平野12・荒地4) や 平野(平野16) だと、claim の13区画に森林が0枚になり、
+  //    §2-2 の標準村（森林3区画・定員18 ≥ 森系16.5人月）が組めず crowd森 が 1.00 を割る。
+  //    ＝ §2-2 が「産出135.8は1文字も動かない」と書いた根拠が、その世界だけ崩れる。
+  //    実測：食う順を直しても 80/100 までしか行かず、残り20件は席が草原(15)・平野(5)だった。
+  //    ★ 森は生活必需品（薪・材・植林の種）なので裁定の範囲として塞ぐ。
+  //    ★ 疎林は平野より肥沃度が低いので、書き換えたあと肥沃度を8へ戻す
+  //      （§3-4 が救済経路として自分で認めている操作。#3-(h) の 135.8 の保存）
+  if (g.ter[seat] !== T.WOOD && g.ter[seat] !== T.JUNGLE && g.ter[seat] !== T.HILL) {
+    g.ter[seat] = T.WOOD;
+    g.recompute(seat);
+    g.fert[seat] = 8;            // ★ 肥沃＝8ちょうどを必ず保つ
+    log.seat = 1;
   }
 
   // ── 2) 糧（分村の動機になる良い土地）。肥沃度を 10 に書き上げる
