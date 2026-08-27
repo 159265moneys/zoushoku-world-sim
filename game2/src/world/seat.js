@@ -8,7 +8,7 @@ export const GUARD = [
   [ORE.STONE,    10],
   [ORE.IRON,     20],
   [ORE.COPPER,   25],
-  [ORE.ROCKSALT, 30],
+  [ORE.ROCKSALT, 15],  // ★ 30→15。塩は生活必需品（オーナー裁定 2026-08-27）
   [ORE.LEAD,     35],
   [ORE.TIN,      45],
   [ORE.GOLD,     80],
@@ -209,4 +209,77 @@ export function guarantee(g, seat) {
     else wrote.push({ kind: 'silver', r: SILVER_R, at: -1 });
   }
   return wrote;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+//  生活必需品の充実（オーナー裁定 2026-08-27「創世の村付近だけは資源充実させてね。
+//  特に生活必需品」）
+//
+//  仕様が「届くまで何が起きないか」で分けている必需品のうち、
+//  席の周りに下限が無かったのは **糧（肥沃な土地）** と **森（薪・材）** の2つ。
+//  塩は保証半径を 30里→15里 に詰めた（上の GUARD）。石10里・鉄20里は元から届いている。
+//
+//  使う操作は §3-4 が救済経路として既に自分で認めているものだけ ── 肥沃度の書き換えと
+//  地形の書き換え。新しい機構は足していない。
+//
+//  ★ 席の里マス自身には絶対に触らない。肥沃＝8ちょうどが #3-(h) の 135.8 を保存しているため
+//  ★ 書き上げるのは **席から遠い順**。§3-4 の
+//    「足下は並の土地で、良い土地は目の前にある ── これが分村の動機になる」を壊さないため
+//  ★ 鉱脈の保証（guarantee）の **後** に走らせる。保証の地形書き換えが農地を食った分も直すため
+// ═══════════════════════════════════════════════════════════════════════
+
+export const NEED = {
+  WOOD_R: 6,  WOOD_MIN: 12,   // 半径6里（113里マス）に 森林の里マス 12枚。実測の下位35%を底上げ
+  FOOD_R: 12, FOOD_MIN: 40,   // 半径12里（441里マス）に 肥沃≥10 を 40枚。実測の中央値42に揃える
+};
+
+export function enrich(g, seat) {
+  const x0 = seat % W, y0 = (seat / W) | 0;
+  const log = { wood: 0, food: 0 };
+
+  // 席から遠い順に並べた、半径 r 以内の里マス
+  const ring = (r) => {
+    const a = [];
+    for (let dy = -r; dy <= r; dy++) {
+      const y = y0 + dy; if (y < 0 || y >= W) continue;
+      const w = Math.floor(Math.sqrt(r * r - dy * dy));
+      for (let dx = -w; dx <= w; dx++) {
+        const x = x0 + dx; if (x < 0 || x >= W) continue;
+        const j = y * W + x; if (j === seat) continue;      // 席には触らない
+        a.push([dx * dx + dy * dy, j]);
+      }
+    }
+    a.sort((p, q) => q[0] - p[0]);                          // 遠い順
+    return a.map((e) => e[1]);
+  };
+
+  // ── 1) 森（薪・材・植林の種）。平野か草原を疎林に書き換える
+  //    先にやる：疎林は平野より肥沃度が2低いので、あとの糧の勘定に効く
+  {
+    const cells = ring(NEED.WOOD_R);
+    let have = 0;
+    for (const j of cells) if (g.ter[j] === T.WOOD || g.ter[j] === T.JUNGLE) have++;
+    if (g.ter[seat] === T.WOOD || g.ter[seat] === T.JUNGLE) have++;
+    for (const j of cells) {
+      if (have >= NEED.WOOD_MIN) break;
+      if (!g.land[j] || g.ore[j]) continue;
+      if (g.ter[j] !== T.PLAIN && g.ter[j] !== T.GRASS) continue;
+      g.ter[j] = T.WOOD; g.recompute(j); have++; log.wood++;
+    }
+  }
+
+  // ── 2) 糧（分村の動機になる良い土地）。肥沃度を 10 に書き上げる
+  //    ★ 居住可能な陸だけ。山・荒地・砂地・氷を「良い土地」にはしない
+  {
+    const cells = ring(NEED.FOOD_R);
+    let have = 0;
+    for (const j of cells) if (g.land[j] && g.fert[j] >= 10) have++;
+    for (const j of cells) {
+      if (have >= NEED.FOOD_MIN) break;
+      if (!g.land[j] || g.fert[j] >= 10 || !g.hab[j] || g.ore[j]) continue;
+      g.fert[j] = 10; have++; log.food++;
+    }
+  }
+  return log;
 }
