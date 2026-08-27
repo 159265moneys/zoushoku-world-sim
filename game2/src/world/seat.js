@@ -95,9 +95,9 @@ export function pickSeat(g) {
     stat.c5++;
     if (countNear(i, 12, (j) => g.land[j]) < 200) continue;  // (6) 半径12里に陸200
     stat.c6++;
-    // (7) 半径12里の 肥沃≥10 の数が最大。同点は世界中心から遠い順
+    // (7) 半径12里の 肥沃≥10 の数が最大。同点は **海接続の高い順、次に** 世界中心から遠い順
     const score = countNear(i, 12, (j) => g.land[j] && g.fert[j] >= 10);
-    const tie = Math.hypot((i % W) - W / 2, ((i / W) | 0) - W / 2);
+    const tie = (g.coast[i] | 0) * 1e6 + Math.hypot((i % W) - W / 2, ((i / W) | 0) - W / 2);
     if (score > bestScore || (score === bestScore && tie > bestTie)) {
       best = i; bestScore = score; bestTie = tie;
     }
@@ -140,16 +140,9 @@ export function guarantee(g, seat) {
   for (const [kind, r] of GUARD) {
     if (near(seat, r, (j) => g.ore[j] === kind)) continue;
     // ★ 塩だけは「岩塩 または 沿岸（海に接する陸）」で満たす。#17 §3-3「沿岸なら海塩で代替可」
-    if (kind === ORE.ROCKSALT && near(seat, r, (j) => {
-      if (!g.land[j]) return false;
-      const x = j % W;
-      for (const d of [-1, 1, -W, W]) {
-        const k2 = j + d; if (k2 < 0 || k2 >= N) continue;
-        if ((d === -1 || d === 1) && Math.abs((k2 % W) - x) > 1) continue;
-        if (g.ter[k2] === T.SEA) return true;
-      }
-      return false;
-    })) { wrote.push({ kind, r, at: -2 }); continue; }   // -2 ＝ 海塩で満たした
+    if (kind === ORE.ROCKSALT && near(seat, r, (j) => g.coast[j] >= 2)) {
+      wrote.push({ kind, r, at: -2 }); continue;         // -2 ＝ 海塩で満たした（沿岸＝海接続2）
+    }
     // 半径 r 以内で条件を満たすもののうち、席から最も遠いものに書き込む
     const x0 = seat % W, y0 = (seat / W) | 0;
     let far = -1, fd = -1;
@@ -164,7 +157,7 @@ export function guarantee(g, seat) {
         if (d > fd) { fd = d; far = j; }
       }
     }
-    if (far >= 0) { g.ore[far] = kind; wrote.push({ kind, r, at: far }); continue; }
+    if (far >= 0) { g.ore[far] = kind; g.recompute(far); wrote.push({ kind, r, at: far }); continue; }
 
     // ★ 条件を満たす里マスすら無いとき ── 地形を書き換えて保証する。
     //   §3-3 は石について「足りなければ最も近い山系の1里マスを石に書き換える」と
@@ -193,8 +186,9 @@ export function guarantee(g, seat) {
       }
     }
     if (pick >= 0) {
-      if (PICK.to !== null) { g.ter[pick] = PICK.to; g.hab[pick] = 0; }
+      if (PICK.to !== null) g.ter[pick] = PICK.to;
       g.ore[pick] = kind;
+      g.recompute(pick);          // ★ 肥沃度 −3 と居住可能を掛け直す
       wrote.push({ kind, r, at: pick, rewrote: PICK.to !== null });
     } else wrote.push({ kind, r, at: -1 });   // それでも無い＝保証できない
   }

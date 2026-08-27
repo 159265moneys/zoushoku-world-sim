@@ -86,7 +86,7 @@ export function generate(seed = 1, opts = {}) {
 
   // 陸のなかの分位点（高山4%／山9%／鉱脈の母集団20%／川の源流28%）
   const qAlp = quantile(h, land, 0.04), qMtn = quantile(h, land, 0.09);
-  const qOre = quantile(h, land, 0.20), qSrc = quantile(h, land, 0.28);
+  const qOre = quantile(h, land, 0.20);
 
   // ── S3a 窪みを埋める（priority-flood）
   //   ★ これが無いと最急降下がすぐ窪みで止まり、川が仕様の 1/5 しか出ない（2026-08-26 実測）
@@ -267,6 +267,21 @@ export function generate(seed = 1, opts = {}) {
     while (k < rest3.length) ter[rest3[k++]] = T.WASTE;
   }
 
+  // ── S5b 海への接続（層A bit14-15。0内陸／1河口・湖岸／2沿岸／3良港）
+  //   ★ これが無いと §3-2 の上書き2（沿岸bit）が立たず、層Bに塩職人・船大工・船乗り・水運が生えない。
+  //   ★ 「3 良港」の規則は仕様に書かれていない（#17 §2-5 に語だけある）。**裁定待ちのため 2 止まり。**
+  const coast = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    if (!land[i]) continue;
+    const x = i % W, y = (i / W) | 0;
+    let sea = 0, lake = 0;
+    if (x > 0)     { const j = i - 1; if (ter[j] === T.SEA) sea = 1; else if (!land[j]) lake = 1; }
+    if (x < W - 1) { const j = i + 1; if (ter[j] === T.SEA) sea = 1; else if (!land[j]) lake = 1; }
+    if (y > 0)     { const j = i - W; if (ter[j] === T.SEA) sea = 1; else if (!land[j]) lake = 1; }
+    if (y < W - 1) { const j = i + W; if (ter[j] === T.SEA) sea = 1; else if (!land[j]) lake = 1; }
+    coast[i] = sea ? 2 : (lake || river[i] > 0) ? 1 : 0;
+  }
+
   // ── S7 鉱脈（§3-3。数は世界の里マス数で固定）
   const ore = new Uint8Array(N);
   const place = (kind, count, ok) => {
@@ -295,9 +310,8 @@ export function generate(seed = 1, opts = {}) {
 
   // ── S6 肥沃度
   const fert = new Uint8Array(N);
-  for (let i = 0; i < N; i++) {
-    if (!land[i]) continue;
-    const x = i % W, y = (i / W) | 0;
+  const fertOf = (i) => {
+    if (!land[i]) return 0;
     let nearRiver = river[i] > 0 ? 1 : 0;
     if (!nearRiver) for (const d of [-1, 1, -W, W]) {
       const j = i + d; if (j >= 0 && j < N && river[j] > 0) { nearRiver = 1; break; }
@@ -309,15 +323,26 @@ export function generate(seed = 1, opts = {}) {
       + Math.floor(Moist[i] * 4) - 2
       - Math.floor(h[i] * 6)
       - (ore[i] ? 3 : 0);
-    fert[i] = Math.max(0, Math.min(15, f));
-  }
+    return Math.max(0, Math.min(15, f));
+  };
+  for (let i = 0; i < N; i++) fert[i] = fertOf(i);
 
   // ── S8 居住可能
   const HAB = new Set([T.PLAIN, T.GRASS, T.WOOD, T.JUNGLE, T.HILL, T.MARSH]);
+  // ★ 川が通っていても、§3-2 で「使用不可」へ展開される地形は居住可能にしない。
+  //   高山(10)・氷(15)は使用不可16、砂地(12)は使用不可12・荒地4 ＝ 畑にできる区画が0枚。
+  //   これが無いと、氷の里マスに村が建って使える区画が1枚も無くなる（2026-08-27 実測 0.71%）
+  const NEVER = new Set([T.ALP, T.ICE, T.SAND]);
   const hab = new Uint8Array(N);
-  for (let i = 0; i < N; i++)
-    hab[i] = (land[i] && (HAB.has(ter[i]) || river[i] > 0) && h[i] < qMtn && fert[i] >= 3) ? 1 : 0;
+  const habOf = (i) => (land[i] && !NEVER.has(ter[i]) && (HAB.has(ter[i]) || river[i] > 0)
+                        && h[i] < qMtn && fert[i] >= 3) ? 1 : 0;
+  for (let i = 0; i < N; i++) hab[i] = habOf(i);
 
-  return { seed, h, land, ter, river, ore, silver, fert, hab, Temp, Moist,
-           seaLevel, qAlp, qMtn, qOre, qSrc };
+  // ★ 席の保証（seat.js）は生成の最後に鉱脈と地形を書き換えるので、
+  //   書き換えた里マスだけ S6・S8 を掛け直せるようにして返す。
+  //   これが無いと「鉱脈あり → 肥沃度 −3」と居住可能の再判定が、保証で置いた鉱脈にだけ掛からない
+  const recompute = (i) => { fert[i] = fertOf(i); hab[i] = habOf(i); };
+
+  return { seed, h, land, ter, river, ore, silver, fert, hab, coast, Temp, Moist,
+           seaLevel, qAlp, qMtn, qOre, recompute };
 }
