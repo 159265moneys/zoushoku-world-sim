@@ -61,6 +61,22 @@ export const EAT_CHILD = 0.5;
 export const STORE_PER_HOUSE = 60;         // 蔵の大きさ。溢れた分は腐る（マルサスの天井）
 export const FIELD_SHARE = 0.7;            // 働き手のうち畑へ回す割合
 
+// ★★ q の分母（2026-08-28）★★
+//   結果 ＝ 基準量 × q、q ＝ 実効値 / Q_DIVISOR（正典 #3-(h)／#17 §5-1）
+//   ★ 正典は 1,050 と書いていたが、**導出に2つの穴があった**（2026-08-28・実測で判明）:
+//     ① 基準にしたのが **才能50・70歳**。だが食料を作っているのは25〜35歳が中心で、
+//        年齢減衰の積分は 30歳16.2年ぶん／70歳28.3年ぶん ＝ **1.74倍しか違わない**
+//     ② **加重平均を勘定していない。**畑は5ステの加重平均（重み1.0/0.9/0.7/0.6/0.5）で
+//        測るので、満点の **78.6%** にしかならない（Σw²/Σw ＝ 2.91/3.70）
+//   実測：働き手370人の実効値は1人あたり **373.0**（旧目盛りでは 68.8）。5.42倍。
+//   ★ 分母は**実測で決めた**（比例計算では合わなかった）。旧コードの働き手1人あたり産出
+//     2.23/2.24/2.27（種3/6/18・夏・120年）に一致する値を探した結果 **373**。
+//     ただしこれだけでは足りず、**創世の十匹に年齢ぶんの努力値を積む**必要があった
+//     （grow.js の seedEffortForAge）。十匹は18〜26歳で ev=0 のまま生まれるので、
+//     努力値が主役になった新目盛りでは「才能だけの大人」＝旧目盛りの1/13の産出になり、
+//     子が育つ前に全滅していた
+export const Q_DIVISOR = 373;
+
 const ID_HUNGER_RESIST = S.needId('飢えへの強さ');
 
 export const VILLAGE_SPEC = {
@@ -167,7 +183,7 @@ export function produceAndEat(P, V, tick, land = null) {
       // 身重の女は畑にも森にも出ない（家事へ回る）
       if (A.state[i] & ST_PREGNANT) continue;
       if (job === AREA_FIELD) fieldMen[v]++; else forestMen[v]++;
-      const q = P.effectiveOf(i, AREA_YIELD_STATS[job]) / 50;
+      const q = P.effectiveOf(i, AREA_YIELD_STATS[job]) / Q_DIVISOR;
       if (job === AREA_FIELD) {
         if (!winter) prodF[v] += FARM_YIELD * q;      // 冬は作物ができない
       } else {

@@ -370,9 +370,14 @@ export class Run {
     const homes = [];
     const homeIndex = new Map();
     const stillHere = new Set();
+    for (let h = 0; h < HA.len; h++) if (HA.alive[h]) stillHere.add(h);
+    // ★ 2026-08-28：**枠を配る前に、畳まれた家の枠を返す。**
+    //   旧版は配ってから返していたので、同じ月に1軒死んで1軒建つと
+    //   死んだ家の枠がまだ埋まっていて、新しい家が **枠30**（範囲外）を取っていた。
+    //   生きている家の枠は1つも動かないので「箱が飛び回る」ことにはならない
+    for (const h of [...this.slotOf.keys()]) if (!stillHere.has(h)) this._freeSlot(h);
     for (let h = 0; h < HA.len; h++) {
       if (!HA.alive[h]) continue;
-      stillHere.add(h);
       const v = HA.village[h];
       const slot = this._slot(h, v);
       homeIndex.set(h, homes.length);
@@ -383,7 +388,6 @@ export class Run {
         members: [],
       });
     }
-    for (const h of [...this.slotOf.keys()]) if (!stillHere.has(h)) this._freeSlot(h);
 
     // ---- 個体 ----
     const folk = [];

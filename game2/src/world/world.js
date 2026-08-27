@@ -22,9 +22,9 @@ import {
 import { Houses } from './house.js';
 import {
   Villages, WHERE_FRONTIER, HOUSES_PER_VILLAGE,
-  assignWork, produceAndEat, syncHouses, AREA_HOME,
+  assignWork, produceAndEat, syncHouses, AREA_HOME, AREA_FIELD,
 } from './village.js';
-import { growMonth } from './grow.js';
+import { growMonth, seedEffortForAge } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
 import { foundGenome, targetsFrom } from './genetics.js';
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
@@ -102,6 +102,9 @@ export class World {
       P.a.gen[i] = 0;
       P.a.lifespan[i] = lifespanOf(P, i);
       P.a.job[i] = AREA_HOME;
+      // ★ 十匹は18〜26歳で生まれる。**その歳までに積まれたはずの努力値**を持たせる。
+      //   これが無いと「才能だけの大人」になり、旧目盛りの1/13しか産出しない（2026-08-28）
+      seedEffortForAge(P, i, AREA_FIELD);
       (P.a.sex[i] === SEX_FEMALE ? women : men).push(i);
     }
 

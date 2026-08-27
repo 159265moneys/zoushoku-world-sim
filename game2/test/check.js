@@ -979,28 +979,32 @@ check('育種そのものに代償がある（欲張るほど酷くなる・A-18
 section('家と村（world/house.js／world/village.js）');
 // ===========================================================================
 
-check('村は30軒で止まる（A-19b：30世帯＝約100人）', () => {
-  let filled = 0, maxPop = 0;
+check('**村ごとに**30軒で止まる（A-19b＋正典1-4 の分村）', () => {
+  // ★ 2026-08-28：正典1-4「30軒が埋まると自動で隣に新しい村ができる」を実装したので、
+  //   総人口は200を超える。**上限は村ごとに掛かる。**全部の村を見る（旧版は村0しか見ていなかった）
+  let filled = 0, maxPop = 0, splits = 0;
   for (let seed = 1; seed <= 8; seed++) {
     const w = new W.World(seed).genesis();
     let worst = 0;
     for (let y = 0; y < 300; y++) {
       w.runYears(1);
-      const h = w.villages.a.houses[0];
-      if (h > worst) worst = h;
-      if (h > V.HOUSES_PER_VILLAGE) return `種${seed} で ${h}軒まで建った`;
-      if (w.houses.countIn(0) !== h) return `種${seed} で家の数の勘定が合わない`;
+      for (let v = 0; v < w.villages.len; v++) {
+        const h = w.villages.a.houses[v];
+        if (h > worst) worst = h;
+        if (h > V.HOUSES_PER_VILLAGE) return `種${seed} の村${v} で ${h}軒まで建った`;
+        if (w.houses.countIn(v) !== h) return `種${seed} の村${v} で家の数の勘定が合わない`;
+      }
       if (w.people.aliveCount() > maxPop) maxPop = w.people.aliveCount();
       if (w.people.aliveCount() === 0) break;
     }
+    splits += w.counters.split;
     if (worst === V.HOUSES_PER_VILLAGE) {
       filled++;
       if (!w.counters.blocked) return `種${seed} は30軒に届いたのに溢れが数えられていない`;
     }
   }
   if (filled < 3) return `8通り試して30軒まで埋まったのが ${filled} だけ`;
-  // 30世帯＝約100人（A-19b）。1世帯3.3人なので100人前後で頭打ちになる
-  if (maxPop > 200) return `30軒なのに ${maxPop} 人まで増えた`;
+  if (splits === 0) return '8通り300年で分村が一度も起きていない（正典1-4）';
   hundredYear.maxPop = maxPop;
   hundredYear.filled = filled;
   return true;
@@ -1101,11 +1105,21 @@ check('こころ29個には努力値が積まれない（閾値が原理的に�
   return true;
 });
 
-check('才能ボーナスは0.80〜0.90（ほぼ効かない）', () => {
-  if (Math.abs(grow.talentBonus(0) - 0.80) > 1e-12) return `才能0 → ${grow.talentBonus(0)}`;
-  if (Math.abs(grow.talentBonus(100) - 0.90) > 1e-12) return `才能100 → ${grow.talentBonus(100)}`;
-  const ratio = grow.talentBonus(100) / grow.talentBonus(0);
-  return ratio < 1.13 ? true : `天才が凡人の ${ratio.toFixed(3)} 倍`;
+check('才能が努力値の基準そのもの（正典 O-34）', () => {
+  // ★ 2026-08-28：旧検査は「才能ボーナス0.80〜0.90（ほぼ効かない）」を見ていた。
+  //   正典 O-34「才能が基準そのもの。才能10なら1年で基準10。
+  //   旧『1.0 ×（才能倍率＝才能÷50）』は誤りで、**50倍縮んでいた**」により、逆になった。
+  //   才能100 は 才能50 の**ちょうど2倍**積む。1.125倍ではない
+  const perYear = grow.EV_PER_MONTH_PER_TALENT * 12;
+  if (Math.abs(perYear - 1) > 1e-12) return `1年の係数が ${perYear}（才能そのものが基準なら1）`;
+  if (typeof grow.talentBonus === 'function') return '才能ボーナスが残っている（O-34 で廃止）';
+  // 7→70歳の積分 28.3年ぶん × 才能 ＝ 正典の表と合うか
+  let sum = 0; for (let y = 7; y < 70; y += 0.001) sum += grow.evDecay(y) * 0.001;
+  const t100 = 100 * sum, t50 = 50 * sum;
+  if (Math.abs(t100 - 2826) > 30) return `才能100 の積算 ${t100.toFixed(0)}（正典は2,826）`;
+  if (Math.abs(t50 - 1413) > 15) return `才能50 の積算 ${t50.toFixed(0)}（正典は1,413）`;
+  if (Math.abs(t100 / t50 - 2) > 1e-9) return `才能100/50 が ${(t100 / t50).toFixed(3)}倍（2.000であるべき）`;
+  return true;
 });
 
 check('年齢減衰。若いほど積まれ、下げ止まりは0.25', () => {
@@ -1113,8 +1127,15 @@ check('年齢減衰。若いほど積まれ、下げ止まりは0.25', () => {
   if (Math.abs(grow.evDecay(7) - 1) > 1e-12) return `7歳 → ${grow.evDecay(7)}`;
   for (let a = 8; a < 70; a++) if (grow.evDecay(a) > grow.evDecay(a - 1)) return `${a}歳で増えた`;
   if (grow.evDecay(70) !== grow.EV_DECAY_FLOOR) return `70歳 → ${grow.evDecay(70)}`;
+  // ★ 2026-08-28：オーナー裁定「このほぼ伸びなくなるラインは50にして」により
+  //   時定数 22 → 31。正典の表は 30歳 0.48（旧0.35）／50歳 0.25 で下げ止まり（旧37.5歳）
   const at30 = grow.evDecay(30);
-  return at30 > 0.3 && at30 < 0.4 ? true : `30歳 → ${at30.toFixed(3)}（A-8 の境目）`;
+  if (!(at30 > 0.44 && at30 < 0.52)) return `30歳 → ${at30.toFixed(3)}（正典は0.48）`;
+  if (Math.abs(grow.evDecay(50) - grow.EV_DECAY_FLOOR) > 0.005) return `50歳 → ${grow.evDecay(50).toFixed(3)}（正典は0.25で下げ止まり）`;
+  if (grow.evDecay(49) <= grow.EV_DECAY_FLOOR) return '50歳より前に下げ止まっている';
+  // 7→70歳の積分が正典の「実効28.3年ぶん」になるか
+  let sum = 0; for (let y = 7; y < 70; y += 0.001) sum += grow.evDecay(y) * 0.001;
+  return Math.abs(sum - 28.3) < 0.2 ? true : `7→70歳の積分 ${sum.toFixed(2)}（正典は28.3）`;
 });
 
 check('伸びる場所で向きが変わる（A-21：全部が都会有利ではない）', () => {

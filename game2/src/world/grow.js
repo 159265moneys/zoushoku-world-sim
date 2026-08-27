@@ -32,36 +32,28 @@ import { AREA_STATS, AREA_HOME, WHERE_CENTER } from './village.js';
 // （stats.js の GROWTH_ROOM / PLACE_MULTIPLIER と合わせて読むこと）
 // ===========================================================================
 
-// 1ヶ月に積まれる努力値の基本量。伸びしろ1.0・年齢減衰1.0・才能ボーナス0.85 のとき
-// 1年で 2.0 × 0.85 ＝ 1.7 積まれる。年齢減衰を通した一生ぶんの積算は
-// おおよそ 22年ぶん（下の evDecay の積分）なので、主力のステで +35〜40 に落ち着く。
-// 才能の散らばりが標準偏差15前後なので、「20年の稽古が素質2つ分を覆す」重さになる。
-export const EV_PER_YEAR = 2.0;
-export const EV_PER_MONTH = EV_PER_YEAR / C.MONTHS_PER_YEAR;
+// ★★ 2026-08-28：正典の式に合わせた（O-34 のオーナー原文）★★
+//   **1年に積まれる努力値 ＝ 才能 × 年齢減衰 × 伸びしろ × 場所**
+//   ★ **才能が基準そのもの。**才能10なら1年で基準10。
+//   ★ 旧実装は `2.0 × 才能ボーナス0.85` を基準に置いて才能を倍率にしていたので
+//     **50倍縮んでいた**（正典は 2026-08-26 に訂正済みだったが、コードに入っていなかった）
+//   7→70歳の積分 ＝ **実効 28.3年ぶん** → 才能50 で +1,413（実効値 1,463）
+export const EV_PER_MONTH_PER_TALENT = 1 / C.MONTHS_PER_YEAR;
 
-// 年齢減衰。若いほど積まれる。下げ止まりは0.25（確定事項に明記）
+// 年齢減衰 ＝ max(0.25, exp(−(歳 − 7) / 31))
+//   7歳 1.00 ／ 20歳 0.66 ／ 25歳 0.56 ／ 30歳 0.48 ／ 40歳 0.34 ／ **50歳 0.25 で下げ止まり**
 export const EV_DECAY_FLOOR = 0.25;
 export const EV_DECAY_START = 7;    // いちばん早く働き始める歳（A-21b の貧民）
-export const EV_DECAY_TAU = 22;     // 何年で 1/e に落ちるか。30歳あたりで0.35になる
-
-// 才能ボーナス。**確定事項に明記（0.80〜0.90）**
-export const TALENT_BONUS_MIN = 0.80;   // 才能0
-export const TALENT_BONUS_MAX = 0.90;   // 才能100
+export const EV_DECAY_TAU = 31;     // ★ 旧22。50歳ちょうどで floor に着く値
 
 // 仕事に直接関わらないステも、暮らしの中で少しは伸びる
 export const IDLE_SHARE = 0.10;
 
-/** 年齢減衰。7歳で1.0、30歳で0.35、37.5歳から下げ止まりの0.25 */
+/** 年齢減衰。7歳で1.0、30歳で0.48、**50歳**から下げ止まりの0.25 */
 export function evDecay(ageYears) {
   if (ageYears < EV_DECAY_START) return 0;
   const d = Math.exp(-(ageYears - EV_DECAY_START) / EV_DECAY_TAU);
   return d < EV_DECAY_FLOOR ? EV_DECAY_FLOOR : d;
-}
-
-/** 才能による習得ボーナス。0.80〜0.90（ほぼ効かない） */
-export function talentBonus(talent) {
-  const t = talent < 0 ? 0 : talent > 100 ? 100 : talent;
-  return TALENT_BONUS_MIN + (TALENT_BONUS_MAX - TALENT_BONUS_MIN) * (t / 100);
 }
 
 /**
@@ -83,10 +75,38 @@ export function evGain(P, i, s, weight, where) {
   const y = (A.ageMonths[i] / C.MONTHS_PER_YEAR) | 0;
   const dec = evDecay(y);
   if (dec <= 0) return 0;
-  return EV_PER_MONTH * weight * room * dec
-       * talentBonus(talent)
+  // ★ 才能が基準そのもの（正典 O-34）
+  return EV_PER_MONTH_PER_TALENT * talent * weight * room * dec
        * S.placeMultiplier(s, where)
        * growthMul(P, i, s);          // 授かりもの（天賦・剛健・明晰）A-23
+}
+
+/**
+ * ★ 2026-08-28：**7歳からその歳までに積まれたはずの努力値**を、まとめて積む。
+ *   創世の十匹（18〜26歳）は ev=0 で生まれるが、努力値が主役になった新しい目盛りでは
+ *   それは「才能だけの子供」と同じ産出しか出さない（実測 実効値43・産出0.28/月。
+ *   旧目盛りの 3.6/月 の1/13）。**創世の大人が飢えて、子が育つ前に国が滅びる。**
+ *   年齢減衰の積分をそのまま使うので、新しい定数は1つも要らない。
+ * @param job どの仕事に就いていたことにするか（AREA_* の番号）
+ */
+export function seedEffortForAge(P, i, job) {
+  const A = P.a;
+  const y = A.ageMonths[i] / C.MONTHS_PER_YEAR;
+  if (y <= EV_DECAY_START) return 0;
+  // 7歳→いまの歳 の積分（年齢減衰の実効年数）
+  let years = 0;
+  for (let a = EV_DECAY_START; a < y; a += 0.05) years += evDecay(a) * 0.05;
+  const list = AREA_STATS[job] || AREA_STATS[AREA_HOME];
+  let total = 0;
+  for (const [s, w] of list) {
+    const talent = A.gene[s][i];
+    if (!S.canTrain(s, talent)) continue;
+    const room = S.growthRoomOf(s);
+    if (room <= 0) continue;
+    const g = talent * years * w * room;
+    A.ev[s][i] += g; total += g;
+  }
+  return total;
 }
 
 /**
@@ -135,7 +155,6 @@ export function explain(P, i, s, where = WHERE_CENTER) {
           : null,
     room: S.growthRoomOf(s),
     decay: evDecay(y),
-    talentBonus: talentBonus(talent),
     place: S.placeMultiplier(s, where),
     perMonth: evGain(P, i, s, 1, where),
   };
