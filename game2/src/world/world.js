@@ -27,6 +27,12 @@ import {
 import { growMonth } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
 import { foundGenome, targetsFrom } from './genetics.js';
+// ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
+import { generate as genMap } from './mapgen.js';
+import { pickSeat, guarantee, enrich } from './seat.js';
+import { expand as expandParcels } from './parcel.js';
+import { Land } from './land.js';
+import { PPL } from './settle.js';
 
 export const GENESIS_COUNT = 10;      // 創世の十匹
 export const GENESIS_WOMEN = 5;       // 十匹なら女は5人（A-10）
@@ -42,12 +48,15 @@ export class World {
     this.people = new People(opts.cap ?? 256);
     this.houses = new Houses(64);
     this.villages = new Villages(4);
+    this.map = null;                   // ★ 地図。opts.map で生える（#17）
+    this.land = null;                  // ★ 村と区画を繋ぐ橋
     this.log = [];                     // 節目（年代記の素）
     this.firsts = new Set();           // 「これは初めてか」（A-10 の副産物）
     this.counters = {
       born: 0, died: 0, byCause: [0, 0, 0, 0, 0, 0],
       married: 0, blocked: 0, conceived: 0, twins: 0, triplets: 0,
       ceilingFired: 0,
+      split: 0, splitFailed: 0,        // ★ 分村できた／r>12里で詰まった
     };
   }
 
@@ -59,7 +68,23 @@ export class World {
   genesis(centroid = null) {
     const P = this.people, H = this.houses, V = this.villages, rng = this.rng;
     const targets = targetsFrom(centroid);
+
+    // ★ 地図を作って、創世の村をその席に置く（#17 §3-4）
+    if (this.opts.map) {
+      const g = genMap(this.seed);
+      const r = pickSeat(g);
+      if (!r.ok) throw new Error('席が置けない：' + r.why);
+      guarantee(g, r.seat); enrich(g, r.seat);
+      const L = expandParcels(g);
+      this.map = { g, L, seat: r.seat, seatX: r.x, seatY: r.y };
+      this.land = new Land(g, L);
+    }
+
     const v = V.create(this.tick, this.opts.where ?? WHERE_FRONTIER, 0);
+    if (this.land) {
+      this.land.place(v, this.map.seatX * PPL + 2, this.map.seatY * PPL + 2);
+      this.land.fogMonth(1);
+    }
 
     const men = [], women = [];
     for (let k = 0; k < GENESIS_COUNT; k++) {
@@ -99,7 +124,8 @@ export class World {
     }
 
     assignWork(P, V, this.tick);
-    this.note('創世', `十匹が立った。家が${H.count}軒`);
+    this.note('創世', `十匹が立った。家が${H.count}軒` +
+      (this.land ? `。席は (${this.map.seatX},${this.map.seatY})・畑の定員${this.land.fieldCap[0]}人月` : ''));
     return this;
   }
 
@@ -136,7 +162,8 @@ export class World {
     syncHouses(V, H);
     assignWork(P, V, t);
 
-    const food = produceAndEat(P, V, t);
+    if (this.land) this.land.fogMonth(V.len);
+    const food = produceAndEat(P, V, t, this.land);
     for (const r of food) {
       if (r && r.shortage > 0 && this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');
     }
@@ -148,6 +175,8 @@ export class World {
     if (m.blocked > 0 && this.once('village-full')) {
       this.note('村が溢れた', `${HOUSES_PER_VILLAGE}軒が埋まった`);
     }
+    // ★ 正典1-4「30軒が埋まると自動で隣に新しい村ができる」── ここが今まで無かった
+    if (m.blocked > 0) this.splitVillages();
     syncHouses(V, H);
 
     const c = conceiveMonth(P, V, t, this.rng);
@@ -156,6 +185,57 @@ export class World {
     nursingMonth(P, t);
 
     return { death: d, food, marry: m, conceive: c };
+  }
+
+  /**
+   * 分村（正典11-B ＋ #17 §6-5）。30軒が埋まっている村から順に、1ヶ月に1つだけ出す。
+   * ★ 地図が無いとき（opts.map なし）は、座標を持たない村をただ足す（旧来の挙動）
+   */
+  splitVillages() {
+    const V = this.villages, H = this.houses, P = this.people;
+    let stuck = 0;
+    for (let v = 0; v < V.len; v++) {
+      if (!V.a.alive[v] || V.a.houses[v] < HOUSES_PER_VILLAGE) continue;
+      if (this.land) {
+        const spot = this.land.findSplit(v, V.len, () => this.rng.next());
+        if (!spot) { stuck++; continue; }              // r>12里 ＝ 溢れたまま
+        const nv = V.create(this.tick, this.opts.where ?? WHERE_FRONTIER, 0);
+        this.land.fogSplit(this.land.px[v], this.land.py[v], spot.px, spot.py);
+        this.land.place(nv, spot.px, spot.py);
+        this.moveHouses(v, nv);
+        this.counters.split++;
+        this.note('分村', `${spot.r.toFixed(1)}里 先に村ができた（畑の定員${this.land.fieldCap[nv]}人月）`);
+      } else {
+        const nv = V.create(this.tick, this.opts.where ?? WHERE_FRONTIER, 0);
+        this.moveHouses(v, nv);
+        this.counters.split++;
+      }
+      return;                                   // 1ヶ月に1村だけ
+    }
+    // ★ ここへ来たのは「30軒が埋まった村が1つも分村できなかった」月。
+    //   その月に詰まっていた村の数を数える（試行回数ではない）
+    if (stuck > 0) {
+      this.counters.splitFailed = Math.max(this.counters.splitFailed, stuck);
+      if (this.once('split-stuck')) this.note('分村が詰まった', `${stuck}村が r>12里 で出られない`);
+    }
+  }
+
+  /** 正典11-C：8軒を移す。いまは「新しい家から」だけを見る（点数の全式は未実装） */
+  moveHouses(from, to, n = 8) {
+    const H = this.houses, P = this.people, HA = H.a;
+    const ids = [];
+    for (let h = 0; h < HA.len; h++) if (HA.alive[h] && HA.village[h] === from) ids.push(h);
+    ids.sort((a, b) => b - a);                  // 家IDの大きい順＝新しい家から
+    let moved = 0;
+    for (const h of ids) {
+      if (moved >= n) break;
+      HA.village[h] = to;
+      for (let i = 0; i < P.a.len; i++)
+        if (P.a.alive[i] && P.a.house[i] === h) P.a.village[i] = to;
+      moved++;
+    }
+    syncHouses(this.villages, H);
+    return moved;
   }
 
   /** n 日ぶん進める */

@@ -139,15 +139,19 @@ export function assignWork(P, V, tick) {
  * 創世から RATION_YEARS 年のあいだは配給が足りない分を埋める（A-10）。
  * @returns 村ごとの明細
  */
-export function produceAndEat(P, V, tick) {
+export function produceAndEat(P, V, tick, land = null) {
   const A = P.a, VA = V.a;
   const nv = V.len;
   const winter = C.isWinter(tick);
   const rationOn = tick < RATION_YEARS * C.DAYS_PER_YEAR;
 
+  const prodF = new Float64Array(nv), prodW = new Float64Array(nv);
   const produced = new Float64Array(nv);
   const demand = new Float64Array(nv);
   const pop = new Uint16Array(nv), workers = new Uint16Array(nv);
+  // ★ 土地の定員（#17 §2-2）。畑と森に何人月まで入るかは区画の数で決まる。
+  //   定員は**硬い天井**で逓減させない（§2-1：柱6の単一の判定式を守るため）
+  const fieldMen = new Float64Array(nv), forestMen = new Float64Array(nv);
 
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i]) continue;
@@ -162,14 +166,23 @@ export function produceAndEat(P, V, tick) {
       workers[v]++;
       // 身重の女は畑にも森にも出ない（家事へ回る）
       if (A.state[i] & ST_PREGNANT) continue;
+      if (job === AREA_FIELD) fieldMen[v]++; else forestMen[v]++;
       const q = P.effectiveOf(i, AREA_YIELD_STATS[job]) / 50;
       if (job === AREA_FIELD) {
-        if (!winter) produced[v] += FARM_YIELD * q;   // 冬は作物ができない
+        if (!winter) prodF[v] += FARM_YIELD * q;      // 冬は作物ができない
       } else {
-        produced[v] += HUNT_YIELD * q * (winter ? WINTER_HUNT : 1);
+        prodW[v] += HUNT_YIELD * q * (winter ? WINTER_HUNT : 1);
       }
     }
   }
+
+  // ★ crowd ＝ 定員 / 実働（#17 §2-2）。1.00 を超えない。土地が無ければ 1.00 のまま
+  const crowdF = new Float64Array(nv).fill(1), crowdW = new Float64Array(nv).fill(1);
+  if (land) for (let v = 0; v < nv; v++) {
+    if (fieldMen[v] > 0)  crowdF[v] = Math.min(1, (land.fieldCap[v]  ?? 0) / fieldMen[v]);
+    if (forestMen[v] > 0) crowdW[v] = Math.min(1, (land.forestCap[v] ?? 0) / forestMen[v]);
+  }
+  for (let v = 0; v < nv; v++) produced[v] = prodF[v] * crowdF[v] + prodW[v] * crowdW[v];
 
   const out = [];
   for (let v = 0; v < nv; v++) {
