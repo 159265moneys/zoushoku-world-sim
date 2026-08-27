@@ -44,10 +44,61 @@ export const STATE_NAMES = [
   [ST_GRIEF, '喪'], [ST_NURSING, '産後'],
 ];
 
-// 死因
-export const DEATH_NONE = 0, DEATH_AGE = 1, DEATH_ILL = 2,
-             DEATH_HUNGER = 3, DEATH_WAR = 4, DEATH_BIRTH = 5;
-export const DEATH_NAMES = ['—', '老衰', '病・事故', '飢え', '戦死', 'お産'];
+// ---- 死因（正典 #9-D。13値で確定。以後1つも足さない） ---------------------
+//
+// 空き番も残さない（残すと必ず埋めたくなる）。
+// 旧版は #15 が9値・#9-D が8値・実装が6値の3版に割れていた。しかもこれが
+// **族＝宗教の起源の入力**なので、確定しないと宗教が実装ごとに別物になっていた。
+//
+// ★ いま到達するのは 1老衰・2病・4餓死・5難産・7乳幼児 の5つだけ。
+//   3事故 は厄災（ストリーム6）、8戦死 は戦争、9〜12 は刑罰・私闘・内乱・自殺が
+//   入った日に生きる。**番号は今日確定させ、後から動かさない。**
+export const DEATH_NONE     = 0;   // なし
+export const DEATH_AGE      = 1;   // 老衰
+export const DEATH_ILL      = 2;   // 病（疫病＝病の段3を含む）
+export const DEATH_ACCIDENT = 3;   // 事故（倒壊・溺死・凍死・獣害・嵐）
+export const DEATH_HUNGER   = 4;   // 餓死
+export const DEATH_BIRTH    = 5;   // 難産（母）
+export const DEATH_CHILDBED = 6;   // 産褥（産後1〜2ヶ月の母）
+export const DEATH_INFANT   = 7;   // 乳幼児（5歳未満・原因を特定しない）
+export const DEATH_WAR      = 8;   // 戦死
+export const DEATH_EXECUTED = 9;   // 処刑（粛清・異端・冤罪）
+export const DEATH_FEUD     = 10;  // 私闘・暗殺
+export const DEATH_REVOLT   = 11;  // 内乱（暴動・謀反・家督争い）
+export const DEATH_SELF     = 12;  // 自殺（集団自殺を含む）
+export const DEATH_COUNT    = 13;
+
+export const DEATH_NAMES = [
+  '—', '老衰', '病', '事故', '飢え', 'お産', '産褥',
+  '乳幼児', '戦死', '処刑', '私闘', '内乱', '自殺',
+];
+
+// 乳幼児と数えるのは何歳未満か（#9-D）
+export const INFANT_AGE = 5;
+
+// ---- 族（#9-D。その月・その村で最多だった死因から引く。宗教の起源になる） ---
+// 「数えない」死因（老衰・難産・産褥・乳幼児）は族を持たない。
+// 同数で並んだら族番号の小さいほうを採る（決定性のため）。
+export const KIN_NONE = 0, KIN_PLAGUE = 1, KIN_HEAVEN = 2, KIN_FAMINE = 3,
+             KIN_WAR = 4, KIN_PUNISH = 5, KIN_STRIFE = 6;
+export const KIN_NAMES = ['—', '疫', '天', '飢', '兵', '罰', '内'];
+
+/** 死因 → 族。添字が死因番号 */
+export const DEATH_KIN = [
+  KIN_NONE,    // 0 なし
+  KIN_NONE,    // 1 老衰      → 数えない
+  KIN_PLAGUE,  // 2 病        → 疫
+  KIN_HEAVEN,  // 3 事故      → 天
+  KIN_FAMINE,  // 4 餓死      → 飢
+  KIN_NONE,    // 5 難産      → 数えない
+  KIN_NONE,    // 6 産褥      → 数えない
+  KIN_NONE,    // 7 乳幼児    → 数えない
+  KIN_WAR,     // 8 戦死      → 兵
+  KIN_PUNISH,  // 9 処刑      → 罰
+  KIN_PUNISH,  // 10 私闘・暗殺 → 罰（下手人が名指しできる死だから）
+  KIN_STRIFE,  // 11 内乱     → 内
+  KIN_STRIFE,  // 12 自殺     → 内
+];
 
 // ---- 死亡率（中世並・年あたり） -------------------------------------------
 // 確定事項の表そのまま。老衰（寿命）はこれとは別に効く。
@@ -121,10 +172,11 @@ export const SPEC = {
   // 対立遺伝子2本。u16 に ALLELE_Q 倍で入れている（0〜100 を 1/600 刻みで）
   a0: `u16*${S.COUNT}`,
   a1: `u16*${S.COUNT}`,
-  // 優劣（こころ29個ぶん）のビット。0=劣性 1=顕性
+  // 優劣（こころのぶん）のビット。0=劣性 1=顕性
+  // ★ 29 と書かない。N-22（106化）で こころ が29→31 に増えたときに黙ってずれる
   dom0: 'u32', dom1: 'u32',
   // 遺伝的荷重（こころの劣性が隠して運ぶ欠陥）。0〜255 で 0〜1
-  ld0: 'u8*29', ld1: 'u8*29',
+  ld0: `u8*${S.BY_CATEGORY[S.HEART].length}`, ld1: `u8*${S.BY_CATEGORY[S.HEART].length}`,
   // 可塑（交叉率を決めるメタ遺伝子。ステータスではないので104に入っていない）
   pl0: 'f32', pl1: 'f32', plast: 'f32',
 
@@ -168,8 +220,14 @@ export const SPEC = {
   ...LOOK_SPEC,
 };
 
-export const HEART0 = S.BY_CATEGORY[S.HEART][0];        // 75
-export const HEART_COUNT = S.BY_CATEGORY[S.HEART].length; // 29
+export const HEART0 = S.BY_CATEGORY[S.HEART][0];          // 104ステで75／106ステで75
+export const HEART_COUNT = S.BY_CATEGORY[S.HEART].length; // 104ステで29／106ステで31
+// 優劣は dom0/dom1 の u32 に1ビットずつ載せている。こころが32を超えたら黙って溢れる
+if (HEART_COUNT > 32) throw new Error(`people.js: こころが${HEART_COUNT}個。dom0/dom1 の u32 に載らない`);
+// こころは添字が連続していることを前提に k = s - HEART0 で引いている
+if (S.BY_CATEGORY[S.HEART][HEART_COUNT - 1] !== HEART0 + HEART_COUNT - 1) {
+  throw new Error('people.js: こころの添字が連続していない（stats_v3.csv の並び順）');
+}
 export const ALLELE_Q = 600;                             // u16 に詰める倍率
 
 export class People {
@@ -327,7 +385,7 @@ export function lifespanOf(P, i) {
  */
 export function agingAndDeath(P, tick, rng) {
   const A = P.a;
-  const byCause = [0, 0, 0, 0, 0, 0];
+  const byCause = new Array(DEATH_COUNT).fill(0);
   let aged = 0, died = 0;
 
   for (let i = 0; i < A.len; i++) {
@@ -358,7 +416,10 @@ export function agingAndDeath(P, tick, rng) {
     if (vit < 1) p *= 1 + (1 - vit) * LOAD_MORTALITY;
     if (A.state[i] & ST_SICK) p *= 2.5;
     if (rng.next() < p) {
-      P.kill(i, tick, DEATH_ILL); died++; byCause[DEATH_ILL]++;
+      // 5歳未満は原因を特定しない（#9-D の 7 乳幼児）。族を持たないので宗教の起源にならない。
+      // ★ 乱数は1回も余分に引かない。名札を貼り替えるだけ
+      const cause = y < INFANT_AGE ? DEATH_INFANT : DEATH_ILL;
+      P.kill(i, tick, cause); died++; byCause[cause]++;
       continue;
     }
 

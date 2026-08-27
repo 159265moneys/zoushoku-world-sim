@@ -1,4 +1,4 @@
-// 104ステの定義。
+// 106ステの定義。
 //
 // 中身は stats.gen.js（docs/v3/stats_v3.csv から自動生成）。
 // ここは索引と、段階（「高い」「やや低い」）を数に直す表と、
@@ -15,7 +15,7 @@
 
 import * as G from './stats.gen.js';
 
-export const COUNT = G.COUNT;                    // 104
+export const COUNT = G.COUNT;                    // 106（N-22 で104→106）
 export const SOURCE = G.SOURCE;
 export const SOURCE_SHA256 = G.SOURCE_SHA256;
 

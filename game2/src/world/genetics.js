@@ -331,9 +331,11 @@ export function mutate(g, rng) {
 // ===========================================================================
 /**
  * 父母から子のゲノムを作って、child の席に書き込む。
+ * @param rng     出生・遺伝のストリーム（STREAM.BIRTH）
+ * @param rngGift 授かりものだけ別のストリーム（STREAM.GIFT）。省略すると rng と同じ本
  * @returns {{ceilingFired:number}} 保険が何回発火したか（通常は0）
  */
-export function breed(P, child, father, mother, rng) {
+export function breed(P, child, father, mother, rng, rngGift = rng) {
   gamete(P, father, rng, GF); mutate(GF, rng);
   gamete(P, mother, rng, GM); mutate(GM, rng);
   // ハプロタイプごとに対抗アーム予算へ揃える（旧 normalizeGenome）
@@ -344,8 +346,9 @@ export function breed(P, child, father, mother, rng) {
   P.a.pl0[child] = GF.pl;
   P.a.pl1[child] = GM.pl;
   refreshPhenotype(P, child);
-  // 授かりもの（S以上）。104ステの交叉とは独立の1座位（A-23）
-  breedGift(P, child, father, mother, rng);
+  // 授かりもの（S以上）。106ステの交叉とは独立の1座位（A-23）
+  // ★ 乱数は別ストリーム（#17 §10-3 の2番）。天井が動いても遺伝の流れが1ビットも動かない
+  breedGift(P, child, father, mother, rngGift);
   const fired = enforceChromosomeCeiling(P, child, father, mother);
   return { ceilingFired: fired };
 }

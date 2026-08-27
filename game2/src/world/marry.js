@@ -195,7 +195,7 @@ export function conceiveMonth(P, V, tick, rng) {
  * その日に産み月を迎えた者が産む。
  * @returns {{born:number, mothersLost:number, babies:number[]}}
  */
-export function birthDay(P, houses, V, tick, rng) {
+export function birthDay(P, houses, V, tick, rng, rngGift = rng) {
   const A = P.a;
   const babies = [];
   let mothersLost = 0;
@@ -214,7 +214,7 @@ export function birthDay(P, houses, V, tick, rng) {
 
     for (let k = 0; k < count; k++) {
       const c = P.spawn(tick);
-      breed(P, c, father >= 0 && A.alive[father] ? father : mother, mother, rng);
+      breed(P, c, father >= 0 && A.alive[father] ? father : mother, mother, rng, rngGift);
       A.sex[c] = rng.int(2);                       // A-20：完全ランダムで1/2
       A.mother[c] = mother;
       A.father[c] = father;

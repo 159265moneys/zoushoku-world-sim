@@ -15,9 +15,10 @@ import * as S from '../core/stats.js';
 import { seedFounder } from './gifts.js';
 import { foundLook } from './looks.js';
 import * as C from '../core/calendar.js';
-import { RNG } from '../core/rng.js';
+import { makeStreams, STREAM, saveStreams, loadStreams } from '../core/rng.js';
 import {
   People, SEX_MALE, SEX_FEMALE, RANK_COMMON, ST_PREGNANT, agingAndDeath, lifespanOf,
+  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH,
 } from './people.js';
 import { Houses } from './house.js';
 import {
@@ -43,7 +44,10 @@ export class World {
   constructor(seed = 1, opts = {}) {
     this.seed = seed >>> 0 || 1;
     this.opts = opts;
-    this.rng = new RNG(this.seed);
+    // ★ 乱数は機能ごとに12本（#17 §10-3）。1本のままだと機能を足すたびに
+    //   基準線（M-01/M-05/M-07/M-32）が全損する。this.R[STREAM.XXX] で引く
+    this.R = makeStreams(this.seed);
+    // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
     this.houses = new Houses(64);
@@ -53,7 +57,7 @@ export class World {
     this.log = [];                     // 節目（年代記の素）
     this.firsts = new Set();           // 「これは初めてか」（A-10 の副産物）
     this.counters = {
-      born: 0, died: 0, byCause: [0, 0, 0, 0, 0, 0],
+      born: 0, died: 0, byCause: new Array(DEATH_COUNT).fill(0),
       married: 0, blocked: 0, conceived: 0, twins: 0, triplets: 0,
       ceilingFired: 0,
       split: 0, splitFailed: 0,        // ★ 分村できた／r>12里で詰まった
@@ -66,7 +70,8 @@ export class World {
    * @param centroid 性格診断の重心（名前→0〜1）。無ければ全部50の平凡な種族
    */
   genesis(centroid = null) {
-    const P = this.people, H = this.houses, V = this.villages, rng = this.rng;
+    const P = this.people, H = this.houses, V = this.villages;
+    const rng = this.R[STREAM.BIRTH], rngGift = this.R[STREAM.GIFT];
     const targets = targetsFrom(centroid);
 
     // ★ 地図を作って、創世の村をその席に置く（#17 §3-4）
@@ -98,7 +103,7 @@ export class World {
       P.a.rank[i] = RANK_COMMON;
       P.a.blood[i] = 1 << k;   // 十匹それぞれに1本の旗を立てる
       foundLook(P, i, k, rng);
-      seedFounder(P, i, k, rng);     // 授かりものの種を1本ずつ隠して持たせる（A-23）  // 見た目も十匹それぞれ違う（キャラビジュアル.md §3）
+      seedFounder(P, i, k, rngGift);     // 授かりものの種を1本ずつ隠して持たせる（A-23）  // 見た目も十匹それぞれ違う（キャラビジュアル.md §3）
       P.a.gen[i] = 0;
       P.a.lifespan[i] = lifespanOf(P, i);
       P.a.job[i] = AREA_HOME;
@@ -136,14 +141,15 @@ export class World {
   /** 1日。日ごとに起きるのは出産だけ（妊娠10ヶ月がちょうどで終わるため） */
   stepDay() {
     const t = this.tick;
-    const b = birthDay(this.people, this.houses, this.villages, t, this.rng);
+    const b = birthDay(this.people, this.houses, this.villages, t,
+                       this.R[STREAM.BIRTH], this.R[STREAM.GIFT]);
     if (b.born) {
       this.counters.born += b.born;
       if (this.once('birth')) this.note('初めての子', `${b.born}人`);
     }
     if (b.mothersLost) {
       this.counters.died += b.mothersLost;
-      this.counters.byCause[5] += b.mothersLost;
+      this.counters.byCause[DEATH_BIRTH] += b.mothersLost;
     }
     if (C.isMonthStart(t)) this.stepMonth();
     this.tick = t + 1;
@@ -154,10 +160,10 @@ export class World {
   stepMonth() {
     const t = this.tick, P = this.people, H = this.houses, V = this.villages;
 
-    const d = agingAndDeath(P, t, this.rng);
+    const d = agingAndDeath(P, t, this.R[STREAM.DEATH]);
     this.counters.died += d.died;
     for (let k = 0; k < d.byCause.length; k++) this.counters.byCause[k] += d.byCause[k];
-    if (d.byCause[3] > 0 && this.once('hunger-death')) this.note('最初の餓死', '永久に戻らない');
+    if (d.byCause[DEATH_HUNGER] > 0 && this.once('hunger-death')) this.note('最初の餓死', '永久に戻らない');
 
     widow(P);
     H.recount(P, t);
@@ -173,7 +179,7 @@ export class World {
 
     growMonth(P, V, t);
 
-    const m = marryMonth(P, H, V, t, this.rng);
+    const m = marryMonth(P, H, V, t, this.R[STREAM.MARRY]);
     this.counters.married += m.married; this.counters.blocked += m.blocked;
     if (m.blocked > 0 && this.once('village-full')) {
       this.note('村が溢れた', `${HOUSES_PER_VILLAGE}軒が埋まった`);
@@ -182,7 +188,7 @@ export class World {
     if (m.blocked > 0) this.splitVillages();
     syncHouses(V, H);
 
-    const c = conceiveMonth(P, V, t, this.rng);
+    const c = conceiveMonth(P, V, t, this.R[STREAM.BIRTH]);
     this.counters.conceived += c.conceived;
     this.counters.twins += c.twins; this.counters.triplets += c.triplets;
     nursingMonth(P, t);
@@ -200,7 +206,7 @@ export class World {
     for (let v = 0; v < V.len; v++) {
       if (!V.a.alive[v] || V.a.houses[v] < HOUSES_PER_VILLAGE) continue;
       if (this.land) {
-        const spot = this.land.findSplit(v, V.len, () => this.rng.next());
+        const spot = this.land.findSplit(v, V.len, () => this.R[STREAM.SPLIT].next());
         if (!spot) { stuck++; continue; }              // r>12里 ＝ 溢れたまま
         const nv = V.create(this.tick, this.opts.where ?? WHERE_FRONTIER, 0);
         this.land.fogSplit(this.land.px[v], this.land.py[v], spot.px, spot.py);
@@ -249,6 +255,12 @@ export class World {
   /** 「これは初めてか」。そのまま年代記の初出フラグになる（A-10） */
   once(key) { if (this.firsts.has(key)) return false; this.firsts.add(key); return true; }
   note(what, detail = '') { this.log.push({ tick: this.tick, what, detail }); }
+
+  // ---- 乱数の続き（セーブ用・#17 §10-4） ---------------------------------
+  // ★ 12本ある。1本だけ保存すると、読み直した世界は続きから走らない。
+  //   保存するときは必ずこの2つを通すこと（this.R を直に触らない）
+  saveRandom() { return saveStreams(this.R); }
+  loadRandom(states) { loadStreams(this.R, states); return this; }
 
   // ---- 見るためのもの ----------------------------------------------------
   population() { return this.people.aliveCount(); }
