@@ -7,13 +7,17 @@ import * as F from '../src/world/fog.js';
 import { writeFileSync } from 'node:fs';
 
 const seed = Number(process.argv[2] || 29), years = Number(process.argv[3] || 12);
+const nv = Number(process.argv[4] || 1);   // 何村まで育った時点か
 const g = generate(seed); const r = pickSeat(g);
 guarantee(g, r.seat); enrich(g, r.seat);
 const L = expand(g); const S = settle(g, L, r.seat);
 const f = F.makeFog();
-F.fromSettlements(f, S, 1);
-for (let y = 1; y <= years; y++) for (let k = 0; k < 3; k++)
-  F.scout(f, r.x, r.y, ((y-1)*3+k)*(Math.PI*2/36), 12);
+F.fromSettlements(f, S, Math.min(nv, S.n));
+// 斥候は「そのとき最も外側にいる村」から、まだ暗い方角へ出る（実際の使われ方に近づける）
+for (let y = 1; y <= years; y++) for (let k = 0; k < 3; k++) {
+  const v = Math.min(S.n-1, Math.floor((y*3+k) * S.n / (years*3+3)));
+  F.scout(f, (S.vx[v]/4)|0, (S.vy[v]/4)|0, ((y-1)*3+k)*(Math.PI*2/17), 12);
+}
 
 const COL = { [T.SEA]:[24,52,96],[T.LAKE]:[52,110,168],[T.ICE]:[238,244,250],[T.ALP]:[206,206,210],
   [T.MTN]:[146,142,138],[T.HILL]:[166,142,96],[T.WASTE]:[186,168,118],[T.SAND]:[220,202,148],
@@ -44,4 +48,4 @@ for (let y=0;y<W;y++) for (let x=0;x<W;x++){
   for(let k=-9;k<=9;k++){ if(Math.abs(k)<4)continue; put(cx+k,cy,[255,60,60]); put(cx,cy+k,[255,60,60]); } }
 writeFileSync(`/tmp/fog-${seed}.ppm`, Buffer.concat([Buffer.from(`P6\n${D} ${D}\n255\n`), px]));
 const t=F.stats(f,g);
-console.log(`種${seed} 斥候3人×${years}年  未知${un} 既知${kn} 可視${se}  陸の既知率${(t.landKnown/t.land*100).toFixed(1)}%  鉱脈${(t.oreKnown/t.ore*100).toFixed(1)}%`);
+console.log(`種${seed} 村${Math.min(nv,S.n)} 斥候3人×${years}年  未知${un} 既知${kn} 可視${se}  陸の既知率${(t.landKnown/t.land*100).toFixed(1)}%  鉱脈${(t.oreKnown/t.ore*100).toFixed(1)}%`);
