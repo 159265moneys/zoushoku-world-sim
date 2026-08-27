@@ -32,6 +32,7 @@ import { explain } from '../world/grow.js';
 import { lookOf, bloodTop2, bloodBreakdown, FOUNDER_COUNT, FOUNDER_HUE } from '../world/looks.js';
 import { giftInfo, giftsCarried } from '../world/gifts.js';
 import * as GIFTS from '../core/gifts.gen.js';
+import * as COND from '../world/condition.js';   // 状態12個の倍率表（第7部 §1）
 
 // ---- UI へ渡す名前（UI が world を import しなくて済むように、ここで中継する） ----
 export {
@@ -622,7 +623,19 @@ export class Run {
       lifespan: A.lifespan[i],
       baseLifespan: baseLifespanOf(P, i),
       vitality: A.vitality[i],
-      scar: A.scar[i],
+      // 古傷は本ごとに部位と重さを持つ（第7部 §1 永続2）。最大4本
+      scars: (() => {
+        const out = [];
+        for (let k = 0; k < COND.SCAR_SLOTS; k++) {
+          const pt = A.scarPart[k][i];
+          if (pt) out.push({ part: COND.PART_NAMES[pt], w: A.scarW[k][i] });
+        }
+        return out;
+      })(),
+      defect: A.defectType[i] ? { type: COND.DEFECT_NAMES[A.defectType[i]], w: A.defectW[i] } : null,
+      stunt: A.stunt[i],
+      fatigue: A.fatigue[i], fatigueStage: COND.fatigueStage(A.fatigue[i]),
+      grief: A.grief[i],
       generation: A.gen[i],
       blood: A.blood[i], hue: blood.hue, pure: blood.pure, lines: blood.lines,
       look: lookOf(P, i), bloodTop: bloodTop2(P, i, f => FOUNDER_HUE[f]),

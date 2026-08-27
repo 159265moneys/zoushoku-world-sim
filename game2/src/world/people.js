@@ -3,11 +3,13 @@
 // 確定事項より：
 //   A-2  列ごとの型付き配列。オブジェクトの配列にしない
 //   A-3  先天と後天は別の種類ではない。同じ「腕っぷし」という1つの量
-//   A-4  実効値 ＝（才能 ＋ 努力値）× 老い × 古傷 × 状態異常
+//   A-4  実効値 ＝（才能 ＋ 努力値）× M[枠] × Π(例外倍率)
 //        才能0〜100・一生変わらない／努力値は上限なし
 //   A-4  デバフは既存のステを直接下げない。倍率を掛ける（素の値が汚れない）
 //   A-6  ピークは26歳固定。寿命40〜70・平均55。老衰のみ
-//   B-2  デバフ倍率の下限は0.25
+//   B-2  ★ 決着した。旧「デバフ倍率の下限0.25」は**廃止**（正典 第7部 §1）。
+//        永続に床は無く、一時7個にだけ枠別のソフト床 f が掛かる。
+//        倍率の計算はぜんぶ world/condition.js（状態12個の倍率表）
 //   A-20 性別はステータスではなく属性。別管理。完全ランダムで1/2
 //
 // 掟：添字は詰めない。死んだら alive[i]=0 にするだけ。
@@ -16,7 +18,8 @@
 import * as S from '../core/stats.js';
 import * as C from '../core/calendar.js';
 import { make } from '../core/arrays.js';
-import { ST_PREGNANT, ST_HUNGRY, ST_SICK, ST_GRIEF, ST_NURSING } from '../core/states.js';
+import { ST_PREGNANT, ST_HUNGRY, ST_SICK, ST_GRIEF, ST_NURSING, ST_BARREN } from '../core/states.js';
+import { frames, exception } from './condition.js';
 import { LOOK_SPEC, FOUNDER_COUNT } from './looks.js';
 import { lifespanOverride, deathless } from './gifts.js';
 
@@ -38,10 +41,10 @@ export const NO_ONE = -1;
 
 // 状態異常（A-3 の「状態」。1ヶ月単位で計算する）。u32 のビット
 // 状態のビットは core/states.js にある（循環参照を避けるため）。ここからも出しておく
-export { ST_PREGNANT, ST_HUNGRY, ST_SICK, ST_GRIEF, ST_NURSING } from '../core/states.js';
+export { ST_PREGNANT, ST_HUNGRY, ST_SICK, ST_GRIEF, ST_NURSING, ST_BARREN } from '../core/states.js';
 export const STATE_NAMES = [
   [ST_PREGNANT, '妊娠'], [ST_HUNGRY, '飢え'], [ST_SICK, '病'],
-  [ST_GRIEF, '喪'], [ST_NURSING, '産後'],
+  [ST_GRIEF, '喪'], [ST_NURSING, '産後'], [ST_BARREN, '繁殖不能'],
 ];
 
 // ---- 死因（正典 #9-D。13値で確定。以後1つも足さない） ---------------------
@@ -121,43 +124,14 @@ export function monthlyDeathRate(ageYears) {
   return 1 - Math.pow(1 - annualDeathRate(ageYears), 1 / 12);
 }
 
-// ---- 年齢曲線（A-6 の表そのものから出した） -------------------------------
+// ---- 老いとデバフは condition.js へ移した -----------------------------------
 //
-// ピークは26歳固定。そこから「寿命までの残りをどれだけ使ったか」だけで落ちる。
-//   t = (歳 - 26) / (寿命 - 26)      … 峠を越えてからの進み具合（0〜1）
-//   老い = 1 - 0.85 × t^1.4
-//
-// 確定事項 A-6 の7点すべてに合う（仮の数値ではない。表から逆算したもの）：
-//   寿命40・35歳 t=.643 → 54%   寿命55・35歳 t=.310 → 83%   寿命70・35歳 t=.205 → 91%
-//   寿命55・45歳 t=.655 → 53%   寿命70・45歳 t=.432 → 74%
-//   寿命55・55歳 t=1.00 → 15%   寿命70・55歳 t=.659 → 53%
-export const PEAK_AGE = 26;
-export const AGE_FALL = 0.85;   // 寿命に達したとき何割落ちるか
-export const AGE_POW = 1.4;     // 落ち方の曲がり
+// 旧 `ageCurve()` は永続1「老い」に、`HUNGRY_MUL/SICK_MUL/PREGNANT_BODY_MUL` は
+// 一時7個の表の該当マスに座っている（**3つとも1つも捨てていない**）。
+// `DEBUFF_FLOOR = 0.25` は廃止（B-2 の決着。永続に床は無い）。
+// A-6 の年齢曲線の検算7点は condition.js の `aging()` がそのまま満たす。
+export { aging, frames, exception, PEAK_AGE, AGE_FALL, AGE_POW, RISE_POW } from './condition.js';
 
-// 26歳までの立ち上がり。**仮の数値**（確定事項に無い）。
-// 子どもは literal に弱い、というだけの話なので からだ にしか掛けない（A-4：恒久デバフはからだのみ）。
-// あたま・こころ は生まれた時から才能そのもの。だから
-// 「論理90で生まれた貧民の子」は本当に90を持っていて、誰も気づかない（A-21b）。
-export const RISE_POW = 0.6;
-
-/** 年齢による からだ の倍率。0〜1 */
-export function ageCurve(ageYears, lifespan) {
-  if (ageYears < PEAK_AGE) {
-    const r = ageYears / PEAK_AGE;
-    return r <= 0 ? 0.02 : Math.pow(r, RISE_POW);
-  }
-  const span = Math.max(1, lifespan - PEAK_AGE);
-  let t = (ageYears - PEAK_AGE) / span;
-  if (t < 0) t = 0; else if (t > 1) t = 1;
-  return 1 - AGE_FALL * Math.pow(t, AGE_POW);
-}
-
-// ---- デバフ ---------------------------------------------------------------
-export const DEBUFF_FLOOR = 0.25;    // B-2
-export const HUNGRY_MUL = 0.85;
-export const SICK_MUL = 0.70;
-export const PREGNANT_BODY_MUL = 0.75;
 // 遺伝的荷重が死亡率をどれだけ押し上げるか。生存力0.8で死亡率1.12倍
 export const LOAD_MORTALITY = 0.6;
 
@@ -192,7 +166,28 @@ export const SPEC = {
   lifespan: 'u8',        // 40〜70。寿命ステから決まる
 
   vitality: 'f32',       // 遺伝的荷重から出る生存力（産む・生きる・老いる に掛かる）
-  scar: 'f32',           // 古傷。恒久デバフ（からだのみ）。0〜0.75
+
+  // ---- 状態12個の器（正典 第7部 §1。倍率の計算は world/condition.js） ----
+  // 旧 `scar: f32`（からだ一律のデバフ1つ）はここに置き換わった。
+  // 古傷は**部位と重さを持つ本が最大4本**で、部位ごとに例外倍率の当たり先が違う
+  scarPart: `u8*${4}`,   // 0=空き／1腕 2脚 3眼 4耳 5欠損
+  scarW:    `u8*${4}`,   // 1〜3
+  scarLostPart: `u8*${4}`, // 欠損のとき、抽選で当たった部位（例外倍率をw=3で当てる先）
+  defectType: 'u8',      // 先天障害 0=なし／1体 2頭 3心 4隠れ
+  defectW: 'u8',         // 1〜3
+  defectPart: 'u8',      // 「体」のとき例外倍率が当たるステ番号（+1。0=なし）
+  stunt: 'u8',           // 発育不全 0/1軽/2重
+  lackMonths: 'u16',     // 16歳までの「欠乏 段2以上」の累計月数（発育不全の入口）
+  sickStage: 'u8',       // 病 0/1軽/2重/3疫病
+  hurtStage: 'u8',       // 負傷 0/1軽/2中/3重
+  hurtHeal: 'u8',        // 負傷の残り治癒月数
+  hurtPart: 'u8',        // 負傷の部位（古傷に変わるときの行き先）
+  fatigue: 'f32',        // 疲労点 0〜12。★ u8 では表せない
+                         //   （中央値の均衡が −0.056/月。u8 の刻み 1/16=0.0625 だと 0 に丸まって
+                         //    「負荷1.0 で均衡」という設計そのものが消える）
+  grief: 'f32',          // 喪の s。Σ k×exp(−経過月/τ)。毎月 exp(−1/τ) を掛けて減らす
+  griefTau: 'f32',       // その者の τ（情と教義の死の受容から出る。喪に入った月に決める）
+  hardBirth: 'u8',       // 直近の出産が難産だったか（産褥期のからだを0.72に置換する）
 
   birthTick: 'i32',
   deathTick: 'i32',
@@ -236,6 +231,11 @@ export class People {
     this.count = 0;      // 生きている数
     this.born = 0;       // これまでに生まれた総数
     this.dead = 0;
+    // ★ いまの tick。妊娠と産後の「段」を出すのに要る（world.js が毎 tick 入れる）。
+    //   1人ずつではなく束に1つ持つ。0 のままでも落ちないよう初期値を置いておく
+    this.tickNow = 0;
+    // M[枠] の受け皿。毎月10万人ぶん呼ぶので、そのたびに配列を作らない
+    this._M = [1, 1, 1];
   }
 
   get len() { return this.a.len; }
@@ -306,20 +306,18 @@ export class People {
    * デバフの倍率（A-4）。既存のステを直接下げず、これを掛ける。
    * 老い と 古傷 は からだ のみ（A-4 に明記）。
    */
-  debuff(i, s) {
-    const A = this.a;
-    let d = 1;
-    const body = S.CATEGORY[s] === S.BODY;
-    if (body) {
-      d *= ageCurve(this.ageYears(i), A.lifespan[i]);
-      const sc = A.scar[i];
-      if (sc > 0) d *= (1 - sc);
-    }
-    const st = A.state[i];
-    if (st & ST_HUNGRY) d *= HUNGRY_MUL;
-    if (st & ST_SICK) d *= SICK_MUL;
-    if (body && (st & ST_PREGNANT)) d *= PREGNANT_BODY_MUL;
-    return d < DEBUFF_FLOOR ? DEBUFF_FLOOR : d;
+  /**
+   * ステ1本に掛かる倍率 ＝ M[枠(s)] × Π(例外倍率[s])（正典 第7部 §1）。
+   * @param permOnly 真なら一時7個を見ない＝国民力①（括弧を外すだけ）
+   */
+  debuff(i, s, permOnly = false) {
+    frames(this, i, this._M, permOnly);
+    return this._M[S.CATEGORY[s]] * exception(this, i, s);
+  }
+
+  /** 国民力①。永続5個だけ（一時の不調で国の強さが毎月ぶれない）。捕虜もこれ */
+  civic(i, s) {
+    return (this.a.gene[s][i] + this.a.ev[s][i]) * this.debuff(i, s, true);
   }
 
   /** 実効値 ＝（才能 ＋ 努力値）× デバフ（A-4） */

@@ -72,6 +72,7 @@ export class World {
   genesis(centroid = null) {
     const P = this.people, H = this.houses, V = this.villages;
     const rng = this.R[STREAM.BIRTH], rngGift = this.R[STREAM.GIFT];
+    P.tickNow = this.tick;
     const targets = targetsFrom(centroid);
 
     // ★ 地図を作って、創世の村をその席に置く（#17 §3-4）
@@ -141,6 +142,7 @@ export class World {
   /** 1日。日ごとに起きるのは出産だけ（妊娠10ヶ月がちょうどで終わるため） */
   stepDay() {
     const t = this.tick;
+    this.people.tickNow = t;      // 妊娠・産後の「段」を出すのに要る（第7部 §1）
     const b = birthDay(this.people, this.houses, this.villages, t,
                        this.R[STREAM.BIRTH], this.R[STREAM.GIFT]);
     if (b.born) {

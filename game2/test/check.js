@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { RNG, rng } from '../src/core/rng.js';
 import * as R from '../src/core/rng.js';
+import * as COND from '../src/world/condition.js';
 import * as C from '../src/core/calendar.js';
 import { make, Store, growArray } from '../src/core/arrays.js';
 import * as S from '../src/core/stats.js';
@@ -782,48 +783,136 @@ check('デバフは素の値を汚さない（才能は動かない）', () => {
   return w.people.a.gene[s][i] === before ? true : '才能が動いた';
 });
 
-check('デバフ倍率の下限は0.25（B-2）', () => {
+// ★ B-2 は決着した（正典 第7部 §1）。旧 DEBUFF_FLOOR = 0.25 は**廃止**。
+//   永続に床は無く、一時7個にだけ枠別のソフト床 f が掛かる。
+//   硬い床の代わりに守るのは「**順序がどの深さでも保存される**」こと。
+check('床が老人の順序を潰さない（B-2 決着：硬い床0.25の廃止）', () => {
   const w = new W.World(1).genesis();
-  const i = [...w.people.living()][0];
+  const A = w.people.a;
   const s = S.needId('最大筋力');
-  w.people.a.state[i] |= P.ST_HUNGRY | P.ST_SICK | P.ST_PREGNANT;
-  w.people.a.scar[i] = 0.9;
-  w.people.a.ageMonths[i] = 69 * 12;
-  w.people.a.lifespan[i] = 70;
-  const d = w.people.debuff(i, s);
-  if (P.DEBUFF_FLOOR !== 0.25) return `床が ${P.DEBUFF_FLOOR}（B-2 は0.25）`;
-  return Math.abs(d - 0.25) < 1e-9 ? true : `${d}`;
+  const at = (i, opts) => {
+    A.ageMonths[i] = 55 * 12; A.lifespan[i] = 55;
+    A.state[i] = 0; A.sickStage[i] = 0; A.hurtStage[i] = 0; A.grief[i] = 0;
+    if (opts.sick) A.sickStage[i] = opts.sick;
+    if (opts.hurt) A.hurtStage[i] = opts.hurt;
+    if (opts.grief) A.grief[i] = opts.grief;
+    return w.people.debuff(i, s);
+  };
+  const i = [...w.people.living()][0];
+  const healthy = at(i, {});
+  const dying = at(i, { sick: 3, hurt: 3, grief: 0.9 });
+  if (P.DEBUFF_FLOOR !== undefined) return '旧 DEBUFF_FLOOR がまだ生きている';
+  // 硬い床0.30 なら健康な55歳も瀕死の55歳も 0.300 で潰れて区別がつかなくなる
+  if (!(dying < healthy)) return `瀕死 ${dying.toFixed(4)} が健康 ${healthy.toFixed(4)} を下回らない`;
+  if (Math.abs(dying - healthy) < 0.01) return `${dying.toFixed(4)} と ${healthy.toFixed(4)} が潰れている`;
+  // ソフト床は単調なので、深さを増やすほど必ず下がる。
+  // ★ 状態ごとに効く枠が違うので、その枠で測る（喪は からだ に×1.00 なので筋力では動かない）
+  let prev = healthy;
+  for (const k of [1, 2, 3]) {
+    const v = at(i, { sick: k });
+    if (!(v < prev)) return `病 段${k} で からだ の順序が壊れた`;
+    prev = v;
+  }
+  const amb = S.needId('野心');                    // こころ。喪はここに効く
+  at(i, {});
+  let prevH = w.people.debuff(i, amb);
+  for (const g of [0.3, 0.6, 0.9]) {
+    at(i, { grief: g });
+    const v = w.people.debuff(i, amb);
+    if (!(v < prevH)) return `喪 ${g} で こころ の順序が壊れた（${v.toFixed(4)} ≧ ${prevH.toFixed(4)}）`;
+    prevH = v;
+  }
+  return true;
 });
 
-check('老いは からだ にしか掛からない（A-4：恒久デバフはからだのみ）', () => {
+// ★ 老いは からだ だけではなくなった（第7部 §1 永続1）。
+//   からだ 1−0.85t^p ／ あたま 1−0.45t^(p+0.8)（遅く始まり浅く落ちる）／ こころ ×1.00
+check('老いは こころ に掛からない（長老を抱える国は社会的に強い）', () => {
   const w = new W.World(1).genesis();
+  const A = w.people.a;
   const i = [...w.people.living()][0];
-  w.people.a.ageMonths[i] = 50 * 12;
-  w.people.a.lifespan[i] = 55;
-  w.people.a.scar[i] = 0.5;
+  A.ageMonths[i] = 50 * 12; A.lifespan[i] = 55; A.state[i] = 0;
   const body = w.people.debuff(i, S.needId('最大筋力'));
   const mind = w.people.debuff(i, S.needId('論理'));
   const heart = w.people.debuff(i, S.needId('野心'));
-  if (!(body < 0.5)) return `からだ ${body}`;
-  if (mind !== 1 || heart !== 1) return `あたま ${mind} こころ ${heart}`;
+  if (heart !== 1) return `こころ ${heart}（1.00 のはず）`;
+  if (!(body < mind)) return `からだ ${body.toFixed(3)} があたま ${mind.toFixed(3)} より落ちていない`;
+  if (!(mind < 1)) return `あたま ${mind} が落ちていない`;
+  return true;
+});
+
+// ★ この検査が、状態12個の器が正典どおりであることの証拠（第7部 §1 の検算表そのもの）。
+//   赤くなったら、実効値の器が正典から外れている ＝ 産出・国民力・不満の入力が全部ずれている。
+check('**状態12個の倍率表が正典の検算9行と一致する**（第7部 §1）', () => {
+  const ID = {
+    速さ: S.needId('老いの速さ'), 飢: S.needId('飢えへの強さ'), 病: S.needId('病への強さ'),
+    走力: S.needId('走力'), 視力: S.needId('視力'),
+  };
+  const make = (age, life, o = {}) => {
+    const pp = new P.People(4); pp.tickNow = 0;
+    const i = pp.spawn(0), A = pp.a;
+    A.alive[i] = 1; A.ageMonths[i] = Math.round(age * 12); A.lifespan[i] = life;
+    for (let k = 0; k < S.COUNT; k++) { A.gene[k][i] = 50; A.ev[k][i] = 0; }
+    A.gene[ID.速さ][i] = 34;                      // 母集団の中央。AGE_POW がそのまま出る
+    A.gene[ID.飢][i] = 42; A.gene[ID.病][i] = 42;  // レアCの中央（緩和の入力）
+    if (o.scar) { A.scarPart[0][i] = o.scar[0]; A.scarW[0][i] = o.scar[1]; }
+    if (o.hunger) { A.state[i] |= P.ST_HUNGRY; A.hungerMonths[i] = o.hunger; }
+    if (o.sick) A.sickStage[i] = o.sick;
+    if (o.hurt) A.hurtStage[i] = o.hurt;
+    if (o.fatigue) A.fatigue[i] = o.fatigue;
+    if (o.grief) A.grief[i] = o.grief;
+    if (o.preg) { A.state[i] |= P.ST_PREGNANT; A.pregDue[i] = Math.round((10 - o.preg) * 30); }
+    return [pp, i];
+  };
+  const out = [0, 0, 0];
+  const M = (pp, i) => COND.frames(pp, i, out).slice();
+  const near = (a, b) => Math.abs(a - b) < 0.0015;
+
+  const rows = [
+    ['健康な30歳・寿命55',  M(...make(30, 55)),                              [0.947, 0.994, 1.000]],
+    ['8歳・健康',           M(...make(8, 55)),                               [0.493, 1.000, 1.000]],
+    ['45歳・寿命55',        M(...make(45, 55)),                              [0.530, 0.822, 1.000]],
+    ['健康な55歳(t=1)',     M(...make(55, 55)),                              [0.150, 0.550, 1.000]],
+    ['45歳・眼の古傷w2',    M(...make(45, 55, { scar: [COND.PART_EYE, 2] })), [0.488, 0.790, 1.000]],
+    // ★ 正典の検算表はこの行だけ「緩和を からだ にしか当てていない」誤りがあり、
+    //   0.753/0.886 と書かれていた。共通の緩和（全枠）で引き直した値が下（2026-08-28 訂正）
+    ['30歳・欠乏w2＋疲労w2', M(...make(30, 55, { hunger: 4, fatigue: 7 })),   [0.689, 0.766, 0.894]],
+    ['55歳・疫病＋重傷＋喪.9', M(...make(55, 55, { sick: 3, hurt: 3, grief: 0.9 })), [0.062, 0.404, 0.743]],
+  ];
+  for (const [name, got, want] of rows) {
+    for (let k = 0; k < 3; k++) {
+      if (!near(got[k], want[k])) {
+        return `${name} の${['からだ', 'あたま', 'こころ'][k]} が ${got[k].toFixed(4)}（正典 ${want[k]}）`;
+      }
+    }
+  }
+  // 例外倍率（M[枠] の外に掛かる）
+  let [pp, i] = make(45, 55, { scar: [COND.PART_EYE, 2] });
+  if (!near(pp.debuff(i, ID.視力), 0.309)) return `眼の古傷w2 の視力 ${pp.debuff(i, ID.視力).toFixed(4)}（正典 0.309）`;
+  [pp, i] = make(30, 55, { preg: 9 });
+  if (!near(pp.debuff(i, ID.走力), 0.530)) return `妊娠後期の走力 ${pp.debuff(i, ID.走力).toFixed(4)}（正典 0.530）`;
   return true;
 });
 
 check('年齢曲線が A-6 の表7点に合う（ピーク26歳固定）', () => {
-  // 確定事項 A-6 の表。誤差2%まで
+  // 確定事項 A-6 の表。誤差2%まで。老いの速さ34（母集団の中央）で引く
+  const out = [0, 0, 0];
   const table = [
     [40, 35, 0.54], [55, 35, 0.83], [70, 35, 0.91],
     [55, 45, 0.53], [70, 45, 0.74],
     [55, 55, 0.15], [70, 55, 0.53],
   ];
   for (const [life, age, want] of table) {
-    const got = P.ageCurve(age, life);
+    const got = COND.aging(age, life, 34, out)[0];
     if (Math.abs(got - want) > 0.02) return `寿命${life}・${age}歳 → ${got.toFixed(3)}（表は${want}）`;
   }
-  // 26歳はどの寿命でも100%
   for (const life of [40, 55, 70]) {
-    if (Math.abs(P.ageCurve(26, life) - 1) > 1e-9) return `寿命${life}の26歳が100%でない`;
+    if (Math.abs(COND.aging(26, life, 34, out)[0] - 1) > 1e-9) return `寿命${life}の26歳が100%でない`;
   }
+  // 老いの速さは 34 で AGE_POW ちょうど。0（ゆっくり）と100（急）で挟む
+  const slow = COND.aging(45, 55, 0, out)[0], mid = COND.aging(45, 55, 34, out)[0];
+  const fast = COND.aging(45, 55, 100, out)[0];
+  if (!(fast < mid && mid < slow)) return `速さの向きが逆（${fast.toFixed(3)}/${mid.toFixed(3)}/${slow.toFixed(3)}）`;
   return true;
 });
 
