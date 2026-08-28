@@ -33,6 +33,21 @@ import * as RUN from '../src/flow/run.js';
 import * as GIFT from '../src/world/gifts.js';
 import * as GG from '../src/core/gifts.gen.js';
 
+// ★ 検査が「N年生き延びた世界」を要るとき、種を直書きしない。
+//   世界は層を足すたびに厳しくなるので、直書きの種はそのたびに絶滅世界に変わり、
+//   本題と関係ない検査が3件も4件も赤くなる（今日だけで2度起きた）。
+//   **要件のほうを書く。**同じ並びを同じ順で試すので決定的（再現性は落ちない）。
+const LIVING_SEEDS = [13, 1, 5, 9, 17, 19, 10, 7, 21, 25, 3, 29];
+function livingWorld(years, minPop = 1) {
+  for (const seed of LIVING_SEEDS) {
+    const w = new W.World(seed).genesis();
+    w.runYears(years);
+    if (w.population() >= minPop) return w;
+  }
+  throw new Error(`${years}年 生き延びる種が ${LIVING_SEEDS.length} 通りの中に無い`);
+}
+
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GAME2 = join(HERE, '..');
 const ROOT = join(GAME2, '..');
@@ -930,8 +945,7 @@ check('疲労は負荷1.0 が中央値の均衡点（壊れるのは眠りの浅
 // ★ 12枠のうち、供給源が在るものが実際に発火していること。
 //   器だけ作って誰も書かない状態（ST_SICK・ST_GRIEF・scar が長らくそうだった）を二度と作らない
 check('状態に供給源が繋がっている（器が空回りしていない）', () => {
-  const w = new W.World(13).genesis();
-  w.runYears(60);
+  const w = livingWorld(60, 5);
   const A = w.people.a;
   let defect = 0, grief = 0, fatigue = 0, barren = 0;
   for (let i = 0; i < A.len; i++) {
@@ -942,9 +956,11 @@ check('状態に供給源が繋がっている（器が空回りしていない�
     if (A.fatigue[i] > 0) fatigue++;
   }
   if (!defect) return '先天障害が60年で1件も出ない（永続3の供給源が無い）';
-  if (!grief) return '喪が1件も立たない（一時12の供給源が無い）';
   if (!fatigue) return '疲労が1人も溜まらない（一時9の供給源が無い）';
-  if (!w.counters.mourned) return '喪の勘定が0';
+  // ★ 喪は瞬間で数えない。τ≈5.8ヶ月で薄れるので、ある月に生きている者を見ても0のことがある。
+  //   供給源が在るかを見たいのだから、**のべ回数**で見る
+  if (!w.counters.mourned) return '喪が1件も立たない（一時12の供給源が無い）';
+  void grief;
   // ★ 病と負傷は、まだ供給源が無い（厄災 #9 と戦争が入る日に生きる）。器は在る
   return true;
 });
@@ -1133,8 +1149,7 @@ check('遺伝的荷重で生存力が落ちる（近親交配の罰）', () => {
   if (G.vitalityOf(0) !== 1) return '荷重0で生存力1でない';
   if (!(G.vitalityOf(2) < 1)) return '荷重があっても落ちない';
   if (G.vitalityOf(100) !== G.LOAD_FLOOR) return '床が効いていない';
-  const w = new W.World(13).genesis();
-  w.runYears(80);
+  const w = livingWorld(80, 3);
   let load = 0, n = 0;
   for (const i of w.people.living()) { load += G.geneticLoad(w.people, i); n++; }
   return n && load > 0 ? true : '閉じた村なのに荷重が溜まらない';
@@ -1358,8 +1373,7 @@ check('伸びる場所で向きが変わる（A-21：全部が都会有利では
 });
 
 check('職に就いていると努力値が積まれる（100年で実際に増える）', () => {
-  const w = new W.World(13).genesis();
-  w.runYears(100);
+  const w = livingWorld(100, 3);
   let best = 0, who = -1;
   for (const i of w.people.living()) {
     for (let s = 0; s < S.COUNT; s++) if (w.people.a.ev[s][i] > best) { best = w.people.a.ev[s][i]; who = i; }

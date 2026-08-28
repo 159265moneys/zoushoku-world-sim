@@ -18,6 +18,7 @@ import * as S from '../core/stats.js';
 import * as C from '../core/calendar.js';
 import { make } from '../core/arrays.js';
 import { NO_VILLAGE, ST_HUNGRY, ST_PREGNANT, WORK_START_AGE } from './people.js';
+import * as DIS from './discontent.js';   // 不満6本（#4-(h) の産出倍率）
 
 // ---- エリア ---------------------------------------------------------------
 export const AREA_HOME = 0, AREA_FIELD = 1, AREA_FOREST = 2, AREA_TRAIN = 3, AREA_FRONTIER = 4;
@@ -54,6 +55,16 @@ export const WHERE_NAMES = ['中央', '辺境'];
 export const HOUSES_PER_VILLAGE = 30;      // A-19b。ここだけは確定
 export const RATION_YEARS = 10;            // A-10。ここも確定
 export const FARM_YIELD = 2.6;             // 畑1人・1ヶ月あたり（実効値50のとき）
+
+// ---- 不満が産出に効く（#4-(h)） -------------------------------------------
+// 正典3-5「民心という1本にまとめない」。**用途ごとに必要な向きを直接読む。**
+// 産出は ③統治へ（怠業）と ④自分へ（働く気が失せる）の2本だけを読む。
+export const MORALE_FLOOR = 0.40, MORALE_RULE = 0.30, MORALE_SELF = 0.35;
+export function moraleOf(P, i) {
+  const v3 = DIS.value(P, i, DIS.D_RULE), v4 = DIS.value(P, i, DIS.D_SELF);
+  const m = 1 - MORALE_RULE * v3 / 100 - MORALE_SELF * v4 / 100;
+  return m < MORALE_FLOOR ? MORALE_FLOOR : m > 1 ? 1 : m;
+}
 export const HUNT_YIELD = 1.4;             // 森1人・1ヶ月あたり
 export const WINTER_HUNT = 0.8;            // 冬の狩りの落ち
 export const EAT_ADULT = 1.0;              // 12歳以上が1ヶ月に食べる量
@@ -183,7 +194,10 @@ export function produceAndEat(P, V, tick, land = null) {
       // 身重の女は畑にも森にも出ない（家事へ回る）
       if (A.state[i] & ST_PREGNANT) continue;
       if (job === AREA_FIELD) fieldMen[v]++; else forestMen[v]++;
-      const q = P.effectiveOf(i, AREA_YIELD_STATS[job]) / Q_DIVISOR;
+      // ★ 不満が産出に効く唯一の口（#4-(h)）。**読むのは ③と④だけ。**⑤は何にも乗らない
+      //   個人の産出倍率 = clamp(0.40, 1.00, 1 − 0.30×V③/100 − 0.35×V④/100)
+      //   ★ 怠業（③≥45）と自暴自棄（④≥65）の状態効果はこの1本に含む。二重に掛けない
+      const q = P.effectiveOf(i, AREA_YIELD_STATS[job]) / Q_DIVISOR * moraleOf(P, i);
       if (job === AREA_FIELD) {
         if (!winter) prodF[v] += FARM_YIELD * q;      // 冬は作物ができない
       } else {
