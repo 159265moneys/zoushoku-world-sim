@@ -1630,6 +1630,52 @@ check('⑤は薄れない・⑥は年末に落ちる（正典3-5 の消え方の
   return true;
 });
 
+// ★ #5 §3 の月次上限が、④の張り付きを止める本体
+check('④の月次上限0.80点が効いている（#5 §3。超えた分は捨てる）', () => {
+  if (DIS.SELF_DAILY_CAP !== 0.80) return `上限が ${DIS.SELF_DAILY_CAP}`;
+  // 平衡 = min(0.80, 月次流入) ÷ (rD④ × k)。正典 §3 の表と突き合わせる
+  const eq = (inflow, tough) => Math.min(DIS.SELF_DAILY_CAP, inflow) / (DIS.RD[DIS.D_SELF] * DIS.toughMul(tough));
+  const table = [
+    [0.08, 31, 9.9], [0.08, 48, 8.2], [0.08, 66, 6.9],
+    [0.10, 48, 10.2], [0.25, 48, 25.5], [0.50, 48, 51.0],
+    [0.80, 31, 98.8], [0.80, 48, 81.6], [0.80, 66, 69.0],
+    [99.0, 48, 81.6],                                  // 上限を超えても平衡は動かない
+  ];
+  for (const [inflow, tough, want] of table) {
+    const got = eq(inflow, tough);
+    if (Math.abs(got - want) > 0.1) return `流入${inflow}・図太さ${tough} → ${got.toFixed(1)}（正典 ${want}）`;
+  }
+  // 恨み④ の天井40。★ 不満④が0でも恨みだけで発火することを構造的に禁じる
+  const pp = new P.People(2); const i = pp.spawn(0); pp.a.alive[i] = 1;
+  DIS.addGrudge4(pp, i, 100);
+  if (pp.a.grudge[DIS.D_SELF][i] !== DIS.GRUDGE4_CAP) return `恨み④ の天井が ${pp.a.grudge[DIS.D_SELF][i]}`;
+  // 飽和合成 V = a + b − ab/100 で a=0・b=40 なら V=40。集団自殺の閾値75/80/85 のどれにも届かない
+  const V = 0 + 40 - 0 * 40 / 100;
+  if (V >= 75) return `恨みだけで V④=${V} が閾値に届く`;
+  return true;
+});
+
+check('④の出口（結婚と初就労）が効く。生涯ひとりの者ほど④が高い（#5 §4）', () => {
+  const wed = [], single = [];
+  for (const seed of [1, 5, 7, 9, 13, 17, 21, 25]) {
+    const w = new W.World(seed).genesis();
+    w.runYears(150);
+    const A = w.people.a;
+    for (const i of w.people.living()) {
+      if ((A.ageMonths[i] / 12 | 0) < 30) continue;
+      const ever = A.spouse[i] !== P.NO_ONE || A.births[i] > 0;
+      (ever ? wed : single).push(A.dis[DIS.D_SELF][i]);
+    }
+  }
+  if (wed.length < 30) return `伴侶か子がいる者が ${wed.length}人しかいない`;
+  if (single.length < 3) return `生涯ひとりの者が ${single.length}人しかいない`;
+  const med = a => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };
+  const mw = med(wed), ms = med(single);
+  // ★ 正典：「生涯独身かつ無役で終わる者は残る。その者は④が高いのが正しい」
+  if (!(ms > mw)) return `生涯ひとりの者の④ ${ms.toFixed(1)} が、伴侶ありの ${mw.toFixed(1)} を上回らない`;
+  return true;
+});
+
 // ===========================================================================
 section('結婚と出産（world/marry.js）');
 // ===========================================================================

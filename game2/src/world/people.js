@@ -208,6 +208,7 @@ export const SPEC = {
   grudge: 'f32*6',       // 恨み。同じ6本
   grudge1Who: 'u32*4',   // ① は相手つき。4枠。5人目は最も低い枠を②へ全額移して空ける
   grudge1Pt: 'f32*4',
+  disOnce: 'u8',         // 一生に1度の④の出口（初就労）のビット
 
   birthTick: 'i32',
   deathTick: 'i32',

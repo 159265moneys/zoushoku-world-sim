@@ -180,7 +180,10 @@ export class World {
     widow(P);
     H.recount(P, t);
     const newHeads = H.succeed(P, H.index(P));
-    for (const i of newHeads) REP.award(P, i, REP.REP_EVENT.家督を継いだ);   // #6-A
+    for (const i of newHeads) {
+      REP.award(P, i, REP.REP_EVENT.家督を継いだ);              // 評判 +8（#6-A）
+      DIS.relieveSelf(P, i, DIS.SELF_RELIEF.家督);              // 不満④ −12（#5 §4）
+    }
     syncHouses(V, H);
     assignWork(P, V, t);
 
@@ -203,6 +206,25 @@ export class World {
     this.counters.scarred += cm.scarred;
     this.counters.stunted += cm.stunted;
     if (cm.stunted > 0 && this.once('stunt')) this.note('育ちきらない子', '飢えが16歳までに18ヶ月を超えた');
+
+    // ④の出口（#5 §4）。いま供給源が在るのは 初就労・子が1歳・60歳以降 の3つ
+    //（役職 −25×ΔQ・叙爵 −10×ΔP・戦功 −8 は、その仕組みが入る日に生きる）
+    for (let i = 0; i < P.a.len; i++) {
+      if (!P.a.alive[i]) continue;
+      if (P.a.job[i] !== AREA_HOME && !(P.a.disOnce[i] & DIS.ONCE_FIRST_JOB)) {
+        P.a.disOnce[i] |= DIS.ONCE_FIRST_JOB;
+        DIS.relieveSelf(P, i, DIS.SELF_RELIEF.初就労);          // 一生に1度
+      }
+      const am = P.a.ageMonths[i];
+      if (am === 12) {                                          // その子が1歳を越えた
+        for (const p of [P.a.mother[i], P.a.father[i]]) {
+          if (p >= 0 && p < P.a.len && P.a.alive[p]) DIS.relieveSelf(P, p, DIS.SELF_RELIEF.子が1歳);
+        }
+      }
+      if (am % 12 === 0 && am / 12 >= DIS.RELIEF_OLD_AGE) {
+        DIS.relieveSelf(P, i, DIS.SELF_RELIEF.長寿);            // 60歳の誕生月から毎年
+      }
+    }
 
     // 評判（#6-A）。風化と、供給源が在る出来事（子を5人育てた・60歳まで生きた）
     REP.reputationMonth(P, t);
@@ -237,6 +259,10 @@ export class World {
     growMonth(P, V, t);
 
     const m = marryMonth(P, H, V, t, this.R[STREAM.MARRY]);
+    for (const c of m.couples ?? []) {                          // 結婚した者は 不満④ −15（#5 §4）
+      DIS.relieveSelf(P, c[0], DIS.SELF_RELIEF.結婚);
+      DIS.relieveSelf(P, c[1], DIS.SELF_RELIEF.結婚);
+    }
     this.counters.married += m.married; this.counters.blocked += m.blocked;
     if (m.blocked > 0 && this.once('village-full')) {
       this.note('村が溢れた', `${HOUSES_PER_VILLAGE}軒が埋まった`);
@@ -326,6 +352,10 @@ export class World {
       //   これが「①②⑤の定常値が0」の理由であり、全員が①で100に張り付かない唯一の防波堤
       DIS.allocate(P, i, X[k], DIS.DESIRE_S[k], 0, DIS.DESIRE_GATE[k], out);
     }
+    // ★ ④だけ月0.80点で頭打ち（#5 §3）。**超えた分は捨てる。他の向きへは回さない**
+    //   （他責の門はもう通過済みなので、④からあふれた分に行き先が無い）
+    //   これが「独身で無役の者が100に張り付く」を構造的に止めている本体
+    if (out[DIS.D_SELF] > DIS.SELF_DAILY_CAP) out[DIS.D_SELF] = DIS.SELF_DAILY_CAP;
     // ★ 日常は**不満**にしか入らない。恨みには一切入らない（#4-(b)）
     for (let d = 0; d < DIS.DIR_COUNT; d++) if (out[d] > 0) DIS.addDiscontent(P, i, d, out[d]);
     this.counters.pressure += sum;

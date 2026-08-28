@@ -97,11 +97,12 @@ export function marryMonth(P, houses, V, tick, rng) {
     if (A.sex[i] === SEX_MALE) men.push(i);
     else if (y <= MARRY_MAX_AGE_WOMAN) women.push(i);
   }
-  if (!men.length || !women.length) return { married: 0, blocked: 0 };
+  if (!men.length || !women.length) return { married: 0, blocked: 0, couples: [] };
 
   rng.shuffle(women);
   rng.shuffle(men);
   const taken = new Uint8Array(A.len);
+  const couples = [];        // 結婚した組（不満④ −15 の入口。#5 §4）
   let married = 0, blocked = 0;
 
   for (const w of women) {
@@ -123,13 +124,14 @@ export function marryMonth(P, houses, V, tick, rng) {
 
     A.spouse[w] = m; A.spouse[m] = w;
     taken[w] = 1; taken[m] = 1;
+    couples.push([w, m]);
     const line = lineOf(P, houses, m);
     const gen = genOf(P, houses, m) + 1;
     const h = houses.found(P, v, m, w, tick, line, gen);
     V.a.houses[v]++;
     married++;
   }
-  return { married, blocked };
+  return { married, blocked, couples };
 }
 
 function lineOf(P, houses, i) {
