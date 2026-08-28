@@ -19,6 +19,7 @@ import * as R from '../src/core/rng.js';
 import * as COND from '../src/world/condition.js';
 import * as D from '../src/world/desire.js';
 import * as REP from '../src/world/reputation.js';
+import * as DIS from '../src/world/discontent.js';
 import * as C from '../src/core/calendar.js';
 import { make, Store, growArray } from '../src/core/arrays.js';
 import * as S from '../src/core/stats.js';
@@ -1504,6 +1505,128 @@ check('欲が世界の中で動いている（器が空回りしていない）'
     if ((A.ageMonths[i] / 12 | 0) < 12) continue;
     if (A.desireOut[D.WRATH][i] !== 0) return '憤怒に供給源が無いのに出力が出た';
   }
+  return true;
+});
+
+// ===========================================================================
+section('不満6本（world/discontent.js・第7部 §2・#4）');
+// ===========================================================================
+
+// ★ 配分の器が正典どおりである証拠（第7部 §2 の検算表そのもの）。
+//   ★ 極端の2行（他責0／他責100）は**正典側の誤り**を訂正した値で見る。
+//     本文が「Σ = X' で保存される」と明記しているのに、旧記載は保存則を破っていた
+//     （他責0 の ④40.8 を出すには share④ = 1.122 が要る。割合が1を超える＝ありえない）
+check('**配分が正典 第7部 §2 の検算表と一致する**', () => {
+  const pp = new P.People(4); pp.tickNow = 0;
+  const i = pp.spawn(0), A = pp.a;
+  A.alive[i] = 1; A.ageMonths[i] = 26 * 12; A.lifespan[i] = 55;
+  for (let k = 0; k < S.COUNT; k++) { A.gene[k][i] = 0; A.ev[k][i] = 0; }
+  const put = (o) => { for (const [n, v] of Object.entries(o)) A.gene[S.needId(n)][i] = v; };
+  put({ 他責: 55, 郷土愛: 66, 序列意識: 60, 信心: 60, 誇り: 60, 図太さ: 48 });   // 中央値の個体
+
+  // 重み
+  const w = [
+    [DIS.W_GROUP_BASE + DIS.W_GROUP_HOME * (100 - 66), 30.4],
+    [DIS.W_RULE_BASE  + DIS.W_RULE_ORDER * (100 - 60), 48.0],
+    [DIS.W_GOD_BASE   + DIS.W_GOD_FAITH * 60,          38.0],
+    [DIS.W_OUT_BASE   + DIS.W_OUT_PRIDE * 60,          33.0],
+  ];
+  for (const [got, want] of w) if (Math.abs(got - want) > 0.05) return `重みが ${got}（正典 ${want}）`;
+
+  const ALL5 = [DIS.D_PERSON, DIS.D_GROUP, DIS.D_RULE, DIS.D_GOD, DIS.D_OUT];
+  const run = (X, set, t, gate) => {
+    const o = new Float64Array(6); DIS.allocate(pp, i, X, set, t, gate, o); return o;
+  };
+  const near = (a, b, e = 0.01) => Math.abs(a - b) < e;
+  const rows = [
+    ['名指しなし X=10 t=0', run(10, ALL5, 0, DIS.GATE_ON),            [0, 0.98, 1.55, 3.27, 1.22, 1.06]],
+    ['同上 t=1',            run(10, ALL5, 1, DIS.GATE_ON),            [1.53, 0.67, 1.05, 3.27, 0.83, 0.73]],
+    ['憤怒 X=1 t=1',        run(1, [DIS.D_PERSON, DIS.D_OUT], 1, DIS.GATE_ALL_OUT), [0.549, 0, 0, 0, 0, 0.259]],
+    ['憤怒 X=1 t=0',        run(1, [DIS.D_PERSON, DIS.D_OUT], 0, DIS.GATE_ALL_OUT), [0, 0, 0, 0, 0, 0.808]],
+    ['嫉妬 X=0.5 t=0',      run(0.5, [DIS.D_PERSON], 0, DIS.GATE_ON), [0, 0, 0, 0.404, 0, 0]],
+  ];
+  for (const [name, got, want] of rows) {
+    for (let d = 0; d < 6; d++) {
+      if (!near(got[d], want[d])) return `${name} の${DIS.DIR_MARK[d]} が ${got[d].toFixed(3)}（正典 ${want[d]}）`;
+    }
+  }
+  // 左遷・罷免（X=30 S={①} t=1 ＋ X=15 S={③}）。他責を振って3通り
+  for (const [blame, want] of [[55, [14.42, 7.21, 14.73]], [0, [2.42, 1.21, 32.72]], [100, [23.03, 11.51, 1.82]]]) {
+    put({ 他責: blame });
+    const o = new Float64Array(6);
+    DIS.allocate(pp, i, 30, [DIS.D_PERSON], 1, DIS.GATE_ON, o);
+    DIS.allocate(pp, i, 15, [DIS.D_RULE], 0, DIS.GATE_ON, o);
+    if (!near(o[0], want[0], 0.02) || !near(o[2], want[1], 0.02) || !near(o[3], want[2], 0.02)) {
+      return `左遷・他責${blame} が ${o[0].toFixed(2)}/${o[2].toFixed(2)}/${o[3].toFixed(2)}（正典 ${want.join('/')}）`;
+    }
+    // ★ 本文が明記している保存則。X' = 45 × 段0
+    const Xp = 45 * (0.60 + 0.40 * (100 - 48) / 100);
+    const sum = o.reduce((a, b) => a + b, 0);
+    if (!near(sum, Xp, 0.01)) return `他責${blame} で Σ=${sum.toFixed(3)} が X'=${Xp.toFixed(3)} と合わない`;
+  }
+  return true;
+});
+
+check('日常は ① に1点も入らない（全員が100に張り付かない唯一の防波堤）', () => {
+  const w = new W.World(13).genesis();
+  w.runYears(80);
+  const A = w.people.a;
+  for (const i of w.people.living()) {
+    if (A.dis[DIS.D_PERSON][i] !== 0) return `①に日常が入った（${A.dis[DIS.D_PERSON][i]}）`;
+    if (A.dis[DIS.D_GROUP][i] !== 0) return `②に日常が入った（${A.dis[DIS.D_GROUP][i]}）`;
+    // 日常は恨みには一切入らない（#4-(b)）
+    for (let d = 0; d < 6; d++) if (A.grudge[d][i] !== 0) return `恨み${DIS.DIR_MARK[d]}に日常が入った`;
+  }
+  return true;
+});
+
+// ★ 正典の主張は「**中央値の平民**の定常が 27.0 で、怠業の閾値45 の下」。
+//   個体の散らばりは別の話なので、中央値で測る。**尾は測って記録する**（黙って隠さない）。
+check('定常が閾値の下で止まる（③の中央値は怠業45 の下・④は自暴自棄65 のはるか下）', () => {
+  const v3 = [], v4 = [];
+  for (const seed of [1, 5, 7, 9, 13, 17]) {
+    const w = new W.World(seed).genesis();
+    w.runYears(150);
+    const A = w.people.a;
+    for (const i of w.people.living()) {
+      if ((A.ageMonths[i] / 12 | 0) < 26) continue;
+      v3.push(A.dis[DIS.D_RULE][i]); v4.push(A.dis[DIS.D_SELF][i]);
+    }
+  }
+  if (v3.length < 50) return `26歳以上が ${v3.length}人しかいない`;
+  const q = (a, p) => { const b = a.slice().sort((x, y) => x - y); return b[Math.floor(b.length * p)]; };
+  const m3 = q(v3, 0.5), m4 = q(v4, 0.5);
+  if (m3 >= 45) return `不満③ の中央が ${m3.toFixed(1)}（怠業の閾値45 に届いた）`;
+  if (m4 >= 65) return `不満④ の中央が ${m4.toFixed(1)}（自暴自棄の閾値65 に届いた）`;
+  // ★ 慰霊のない国でも③は止まる。ゼロにもならない（日常は潮、火をつけるのは事件）
+  if (!(m3 > 5)) return `不満③ の中央が ${m3.toFixed(2)}（日常の潮が立っていない）`;
+  // 尾。怠業が「慢性」になる者が population を食い尽くさないこと
+  const chronic = v3.filter(v => v >= 45).length / v3.length;
+  if (chronic > 0.10) return `不満③ が45以上の者が ${(chronic * 100).toFixed(1)}%（慢性の怠業が広がっている）`;
+  // ④の閾値65 には誰も届かない（#5 の「集団自殺は伝播なしには起きない」の前提）
+  if (v4.some(v => v >= 65)) return `不満④ が65に届いた者がいる（${Math.max(...v4).toFixed(1)}）`;
+  return true;
+});
+
+check('⑤は薄れない・⑥は年末に落ちる（正典3-5 の消え方の表）', () => {
+  const pp = new P.People(2); const i = pp.spawn(0);
+  const A = pp.a;
+  A.alive[i] = 1; A.ageMonths[i] = 26 * 12; A.lifespan[i] = 55;
+  for (let k = 0; k < S.COUNT; k++) { A.gene[k][i] = 50; A.ev[k][i] = 0; }
+  for (let d = 0; d < 6; d++) A.dis[d][i] = 50;
+  for (let m = 0; m < 120; m++) DIS.decayMonth(pp, i);
+  if (A.dis[DIS.D_GOD][i] !== 50) return `⑤が薄れた（${A.dis[DIS.D_GOD][i]}）`;   // 溜め池
+  if (A.dis[DIS.D_OUT][i] !== 50) return `⑥が率で薄れた（${A.dis[DIS.D_OUT][i]}）`;
+  if (!(A.dis[DIS.D_SELF][i] < A.dis[DIS.D_RULE][i])) return '④が③より速く薄れていない';
+  if (!(A.dis[DIS.D_RULE][i] < A.dis[DIS.D_PERSON][i])) return '③が①より速く薄れていない';
+  DIS.yearEndPeace(pp, i);
+  if (Math.abs(A.dis[DIS.D_OUT][i] - 44) > 1e-6) return `年末の⑥が ${A.dis[DIS.D_OUT][i]}（50−6 のはず）`;
+  // 相手が死ねば ① のその枠だけ0（正典3-5）
+  const j = pp.spawn(0); A.alive[j] = 1;
+  DIS.addGrudge1(pp, i, j, 40);
+  if (DIS.value1(pp, i) !== 40) return `①の枠に入らない（${DIS.value1(pp, i)}）`;
+  pp.kill(j, 0); DIS.clearDeadTargets(pp, i);
+  if (DIS.value1(pp, i) !== 0) return `相手が死んでも①が残った（${DIS.value1(pp, i)}）`;
   return true;
 });
 

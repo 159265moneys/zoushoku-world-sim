@@ -31,6 +31,7 @@ import { foundGenome, targetsFrom } from './genetics.js';
 import * as COND from './condition.js';   // 状態12個（第7部 §1）
 import * as DESIRE from './desire.js';    // 欲7つ（#3）
 import * as REP from './reputation.js';   // 評判（#6-A）
+import * as DIS from './discontent.js';   // 不満6本・恨み6本（第7部 §2・#4）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -50,6 +51,7 @@ export class World {
     // ★ 乱数は機能ごとに12本（#17 §10-3）。1本のままだと機能を足すたびに
     //   基準線（M-01/M-05/M-07/M-32）が全損する。this.R[STREAM.XXX] で引く
     this.R = makeStreams(this.seed);
+    this._dirTmp = new Float64Array(6);      // 配分の受け皿（毎月10万人ぶん回るので確保しない）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -205,6 +207,17 @@ export class World {
     // 評判（#6-A）。風化と、供給源が在る出来事（子を5人育てた・60歳まで生きた）
     REP.reputationMonth(P, t);
 
+    // 不満と恨みの薄れ（#4-(c)）。生存者・12歳以上だけ。⑤は薄れない（溜め池）
+    for (let i = 0; i < P.a.len; i++) {
+      if (!P.a.alive[i] || (P.a.ageMonths[i] / 12 | 0) < 12) continue;
+      DIS.clearDeadTargets(P, i);        // 相手が死ねば その枠だけ0（正典3-5）
+      DIS.decayMonth(P, i);
+    }
+    // ★ 戦争の無かった年の年末に ⑥ −6点。戦争はまだ無いので毎年落ちる
+    if (C.monthOf(t) % C.MONTHS_PER_YEAR === C.MONTHS_PER_YEAR - 1) {
+      for (let i = 0; i < P.a.len; i++) if (P.a.alive[i]) DIS.yearEndPeace(P, i);
+    }
+
     // 欲7つ（#3）。X_k ＝ その月の日常の基底圧。#4 の配分へ流す
     // ★ 国民力の合計は嫉妬の順位に要る。月に1度だけ引き直す
     for (let i = 0; i < P.a.len; i++) if (P.a.alive[i]) P.a.civicSum[i] = COND.civicTotal(P, i);
@@ -303,8 +316,18 @@ export class World {
    *   6本の不満へ割るのは #4 の allocate の仕事（正典 第7部 §2）
    */
   pressure(i, X) {
+    const P = this.people, out = this._dirTmp;
+    for (let d = 0; d < DIS.DIR_COUNT; d++) out[d] = 0;
     let sum = 0;
-    for (let k = 0; k < X.length; k++) sum += X[k];
+    for (let k = 0; k < X.length; k++) {
+      if (X[k] <= 0) continue;
+      sum += X[k];
+      // ★ 日常は t=0（相手がいない）。だから ① には1点も入らない。
+      //   これが「①②⑤の定常値が0」の理由であり、全員が①で100に張り付かない唯一の防波堤
+      DIS.allocate(P, i, X[k], DIS.DESIRE_S[k], 0, DIS.DESIRE_GATE[k], out);
+    }
+    // ★ 日常は**不満**にしか入らない。恨みには一切入らない（#4-(b)）
+    for (let d = 0; d < DIS.DIR_COUNT; d++) if (out[d] > 0) DIS.addDiscontent(P, i, d, out[d]);
     this.counters.pressure += sum;
   }
 
