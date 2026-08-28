@@ -98,9 +98,13 @@ export function defectRate(vitality) {
 }
 
 // ---- 永続4 繁殖不能 -------------------------------------------------------
+// ★ 2026-08-28 オーナー裁定（裁定を仰ぐ.md B-13）
+//   「不妊はシンプルに**その出産が失敗**なだけで、永続するデバフでなくていい」
+//   → 難産から繁殖不能へ行く道は**閉じた。**12% は「そのお産が流れる」になった。
+//   残る発生源は 去勢（刑罰）と 重い病（生殖器）だけ。どちらもまだ実装が無い。
 export const BARREN_HEART = 0.95;
-export const BARREN_AFTER_HARD_BIRTH = 0.12;   // お産の軽さの素値<25 の難産で
-export const HARD_BIRTH_EASE = 25;
+export const HARD_BIRTH_EASE = 25;             // お産の軽さの素値がこれ未満なら難産
+export const HARD_BIRTH_FAIL = 0.12;           // 難産のうち、そのお産が流れる割合
 
 // ---- 永続5 発育不全 -------------------------------------------------------
 // 16歳までに 欠乏 段2以上の累計月数 M が 6≤M<18 → w=1 ／ 18≤M → w=2
@@ -524,11 +528,12 @@ export function afterHardBirth(P, mother, rng) {
   const A = P.a;
   const ease = A.gene[ID.お産の軽さ][mother] + A.ev[ID.お産の軽さ][mother];
   const hard = ease < HARD_BIRTH_EASE;
-  const rBarren = rng.next(), rScar = rng.next();
+  const rFail = rng.next(), rScar = rng.next();
   A.hardBirth[mother] = hard ? 1 : 0;
   if (!hard) return 0;
   let out = 0;
-  if (rBarren < BARREN_AFTER_HARD_BIRTH) { A.state[mother] |= ST_BARREN; out |= 1; }
+  // ★ そのお産が流れる。母は繁殖不能にならない（B-13 裁定）。次はまた産める
+  if (rFail < HARD_BIRTH_FAIL) out |= 1;
   if (rScar < HARD_BIRTH_TO_SCAR) { addScar(P, mother, PART_LOST, 1, PART_ARM); out |= 2; }
   return out;
 }

@@ -17,7 +17,7 @@ import { breedLook } from './looks.js';
 import * as C from '../core/calendar.js';
 import {
   SEX_MALE, SEX_FEMALE, NO_HOUSE, NO_VILLAGE, NO_ONE,
-  ST_PREGNANT, ST_NURSING, ST_HUNGRY, ST_BARREN, DEATH_BIRTH, lifespanOf,
+  ST_PREGNANT, ST_NURSING, ST_HUNGRY, ST_BARREN, DEATH_BIRTH, DEATH_INFANT, lifespanOf,
 } from './people.js';
 import { breed } from './genetics.js';
 import { rollDefect, afterHardBirth } from './condition.js';
@@ -201,7 +201,7 @@ export function birthDay(P, houses, V, tick, rng, rngGift = rng) {
   const A = P.a;
   const babies = [];
   const motherDead = [];       // 喪の入力（お産で亡くした母）
-  let mothersLost = 0, hardAfter = 0;
+  let mothersLost = 0, hardAfter = 0, stillborn = 0;
   const len = A.len;                    // 産まれた子を数えないよう、先に長さを取る
 
   for (let i = 0; i < len; i++) {
@@ -210,6 +210,7 @@ export function birthDay(P, houses, V, tick, rng, rngGift = rng) {
     if (A.pregDue[i] > tick) continue;
 
     const mother = i;
+    const born0 = babies.length;      // このお産で生まれた子の始まり（流れたときに戻す）
     const father = A.pregFather[i];
     const count = Math.max(1, A.pregCount[i]);
     const v = A.village[mother];
@@ -246,12 +247,20 @@ export function birthDay(P, houses, V, tick, rng, rngGift = rng) {
     // 奇跡（G・A-23）はお産でも死なない
     const lost = !deathless(P, mother) && rng.next() < risk;
     if (lost) { P.kill(mother, tick, DEATH_BIRTH); mothersLost++; motherDead.push(mother); }
-    // 難産のあと（第7部 §1 一時11→永続の変換）。お産の軽さの素値<25 が難産。
-    // 12% で繁殖不能・25% で古傷（欠損）。★ 死んでいても同じ回数だけ引く（消費順を分岐で変えない）
+    // 難産のあと。お産の軽さの素値<25 が難産。
+    // ★ B-13 裁定（2026-08-28）：**不妊にはしない。そのお産が流れるだけ。**次はまた産める
+    //   12% でそのお産が流れる ／ 25% で母に古傷（欠損）
+    //   ★ 母が死んでいても同じ回数だけ引く（ストリーム内で消費順を分岐で変えない）
     const after = afterHardBirth(P, mother, rng);
+    if (after & 1) {
+      // 流れた。このお産で生まれた子は育たない（#9-D の 7 乳幼児。族を持たないので宗教の起源にならない）
+      for (let k = born0; k < babies.length; k++) P.kill(babies[k], tick, DEATH_INFANT);
+      babies.length = born0;
+      stillborn++;
+    }
     if (!lost && after) hardAfter++;
   }
-  return { born: babies.length, mothersLost, babies, motherDead, hardAfter };
+  return { born: babies.length, mothersLost, babies, motherDead, hardAfter, stillborn };
 }
 
 // ===========================================================================
