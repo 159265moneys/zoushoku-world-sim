@@ -537,3 +537,19 @@ export function afterHardBirth(P, mother, rng) {
   if (rScar < HARD_BIRTH_TO_SCAR) { addScar(P, mother, PART_LOST, 1, PART_ARM); out |= 2; }
   return out;
 }
+
+/**
+ * 国民力①の合計（106ステぶん）。永続5個だけを掛ける ＝ 括弧を外した値。
+ * ★ 一時の不調で国の強さが毎月ぶれない。捕虜もこれ（正典4-4）。
+ * ★ frames() を106回呼ばず1回で済ませる（毎月10万人ぶん回るので効く）。
+ */
+const _civ = [0, 0, 0];
+export function civicTotal(P, i) {
+  frames(P, i, _civ, true);
+  const A = P.a;
+  let sum = 0;
+  for (let s = 0; s < S.COUNT; s++) {
+    sum += (A.gene[s][i] + A.ev[s][i]) * _civ[S.CATEGORY[s]] * exception(P, i, s);
+  }
+  return sum;
+}

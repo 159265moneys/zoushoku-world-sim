@@ -125,6 +125,7 @@ export class Houses {
   /** 家長が空いている家に、中にいる者から立てる */
   succeed(P, members) {
     const A = this.a, PA = P.a;
+    const succeeded = [];
     for (let h = 0; h < A.len; h++) {
       if (!A.alive[h] || A.head[h] >= 0) continue;
       const list = members.get(h);
@@ -136,7 +137,9 @@ export class Houses {
         if (score > bestAge) { bestAge = score; best = i; }
       }
       A.head[h] = best;
+      if (best >= 0) succeeded.push(best);      // 評判 +8 の入口（#6-A）。award は world.js が呼ぶ
     }
+    return succeeded;
   }
 
   /** その村の生きている家の数（＝30軒の上限を見る数） */

@@ -23,12 +23,14 @@ import {
 import { Houses } from './house.js';
 import {
   Villages, WHERE_FRONTIER, HOUSES_PER_VILLAGE,
-  assignWork, produceAndEat, syncHouses, AREA_HOME, AREA_FIELD,
+  assignWork, produceAndEat, syncHouses, AREA_HOME, AREA_FIELD, EAT_ADULT,
 } from './village.js';
 import { growMonth, seedEffortForAge } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
 import { foundGenome, targetsFrom } from './genetics.js';
 import * as COND from './condition.js';   // 状態12個（第7部 §1）
+import * as DESIRE from './desire.js';    // 欲7つ（#3）
+import * as REP from './reputation.js';   // 評判（#6-A）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -63,6 +65,7 @@ export class World {
       ceilingFired: 0,
       split: 0, splitFailed: 0,        // ★ 分村できた／r>12里で詰まった
       mourned: 0, scarred: 0, stunted: 0,   // 状態12個（第7部 §1）
+      pressure: 0,                          // 日常の基底圧の合計（#3 の ΣX）
     };
   }
 
@@ -174,7 +177,8 @@ export class World {
 
     widow(P);
     H.recount(P, t);
-    H.succeed(P, H.index(P));
+    const newHeads = H.succeed(P, H.index(P));
+    for (const i of newHeads) REP.award(P, i, REP.REP_EVENT.家督を継いだ);   // #6-A
     syncHouses(V, H);
     assignWork(P, V, t);
 
@@ -197,6 +201,25 @@ export class World {
     this.counters.scarred += cm.scarred;
     this.counters.stunted += cm.stunted;
     if (cm.stunted > 0 && this.once('stunt')) this.note('育ちきらない子', '飢えが16歳までに18ヶ月を超えた');
+
+    // 評判（#6-A）。風化と、供給源が在る出来事（子を5人育てた・60歳まで生きた）
+    REP.reputationMonth(P, t);
+
+    // 欲7つ（#3）。X_k ＝ その月の日常の基底圧。#4 の配分へ流す
+    // ★ 国民力の合計は嫉妬の順位に要る。月に1度だけ引き直す
+    for (let i = 0; i < P.a.len; i++) if (P.a.alive[i]) P.a.civicSum[i] = COND.civicTotal(P, i);
+    const eatenRatio = [];
+    for (const r of food) eatenRatio.push(r && r.demand > 0 ? r.eaten / r.demand : 1);
+    DESIRE.desireMonth(P, V, t, {
+      eatAdult: EAT_ADULT,
+      workDaysOf: (i) => (P.a.job[i] === AREA_HOME ? 0 : 30),
+      intakeOf: (i) => {
+        const v = P.a.village[i];
+        const need = ((P.a.ageMonths[i] / 12) | 0) >= 12 ? EAT_ADULT : 0.5;
+        return need * (eatenRatio[v] ?? 1);
+      },
+      onX: (i, X) => { this.pressure(i, X); },
+    });
 
     growMonth(P, V, t);
 
@@ -274,6 +297,17 @@ export class World {
 
   // ---- 節目 --------------------------------------------------------------
   /** 「これは初めてか」。そのまま年代記の初出フラグになる（A-10） */
+  /**
+   * その月の日常の基底圧（#3 の X_k）を受け取る。
+   * ★ #4「向きへの配分」が入るまでは、合計だけ数えて捨てている。
+   *   6本の不満へ割るのは #4 の allocate の仕事（正典 第7部 §2）
+   */
+  pressure(i, X) {
+    let sum = 0;
+    for (let k = 0; k < X.length; k++) sum += X[k];
+    this.counters.pressure += sum;
+  }
+
   once(key) { if (this.firsts.has(key)) return false; this.firsts.add(key); return true; }
   note(what, detail = '') { this.log.push({ tick: this.tick, what, detail }); }
 

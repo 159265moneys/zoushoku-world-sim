@@ -17,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { RNG, rng } from '../src/core/rng.js';
 import * as R from '../src/core/rng.js';
 import * as COND from '../src/world/condition.js';
+import * as D from '../src/world/desire.js';
+import * as REP from '../src/world/reputation.js';
 import * as C from '../src/core/calendar.js';
 import { make, Store, growArray } from '../src/core/arrays.js';
 import * as S from '../src/core/stats.js';
@@ -1365,6 +1367,142 @@ check('職に就いていると努力値が積まれる（100年で実際に増�
   // こころ には1つも積まれていないこと
   for (const i of w.people.living()) {
     for (const s of S.BY_CATEGORY[S.HEART]) if (w.people.a.ev[s][i] !== 0) return `${S.NAME[s]} に積まれた`;
+  }
+  return true;
+});
+
+// ===========================================================================
+section('欲7つ（world/desire.js・#3）');
+// ===========================================================================
+
+// ★ この検査が、欲の器が正典どおりである証拠（#3 §5 の検算表そのもの）。
+//   g 7本・U 7本・X 7本・Σg・ΣX の21個＋2個を、実装そのもので突き合わせる。
+check('**欲7つが正典 #3 の検算表と一致する**（中央値の平民）', () => {
+  // 正典 #3 §1 の「実効値の実測中央（帯なし・n=10,782）」
+  const MED = {
+    誇り: 50.68, 野心: 48.74, 貪欲: 49.26, 嫉妬: 50.43, 序列意識: 50.56, 他責: 50.06,
+    色欲: 50.12, 繁殖力: 40.42, 体重: 35.96, 勤勉: 50.14, 気分の振れ幅: 48.99,
+  };
+  const pp = new P.People(4); pp.tickNow = 0;
+  const i = pp.spawn(0), A = pp.a;
+  // 26歳・健康なら M[枠] は3枠とも 1.000 なので、実効値＝才能で置ける
+  A.alive[i] = 1; A.ageMonths[i] = 26 * 12; A.lifespan[i] = 55;
+  for (let k = 0; k < S.COUNT; k++) { A.gene[k][i] = 0; A.ev[k][i] = 0; }
+  for (const [n, v] of Object.entries(MED)) A.gene[S.needId(n)][i] = v;
+  const M = [0, 0, 0];
+  COND.frames(pp, i, M);
+  for (let f = 0; f < 3; f++) if (Math.abs(M[f] - 1) > 1e-9) return `26歳・健康の M[${f}] が ${M[f]}`;
+
+  const g = new Float64Array(7);
+  D.strength(pp, i, g);
+  // 正典の姿：配給100%・伴侶あり子なし・無役・評判20・通年労働・財は村の中央値
+  A.ref[D.REF_GREED][i] = 50; A.ref[D.REF_GLUTTONY][i] = 100; A.ref[D.REF_ENVY][i] = 50;
+  const u = new Float64Array(7);
+  u[D.GREED]    = D.unmetA(pp, i, D.REF_GREED,    D.supplyGreed(100, 100), false);
+  u[D.GLUTTONY] = D.unmetA(pp, i, D.REF_GLUTTONY, D.supplyGluttony(1.0, 1.0), false);
+  u[D.ENVY]     = D.unmetA(pp, i, D.REF_ENVY,     D.supplyEnvy(0.5), false);
+  u[D.PRIDE]    = D.unmetPride(0, 0, 20, false);
+  u[D.WRATH]    = D.unmetWrath(0, 0, 0, 0, false);
+  u[D.LUST]     = D.unmetLust(true, false);
+  u[D.SLOTH]    = D.unmetSloth(30);
+
+  const wantG = [0.2445, 0.4876, 0.2524, 0.4955, 0.2005, 0.3560, 0.4936];
+  const wantU = [0.895, 0.231, 0.231, 1.000, 0.300, 0.000, 1.000];
+  const wantX = [0.0657, 0.0338, 0.0175, 0.1487, 0.0180, 0.0000, 0.1481];
+  let sum = 0;
+  for (let k = 0; k < 7; k++) {
+    const x = g[k] * u[k] * D.C_SCALE; sum += x;
+    if (Math.abs(g[k] - wantG[k]) > 0.0006) return `${D.DESIRE_NAMES[k]} の g が ${g[k].toFixed(4)}（正典 ${wantG[k]}）`;
+    if (Math.abs(u[k] - wantU[k]) > 0.0006) return `${D.DESIRE_NAMES[k]} の U が ${u[k].toFixed(4)}（正典 ${wantU[k]}）`;
+    if (Math.abs(x - wantX[k]) > 0.0002) return `${D.DESIRE_NAMES[k]} の X が ${x.toFixed(4)}（正典 ${wantX[k]}）`;
+  }
+  const sg = g.reduce((a, b) => a + b, 0);
+  if (Math.abs(sg - 2.5302) > 0.001) return `Σg が ${sg.toFixed(4)}（正典 2.5302）`;
+  if (Math.abs(sum - 0.4316) > 0.0005) return `ΣX が ${sum.toFixed(4)}／月（正典 0.4316）`;
+  return true;
+});
+
+check('傲慢の検算11通りが正典 #3 §2 の表と一致する', () => {
+  // [爵位の段, 役職の段, 評判, U]
+  const table = [
+    [0, 0,   0, 1.000], [0, 0,  20, 0.895], [0, 1,  10, 0.789], [0, 0,  25, 0.868],
+    [1, 1,  10, 0.684], [3, 2,  45, 0.132], [5, 0,  45, 0.237], [5, 3,  60, 0.000],
+    [0, 0, 100, 0.474], [3, 2, -40, 0.579],
+  ];
+  for (const [t, q, r, want] of table) {
+    const got = D.unmetPride(t, q, r, false);
+    if (Math.abs(got - want) > 0.0006) return `爵位${t}・役職${q}・評判${r} → ${got.toFixed(4)}（正典 ${want}）`;
+  }
+  // ★ 内発なら爵位も評判も効かず、役職の段だけが残る
+  for (const [q, want] of [[0, 1], [1, 2 / 3], [2, 1 / 3], [3, 0]]) {
+    const got = D.unmetPride(5, q, 100, true);
+    if (Math.abs(got - want) > 1e-9) return `内発・役職${q} → ${got.toFixed(4)}（${want.toFixed(3)} のはず）`;
+  }
+  return true;
+});
+
+check('境界が正典 #3 §6 の8行どおり（ゼロ割も発散も起きない）', () => {
+  // 要求はゼロにならない（下駄30）
+  const pp = new P.People(2); const i = pp.spawn(0);
+  pp.a.alive[i] = 1; pp.a.ref[D.REF_GREED][i] = 0;
+  const u0 = D.unmetA(pp, i, D.REF_GREED, 0, false);
+  if (!Number.isFinite(u0)) return '要求がゼロになってゼロ割した';
+  // 村の財の中央値が0でも発散しない。財≥1 で S=100 に飽和
+  if (D.supplyGreed(0, 0) !== 50) return `中央値0・財0 で S=${D.supplyGreed(0, 0)}`;
+  if (D.supplyGreed(1, 0) !== 100) return `中央値0・財1 で S=${D.supplyGreed(1, 0)}`;
+  // 村の全員が同じ国民力 → 上の者0割 → S=100 → 平等な村では嫉妬が消える
+  if (D.supplyEnvy(0) !== 100) return '全員同じなのに嫉妬の供給が100でない';
+  // 傲慢の上端と下端。U>1 も U<0 も構造的に起きない
+  if (D.unmetPride(5, 3, 60, false) !== 0) return '公爵の局長の傲慢が満ちない';
+  if (D.unmetPride(0, 0, -100, false) !== 1) return '評判−100の無役で U>1 になった';
+  if (Math.abs(D.unmetPride(5, 3, -100, false) - 0.526) > 0.0006) return '評判−100の高位者が clamp を割った';
+  // 労働日数が31以上でも怠惰 U は1止まり
+  if (D.unmetSloth(45) !== 1) return '労働日数45で怠惰 U が1を超えた';
+  // 全員の欲が0 → ΣX も出力も0（不満ゼロと産出ゼロが同じUの表と裏）
+  if (D.outputOf(0, 0, false) !== 0) return '欲0なのに出力が出た';
+  // 最悪（g=1.5×7・U=1×7）→ 3.15／月
+  if (Math.abs(1.5 * 1.0 * D.C_SCALE * 7 - 3.15) > 1e-9) return '最悪値が 3.15／月 でない';
+  return true;
+});
+
+check('評判は0へ戻る（#6-A。評判100を維持する道は存在しない）', () => {
+  const pp = new P.People(2); const i = pp.spawn(0);
+  pp.a.alive[i] = 1; pp.a.ageMonths[i] = 30 * 12;
+  REP.award(pp, i, 100);
+  if (pp.a.rep[i] !== 100) return `+100 が乗らない（${pp.a.rep[i]}）`;
+  REP.award(pp, i, 50);
+  if (pp.a.rep[i] !== 100) return `上限100を超えた（${pp.a.rep[i]}）`;
+  for (let m = 0; m < 12 * 100; m++) REP.reputationMonth(pp, m * 30);
+  if (Math.abs(pp.a.rep[i]) > 1e-6) return `100年経っても ${pp.a.rep[i].toFixed(3)} 残っている`;
+  // 0を跨いで振動しない
+  REP.award(pp, i, -0.02);
+  REP.reputationMonth(pp, 0);
+  if (pp.a.rep[i] > 0) return `負から正へ跨いだ（${pp.a.rep[i]}）`;
+  // 死者の評判は凍結する
+  const j = pp.spawn(0); pp.a.alive[j] = 1;
+  REP.award(pp, j, 30); pp.kill(j, 0);
+  REP.award(pp, j, 50);
+  if (pp.a.rep[j] !== 30) return `死者の評判が動いた（${pp.a.rep[j]}）`;
+  return true;
+});
+
+check('欲が世界の中で動いている（器が空回りしていない）', () => {
+  const w = new W.World(13).genesis();
+  w.runYears(40);
+  if (!(w.counters.pressure > 0)) return '日常の基底圧がゼロ';
+  const A = w.people.a;
+  let anyOut = 0, refSet = 0;
+  for (const i of w.people.living()) {
+    if ((A.ageMonths[i] / 12 | 0) < 12) continue;
+    if (A.ref[D.REF_GREED][i] > 0) refSet++;
+    for (let k = 0; k < 7; k++) if (A.desireOut[k][i] > 0) { anyOut++; break; }
+  }
+  if (!refSet) return '12歳を過ぎても参照点が置かれていない';
+  if (!anyOut) return '出力が1人も出ていない';
+  // ★ 傲慢・憤怒 は供給源がまだ無いので U=1.000 ＝ 出力0 のはず（正典の検算と同じ姿）
+  for (const i of w.people.living()) {
+    if ((A.ageMonths[i] / 12 | 0) < 12) continue;
+    if (A.desireOut[D.WRATH][i] !== 0) return '憤怒に供給源が無いのに出力が出た';
   }
   return true;
 });
