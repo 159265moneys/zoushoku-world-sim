@@ -116,6 +116,25 @@ export const INFANT_AGE = 5;
 export const KIN_NONE = 0, KIN_PLAGUE = 1, KIN_FAMINE = 2, KIN_HEAVEN = 3,
              KIN_WAR = 4, KIN_PUNISH = 5, KIN_STRIFE = 6;
 export const KIN_NAMES = ['—', '疫', '飢', '天', '兵', '罰', '内'];
+
+// ---- 宗派の段（#8 §3）------------------------------------------------------
+// ★ 無信仰は在る。ID=0。理由は4つ、どれも構造上のもの（#8 §2）：
+//   ①宗教は「起きる」ものなので起きる前の状態が要る
+//   ②異端審問会の獲物が絶えない床になる（無信仰の d は30固定で常に網に入る）
+//   ③棄教の行き先が要る
+//   ④無信仰者は帰属の付け替えを受けないので**③が生で溜まる**
+export const SECT_NONE = 0;
+export const MODE_LAY = 0, MODE_ZEALOT = 1, MODE_RESIGNED = 2;
+export const STEP_NONE = 0, STEP_NOMINAL = 1, STEP_BELIEVER = 2, STEP_DEVOUT = 3;
+export const STEP_NAMES = ['無信仰', '名ばかり', '信徒', '篤信'];
+/** faith から段を出す（#8 §3 の表） */
+export const faithStep = (sect, faith) =>
+  sect === SECT_NONE ? STEP_NONE : faith >= 70 ? STEP_DEVOUT : faith >= 35 ? STEP_BELIEVER : STEP_NOMINAL;
+// 段ごとの倍率（帰属の付け替え／慰霊）。★ 無信仰は両方 ×0
+export const STEP_DIVERT = [0, 0.3, 1.0, 1.4];
+export const STEP_MOURN  = [0, 0.5, 1.0, 1.3];
+export const DIVERT_CAP = 0.60;        // 正典3-16c「4割は必ず統治に残る」は絶対
+export const NOFAITH_D = 30;           // 無信仰のズレ d は30固定（#7 で常に最優先の候補）
 // ★ 6『内』は永久に origin になれない（#6-C 5870・9-C 6718）。
 //   宗教の結果として起きた集団自殺から新しい宗教が起きる、という循環を潰すため
 export const KIN_CAN_ORIGIN = (kin) => kin >= KIN_PLAGUE && kin <= KIN_PUNISH;
@@ -216,6 +235,16 @@ export const SPEC = {
   hurtStage: 'u8',       // 負傷 0/1軽/2中/3重
   hurtHeal: 'u8',        // 負傷の残り治癒月数
   sickHeal: 'u8',        // 病の残り治癒月数（#9 の疫病で初めて使う。B-26）
+
+  // ---- 宗派（#8 §1。6バイト／人。10万人で 0.6MB）------------------------
+  // ★ 教義のコピーを個人は持たない。教義は宗派側に1組だけ。
+  //   個人は「どこに属し、どれだけ深いか」だけ。代替わりで教義が動いても書き換えは1件で済む
+  // ★ 信心（13番B・性向）と faith は別物。信心は「信じやすい性質」、
+  //   faith は「いまその宗派にどれだけ深く入っているか」。同じ信心の2人が違う faith を持つ
+  sect: 'u16',           // 0 = 無信仰。1以上は宗派ID。★ 世界の初期状態は全員0
+  faith: 'u8',           // 信仰の深さ 0〜100
+  mode: 'u8',            // 0 = 平信徒 / 1 = 狂信 / 2 = 諦観
+  sectMon: 'u16',        // いまの sect に居る月数（改宗の連打を止めるためだけに使う）
   hurtPart: 'u8',        // 負傷の部位（古傷に変わるときの行き先）
   fatigue: 'f32',        // 疲労点 0〜12。★ u8 では表せない
                          //   （中央値の均衡が −0.056/月。u8 の刻み 1/16=0.0625 だと 0 に丸まって

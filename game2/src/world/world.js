@@ -18,7 +18,7 @@ import * as C from '../core/calendar.js';
 import { makeStreams, STREAM, saveStreams, loadStreams } from '../core/rng.js';
 import {
   People, SEX_MALE, SEX_FEMALE, RANK_COMMON, ST_PREGNANT, agingAndDeath, lifespanOf,
-  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep,
+  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep, KIN_NAMES, SECT_NONE,
 } from './people.js';
 import { Houses } from './house.js';
 import {
@@ -37,6 +37,7 @@ import * as OFF from './office.js';       // 身分・爵位・役職（#10）
 import { Ties, W as TIE_W, T_BLOOD, T_LAND } from './ties.js';
 import * as TIES from './ties.js';   // しがらみ（正典3-2）
 import * as DIS9 from './disaster.js';   // 厄災（#9・正典3-7）
+import * as SECT from './sect.js';       // 宗派（正典3-6・#6-C・#8）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -60,6 +61,8 @@ export class World {
     this.harvest = 1.0;                      // その年の作柄（正典3-7。年の頭に引き直す）
     this._tieN = new Int32Array(opts.cap ?? 256);   // つながりの数の受け皿（使い回す）
     this.cal = new DIS9.Calamity(8);                // 厄災の台帳（#9-D の族・#9-E の r）
+    this.sects = new SECT.Sects(16);                // 宗派の台帳（正典3-6・#6-C）
+    this.script = new DIS9.Script();                // 確定イベント（9-B）の進行
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -82,6 +85,9 @@ export class World {
       // ---- 厄災（#9）----
       storms: 0, plagues: 0, fires: 0, beasts: 0,
       shock: 0,                             // 厄災の X の合計（⑤の溜め池の入口）
+      // ---- 宗派（#8）----
+      sectsFounded: 0, sectsDissolved: 0, converted: 0,
+      zealots: 0, resigned: 0, apostates: 0,
     };
   }
 
@@ -251,6 +257,38 @@ export class World {
     //   ここで村ごとの死者率 r（#9-E）も確定する。宗派（#8）が入る日にそのまま読む
     this.cal.close(V, t, C.monthOf(t));
 
+    // ---- 確定イベント（9-B）。★ 族は台帳で決め打ちなので 9-D の上書きになる ----
+    //   これが無いと宗教が一度も起きない（平常の門 T_i=35 に未叙爵の村長 33.3 が届かない）
+    const sc = DIS9.scriptedEvent(P, V, H, this.population(), t, this.script,
+      this.R[STREAM.DISASTER], (i, X, set) => this.shock(i, X, set));
+    if (sc.kind === 1) this.note('導入の嵐', '死者は出ない。厄災という種類のものがある、とだけ教える');
+    if (sc.kind === 2) this.note('フェーズ2の疫病', '人口100人。ここで最初の宗教が起きる');
+
+
+    // ---- 宗教（#6-C）。★ 族と死者率が確定した直後。乱数は宗教のストリーム（8番）----
+    //   正典3-6「信心が高い × 影響力がある × 大きな災いの直後」かつ
+    //   「なぜ起きたのかに誰も答えられていない状態で、答えを出せる者が現れる」
+    const fnd = SECT.foundMonth(P, V, this.sects, this.cal, t, this.R[STREAM.RELIGION],
+      (v) => this.script.kinAt(v, t));
+    if (fnd.founded) {
+      this.counters.sectsFounded += fnd.founded;
+      if (this.once('sect')) {
+        const id = fnd.ids[0], SA = this.sects.a;
+        this.note('最初の宗教', `起源＝${KIN_NAMES[SA.origin[id]]}・村${SA.village[id]}`);
+      }
+    }
+    this.counters.sectsDissolved += SECT.sectMonth(P, this.sects).dissolved;
+
+    // ---- 信仰の月次（#8 §4・§6・§7）。faith → ⑤の出口 → 伝播 の順 ----
+    //   ★ 祭祀局長はまだ居ないので後押しは無い（局が入る日に chiefSect を渡す）
+    const bl = SECT.beliefMonth(P, V, this.sects, this.ties, t, this.R[STREAM.RELIGION]);
+    this.counters.zealots += bl.zealots; this.counters.resigned += bl.resigned;
+    this.counters.apostates += bl.apostates; this.counters.converted += bl.converted + bl.joined;
+    if (bl.zealots && this.once('zealot')) this.note('最初の狂信者', '⑤は③へ返らず①へ向かう');
+    if (bl.apostates && this.once('apostate')) this.note('最初の棄教', '⑤の4割が恨み③へ移った');
+    // 継承（#8 §5）。★ 7歳の誕生月に1回だけ。信仰は血ではなく育ちで伝わる
+    SECT.inheritMonth(P, this.R[STREAM.RELIGION]);
+
     // 状態の月次（第7部 §1）。疲労・発育不全・喪の減衰・負傷の治癒。
     // ★ 負荷は村と暦が知っていることなので、ここで決めて condition.js に渡す
     //   （condition.js が village.js を読むと循環する）
@@ -340,6 +378,9 @@ export class World {
           this.ties.link(i, j, TIE_W.地縁, T_LAND, mon);
         }
       }
+      // 信仰が好き嫌いに乗る（#8 §8）。★ 既に線がある相手だけ。40年で最大 ±20。
+      //   相性（25〜50）と同じ桁になるので、**信仰が派閥の線に乗る**
+      SECT.beliefYear(P, this.sects, this.ties, t);
     }
 
     // 評判（#6-A）。風化と、供給源が在る出来事（子を5人育てた・60歳まで生きた）

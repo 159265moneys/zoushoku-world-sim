@@ -35,12 +35,31 @@ import * as RUN from '../src/flow/run.js';
 import * as GIFT from '../src/world/gifts.js';
 import * as GG from '../src/core/gifts.gen.js';
 import * as DZ from '../src/world/disaster.js';   // 厄災（#9）
+import * as SECT from '../src/world/sect.js';    // 宗派（#8・正典3-6・#6-C）
 
 // ★ 検査が「N年生き延びた世界」を要るとき、種を直書きしない。
 //   世界は層を足すたびに厳しくなるので、直書きの種はそのたびに絶滅世界に変わり、
 //   本題と関係ない検査が3件も4件も赤くなる（今日だけで2度起きた）。
 //   **要件のほうを書く。**同じ並びを同じ順で試すので決定的（再現性は落ちない）。
 const LIVING_SEEDS = [13, 1, 5, 9, 17, 19, 10, 7, 21, 25, 3, 29];
+/**
+ * ★ 1つの種に人質を取られないための道具。
+ *   乱数の消費順が変わると `livingWorld` が拾う世界の大きさが変わり、
+ *   「◯人以上いること」を求める検査が、機構は無傷なのに一斉に赤くなる。
+ *   **要る人数を1つの世界から取るのをやめ、生きている世界を必要なだけ束ねる。**
+ */
+function pooledWorlds(years, want, maxSeeds = 12) {
+  const out = [];
+  for (const seed of LIVING_SEEDS.slice(0, maxSeeds)) {
+    const w = new W.World(seed).genesis();
+    w.runYears(years);
+    if (w.population() >= 3) out.push(w);
+    if (out.length >= want) break;
+  }
+  if (!out.length) throw new Error(`${years}年 生き延びる種が無い`);
+  return out;
+}
+
 function livingWorld(years, minPop = 1) {
   for (const seed of LIVING_SEEDS) {
     const w = new W.World(seed).genesis();
@@ -948,23 +967,28 @@ check('疲労は負荷1.0 が中央値の均衡点（壊れるのは眠りの浅
 // ★ 12枠のうち、供給源が在るものが実際に発火していること。
 //   器だけ作って誰も書かない状態（ST_SICK・ST_GRIEF・scar が長らくそうだった）を二度と作らない
 check('状態に供給源が繋がっている（器が空回りしていない）', () => {
-  const w = livingWorld(60, 5);
-  const A = w.people.a;
-  let defect = 0, grief = 0, fatigue = 0, barren = 0;
-  for (let i = 0; i < A.len; i++) {
-    if (A.defectType[i]) defect++;
-    if (A.state[i] & P.ST_BARREN) barren++;
-    if (!A.alive[i]) continue;
-    if (A.grief[i] > 0) grief++;
-    if (A.fatigue[i] > 0) fatigue++;
+  // ★ 供給源が「在るか」を見る検査なので、1つの世界の大きさに依存させない
+  let defect = 0, fatigue = 0, mourned = 0, sick = 0, hurt = 0;
+  for (const w of pooledWorlds(60, 6)) {
+    const A = w.people.a;
+    for (let i = 0; i < A.len; i++) {
+      if (A.defectType[i]) defect++;
+      if (!A.alive[i]) continue;
+      if (A.fatigue[i] > 0) fatigue++;
+      if (A.sickStage[i] > 0) sick++;
+      if (A.hurtStage[i] > 0) hurt++;
+    }
+    mourned += w.counters.mourned;
   }
   if (!defect) return '先天障害が60年で1件も出ない（永続3の供給源が無い）';
   if (!fatigue) return '疲労が1人も溜まらない（一時9の供給源が無い）';
+  const w = { counters: { mourned } };
   // ★ 喪は瞬間で数えない。τ≈5.8ヶ月で薄れるので、ある月に生きている者を見ても0のことがある。
   //   供給源が在るかを見たいのだから、**のべ回数**で見る
   if (!w.counters.mourned) return '喪が1件も立たない（一時12の供給源が無い）';
-  void grief;
-  // ★ 病と負傷は、まだ供給源が無い（厄災 #9 と戦争が入る日に生きる）。器は在る
+  // ★ 病と負傷は #9 厄災で供給源が付いた（疫病→病の段3／嵐・獣害→負傷）。
+  //   戦死だけがまだ器のまま（戦争が入る日に生きる）
+  if (!sick && !hurt) return '厄災が入ったのに病も負傷も1人も出ない';
   return true;
 });
 
@@ -1687,8 +1711,7 @@ check('評判は0へ戻る（#6-A。評判100を維持する道は存在しな�
 });
 
 check('欲が世界の中で動いている（器が空回りしていない）', () => {
-  const w = new W.World(13).genesis();
-  w.runYears(40);
+  const w = livingWorld(40, 10);
   if (!(w.counters.pressure > 0)) return '日常の基底圧がゼロ';
   const A = w.people.a;
   let anyOut = 0, refSet = 0;
@@ -1783,9 +1806,7 @@ check('日常は ① に1点も入らない（全員が100に張り付かない�
 //   個体の散らばりは別の話なので、中央値で測る。**尾は測って記録する**（黙って隠さない）。
 check('定常が閾値の下で止まる（③の中央値は怠業45 の下・④は自暴自棄65 のはるか下）', () => {
   const v3 = [], v4 = [];
-  for (const seed of [1, 5, 7, 9, 13, 17]) {
-    const w = new W.World(seed).genesis();
-    w.runYears(150);
+  for (const w of pooledWorlds(150, 8)) {
     const A = w.people.a;
     for (const i of w.people.living()) {
       if ((A.ageMonths[i] / 12 | 0) < 26) continue;
@@ -1856,9 +1877,7 @@ check('④の月次上限0.80点が効いている（#5 §3。超えた分は捨
 
 check('④の出口（結婚と初就労）が効く。生涯ひとりの者ほど④が高い（#5 §4）', () => {
   const wed = [], single = [];
-  for (const seed of [1, 5, 7, 9, 13, 17, 21, 25]) {
-    const w = new W.World(seed).genesis();
-    w.runYears(150);
+  for (const w of pooledWorlds(150, 10)) {
     const A = w.people.a;
     for (const i of w.people.living()) {
       if ((A.ageMonths[i] / 12 | 0) < 30) continue;
@@ -1990,6 +2009,165 @@ check('村ごとの死因と族が world に繋がっている（正典 9-D の�
 });
 
 // ===========================================================================
+section('宗派（world/sect.js・正典3-6・#6-C・#8）');
+// ===========================================================================
+
+// ★ ここが正典の検算表と1つでもずれると、宗教の起き方がまるごと別物になる。
+//   確定イベントの4行と平常の3行、合わせて7行を実装そのもので突き合わせる
+check('**発起の確率が正典 #6-C の検算表7行と一致する**', () => {
+  // 確定イベント：フェーズ2の疫病（村の12%が死ぬ）／村長 I=36.7
+  const wE = SECT.weightOf(0.12);
+  if (Math.abs(wE - 2.80) > 0.005) return `W が ${wE.toFixed(2)}（正典2.80）`;
+  for (const [piety, p, y] of [[55, 0.039, 38], [60, 0.079, 63], [66, 0.126, 80], [77, 0.212, 94]]) {
+    const got = SECT.foundP(piety, 36.7, wE, true);
+    if (Math.abs(got - p) > 0.0005) return `確定・信心${piety} が ${got.toFixed(3)}（正典${p}）`;
+    const got12 = (1 - Math.pow(1 - got, 12)) * 100;
+    if (Math.abs(got12 - y) > 1) return `確定・信心${piety} の12ヶ月が ${got12.toFixed(0)}%（正典${y}%）`;
+  }
+  // 平常：死亡率8%
+  const wN = SECT.weightOf(0.08);
+  if (Math.abs(wN - 2.00) > 0.005) return `平常の W が ${wN.toFixed(2)}（正典2.00）`;
+  for (const [piety, infl, p] of [[65, 36.7, 0.00033], [72, 45, 0.00462], [77, 60, 0.01635]]) {
+    const got = SECT.foundP(piety, infl, wN, false);
+    if (Math.abs(got - p) > 0.00001) return `平常・信心${piety} が ${got.toFixed(5)}（正典${p}）`;
+  }
+  return true;
+});
+
+// ★ 門と分母の目盛りが揃っていること。門のすぐ上で p=0、100 で p=p0×W。
+//   **確率が負になる区間が生まれない**（正典 5902）
+check('★ 門のすぐ上で p=0、100 で p=p0×W。負にならない', () => {
+  for (const ev of [false, true]) {
+    const tf = ev ? SECT.T_FAITH_EVENT : SECT.T_FAITH;
+    const ti = ev ? SECT.T_INFL_EVENT : SECT.T_INFL;
+    const p0 = ev ? SECT.P0_EVENT : SECT.P0;
+    if (SECT.foundP(tf, 100, 1, ev) !== 0) return '門のすぐ上（信心＝門）で p が 0 でない';
+    if (SECT.foundP(100, ti, 1, ev) !== 0) return '門のすぐ上（影響力＝門）で p が 0 でない';
+    if (Math.abs(SECT.foundP(100, 100, 1, ev) - p0) > 1e-12) return '信心100・影響力100 で p0 にならない';
+    for (let f = 0; f <= 100; f += 5) for (let i = 0; i <= 100; i += 5) {
+      if (SECT.foundP(f, i, 3, ev) < 0) return `p が負になる（信心${f}・影響力${i}）`;
+    }
+  }
+  if (SECT.weightOf(0) !== 1.0 || SECT.weightOf(1) !== 3.0) return 'W が 1.0〜3.0 で切られていない';
+  return true;
+});
+
+check('教義は21軸。★ 階層性と布教だけ「差」で取る（同じ腕のステを素で使わない）', () => {
+  if (SECT.BASE_AXES.length !== 17 || SECT.DERIVED_AXES.length !== 4) return `${SECT.AXES.length}軸`;
+  const src = readFileSync(join(GAME2, 'src/world/sect.js'), 'utf8');
+  // ★ M-42：信心・序列意識・郷土愛は同じ腕。素で使うと全宗教が階層的で内向きになる
+  if (!/out\[AX\.階層性\] = 50 \+ \(v\('序列意識'\) - 情\) \/ 2/.test(src)) return '階層性が差で取られていない';
+  if (!/out\[AX\.布教するか\] = 50 \+ \(弁舌 - v\('郷土愛'\)\) \/ 2/.test(src)) return '布教が差で取られていない';
+  return true;
+});
+
+check('★ 帰属の付け替えは天井0.60を破らない（正典3-16c「4割は必ず統治に残る」）', () => {
+  // 信仰性100 × 体系化100 でも 0.6。段3（×1.4）でも 0.6
+  const sects = new SECT.Sects(4);
+  const d = new Float64Array(SECT.AXES.length);
+  d[SECT.AX.信仰性] = 100; d[SECT.AX.体系化] = 100;
+  d[SECT.AX['帰属の付け替え']] = 100 * 100 / 100 * P.DIVERT_CAP;
+  sects.doctrine[1] = d; sects.a.len = 2; sects.a.alive[1] = 1;
+  const r = sects.divertRate(1, 1, 100);
+  if (r > P.DIVERT_CAP + 1e-9) return `付け替えが ${r.toFixed(3)}（天井 ${P.DIVERT_CAP}）`;
+  if (sects.divertRate(0, 0, 0) !== 0) return '無信仰が付け替えを受けている';
+  // ★ 実分布での実力：信仰性67 × 体系化34 → 13.7%（正典 6414）
+  const mid = 67 * 34 / 100 * P.DIVERT_CAP;
+  if (Math.abs(mid - 13.668) > 0.05) return `中央の宗派の付け替えが ${mid.toFixed(1)}%（正典13.7%）`;
+  return true;
+});
+
+check('faith の平衡が正典 #8 §4 の表と合う（1行目を除く5行）', () => {
+  // ★ 正典の1行目（信心44・同宗派率0.02・V⑤20 → faith*=3）は**式から到達不能**。
+  //   潔癖を0〜100 のどこに置いても 25.6〜51.7 にしかならず、儀礼の頻度＝0 のときだけ3になる。
+  //   儀礼の頻度＝(潔癖+信心)/2 なので 0 は作れない。**式のほうを採り、記載ミスと見た。**
+  const rows = [[44, 0.10, 40, 44], [60, 0.15, 20, 58], [60, 0.60, 20, 70], [77, 0.60, 10, 83], [60, 0.60, 60, 58]];
+  for (const [piety, rate, v5, want] of rows) {
+    const f = SECT.faithFlow(piety, rate, 34, (piety + 50) / 2, v5);
+    const eq = SECT.faithEq(f.inflow, f.outflow);
+    if (Math.abs(eq - want) > 6) return `信心${piety}・同宗派率${rate}・V⑤${v5} が ${eq.toFixed(0)}（正典${want}）`;
+  }
+  return true;
+});
+
+check('★ ⑤の出口が5本ある。諦観だけ無条件（これが無いと⑤が100に飽和する）', () => {
+  // 諦観：図太さ48（中央）で 0.0456／月 → 12ヶ月で42%（正典 6516）
+  const p = SECT.resignP(48);
+  if (Math.abs(p - 0.0456) > 0.0005) return `諦観が ${p.toFixed(4)}（正典0.0456）`;
+  const y = 1 - Math.pow(1 - p, 12);
+  if (Math.abs(y - 0.42) > 0.02) return `諦観の12ヶ月が ${(y * 100).toFixed(0)}%（正典42%）`;
+  // ★ 図太さを門にしない。0でも100でも p は正
+  if (SECT.resignP(0) <= 0 || SECT.resignP(100) <= 0) return '図太さが門になっている';
+  // 棄教：V⑤ が門ちょうど（70）で p=0、上がるほど増える
+  if (SECT.apostP(70, 50) !== 0) return '棄教が門のすぐ上で0でない';
+  if (!(SECT.apostP(100, 50) > SECT.apostP(85, 50))) return '棄教が V⑤ に対して単調でない';
+  // 棄教は全消しにしない（40%が③へ）。全消しにすると宗教が不満の完全な捨て場になる
+  if (SECT.APOST_TO_GRUDGE !== 0.40) return `棄教の返還が ${SECT.APOST_TO_GRUDGE}（正典0.40）`;
+  return true;
+});
+
+check('9-E の3分岐。★ 族が起源と違えば⑤は③へ全額返る', () => {
+  const B = SECT;
+  // 分岐1：族＝起源 かつ r ≤ lastRate×1.5 → 的中。返さない
+  if (B.calamityBranch(1, 1, 0.10, 0.10, false, 34, 67).ret !== 0) return '的中したのに返している';
+  // 分岐2：族＝起源 だが r > lastRate×1.5 → 部分的な失効。T=0.30
+  if (B.calamityBranch(1, 1, 0.30, 0.10, false, 34, 67).ret !== 0.30) return '部分失効が0.30でない';
+  // 分岐3：族≠起源 かつ r≥0.20 → 全額
+  if (B.calamityBranch(2, 1, 0.25, 0.10, false, 34, 67).ret !== 1.0) return '大きな災いで全額返っていない';
+  // 分岐3：確定イベント → 全額
+  if (B.calamityBranch(2, 1, 0.01, 0.10, true, 34, 67).ret !== 1.0) return '確定イベントで全額返っていない';
+  // 分岐3：それ以外 → clamp(0.30, 0.90, (100 −(体系化+信仰性)/4)/100)
+  const t = B.calamityBranch(2, 1, 0.05, 0.10, false, 34, 67).ret;
+  if (t < 0.30 || t > 0.90) return `返還率が ${t.toFixed(2)}（0.30〜0.90 のはず）`;
+  // ★ 族6「内」は常に分岐3（起源になれないので必ず起源と違う）
+  if (B.calamityBranch(P.KIN_STRIFE, 1, 0.25, 0, false, 34, 67).branch !== B.BRANCH_MISS)
+    return '族「内」が分岐3に落ちていない';
+  return true;
+});
+
+check('★ 無信仰は在る（ID=0）。世界の初期状態は全員0', () => {
+  const w = new W.World(13).genesis();
+  const A = w.people.a;
+  for (const i of w.people.living()) {
+    if (A.sect[i] !== P.SECT_NONE) return `創世の者に宗派が付いている（${i}）`;
+    if (A.faith[i] !== 0 || A.mode[i] !== 0) return 'faith か mode が0でない';
+  }
+  // 段の表（#8 §3）
+  if (P.faithStep(0, 100) !== P.STEP_NONE) return '無信仰が段0でない';
+  if (P.faithStep(1, 34) !== P.STEP_NOMINAL) return 'faith34 が名ばかりでない';
+  if (P.faithStep(1, 35) !== P.STEP_BELIEVER) return 'faith35 が信徒でない';
+  if (P.faithStep(1, 70) !== P.STEP_DEVOUT) return 'faith70 が篤信でない';
+  if (P.STEP_DIVERT[0] !== 0 || P.STEP_MOURN[0] !== 0) return '無信仰が付け替えか慰霊を受けている';
+  return true;
+});
+
+// ★ 継承率を1.0にしない理由：完全に継がせると無信仰層が1世代で消え、審問会の獲物が絶える
+check('信仰は血ではなく育ちで伝わる。★ 継承率は1.0にしない', () => {
+  if (SECT.INHERIT_BOTH !== 0.75 || SECT.INHERIT_ONE !== 0.40) return '継承率が正典と違う';
+  if (SECT.INHERIT_BOTH >= 1) return '両親が同じでも4分の1は無信仰で供給されるはず';
+  if (SECT.INHERIT_AGE !== 7) return '継承が7歳でない';
+  return true;
+});
+
+check('★ 宗派が実際に起きて、信者が付き、消滅の規則が在る', () => {
+  if (SECT.DISSOLVE_MIN !== 10 || SECT.DISSOLVE_MONTHS !== 60) return '消滅の規則が正典と違う';
+  // 起きる世界が在ること（正典「オーナーが1人も呼ばなくても宗教は生える」）
+  let founded = 0, believers = 0, reached = 0;
+  for (const seed of [29, 3, 13, 1, 5, 9, 17, 19]) {
+    const w = new W.World(seed).genesis();
+    w.runYears(200);
+    founded += w.counters.sectsFounded;
+    if (w.script.plagueDone) reached++;
+    const A = w.people.a;
+    for (const i of w.people.living()) if (A.sect[i]) believers++;
+  }
+  if (!reached) return '8種のどれもフェーズ2の疫病（人口100）に届かない';
+  if (!founded) return `疫病に ${reached} 種が届いたのに宗教が1件も起きない`;
+  if (!believers) return '宗派は起きたが信者が1人もいない';
+  return true;
+});
+
+// ===========================================================================
 section('結婚と出産（world/marry.js）');
 // ===========================================================================
 
@@ -2036,23 +2214,25 @@ check('出産は18〜40歳のあいだだけ（A-12）', () => {
 
 check('双子5%・三つ子0.1%（A-12。四つ子以上は無い）', () => {
   if (M.TWIN_P !== 0.05 || M.TRIPLET_P !== 0.001) return `${M.TWIN_P} / ${M.TRIPLET_P}`;
-  const w = new W.World(13).genesis();
-  w.runYears(200);
-  const A = w.people.a;
+  // ★ 世界をまたいで数える。鍵に世界の番号を混ぜないと添字が衝突する
   const sameDay = new Map();
-  for (let i = 0; i < w.people.len; i++) {
-    const m = A.mother[i];
-    if (m < 0) continue;
-    const k = m + ':' + A.birthTick[i];
-    sameDay.set(k, (sameDay.get(k) || 0) + 1);
-  }
+  const worlds = pooledWorlds(200, 8);
+  worlds.forEach((w, wi) => {
+    const A = w.people.a;
+    for (let i = 0; i < w.people.len; i++) {
+      const m = A.mother[i];
+      if (m < 0) continue;
+      const k = wi + '/' + m + ':' + A.birthTick[i];
+      sameDay.set(k, (sameDay.get(k) || 0) + 1);
+    }
+  });
   let single = 0, twin = 0, triple = 0, more = 0;
   for (const n of sameDay.values()) {
     if (n === 1) single++; else if (n === 2) twin++; else if (n === 3) triple++; else more++;
   }
   if (more) return `四つ子以上が ${more} 件`;
   const total = single + twin + triple;
-  if (total < 50) return `件数が ${total} 件しかない`;
+  if (total < 50) return `件数が ${total} 件しかない（${worlds.length}世界）`;
   const rate = twin / total;
   return rate > 0.01 && rate < 0.12 ? true : `双子率 ${(rate * 100).toFixed(1)}%（${twin}/${total}）`;
 });

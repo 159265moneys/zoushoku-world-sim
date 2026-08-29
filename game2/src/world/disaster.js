@@ -17,6 +17,7 @@ import * as C from '../core/calendar.js';
 import { ST_HUNGRY } from '../core/states.js';
 import {
   DEATH_ACCIDENT, DEATH_KIN, KIN_NONE, KIN_CAN_ORIGIN, DEATH_COUNT, NO_VILLAGE,
+  KIN_HEAVEN, KIN_PLAGUE,
 } from './people.js';
 import { PART_ARM, PART_LEG, healMonths, sickMonths } from './condition.js';
 import { D_PERSON, D_RULE, D_GOD, D_OUT } from './discontent.js';
@@ -254,13 +255,14 @@ export class Calamity {
     this.deaths = new Int32Array(n * 12);   // 月ごとの死者数（12ヶ月の輪）
     this.pops = new Int32Array(n * 12);    // 月ごとの村人口（12ヶ月の輪）
     this.byCause = new Int32Array(n * DEATH_COUNT);   // ★ その月の死因（村ごと）
+    this.kinRing = new Int32Array(n * 12 * 7);        // 月ごとの族の数（12ヶ月の輪・村ごと）
     this.cap = n;
   }
   grow(nv) {
     if (nv <= this.cap) return;
-    const d = this.deaths, p = this.pops, old = this.cap;
+    const d = this.deaths, p = this.pops, k = this.kinRing, old = this.cap;
     this._alloc(Math.max(nv, old * 2));
-    this.deaths.set(d); this.pops.set(p);   // ★ 輪の位相は cap で決まらない（月で決まる）ので詰め直し不要
+    this.deaths.set(d); this.pops.set(p); this.kinRing.set(k);   // ★ 輪の位相は月で決まるので詰め直し不要
   }
 
   /** その月の死因を1つ数える（村ごと）。世界で1本だった byCause を村ごとにする */
@@ -285,7 +287,15 @@ export class Calamity {
       this.deaths[v * 12 + slot] = dead;
       this.pops[v * 12 + slot] = V.a.pop[v];
       // ---- 族（#9-D）。1月1族。老衰・難産・産褥・乳幼児 は数えない
-      V.a.kin[v] = kinOfMonth(this.causes(v, tmp));
+      this.causes(v, tmp);
+      V.a.kin[v] = kinOfMonth(tmp);
+      // 12ヶ月の窓ぶんの族も持つ（#6-C 条件B・条件C は12ヶ月で見るため）
+      const kb = (v * 12 + slot) * 7;
+      for (let g = 0; g < 7; g++) this.kinRing[kb + g] = 0;
+      for (let dd = 1; dd < DEATH_COUNT; dd++) {
+        const kk = DEATH_KIN[dd];
+        if (kk !== KIN_NONE) this.kinRing[kb + kk] += tmp[dd];
+      }
       // ---- 死者率 r ＝ 直近12ヶ月の死者数 ÷ 12ヶ月前の村人口
       let sum = 0;
       for (let k = 0; k < 12; k++) sum += this.deaths[v * 12 + k];
@@ -293,6 +303,30 @@ export class Calamity {
       V.a.kinRate[v] = back > 0 ? sum / back : 0;
       for (let d = 0; d < DEATH_COUNT; d++) this.byCause[base + d] = 0;
     }
+  }
+
+  /** 直近12ヶ月の死者数 */
+  deaths12(v) {
+    let sum = 0;
+    for (let k = 0; k < 12; k++) sum += this.deaths[v * 12 + k];
+    return sum;
+  }
+
+  /**
+   * 直近12ヶ月の族（#6-C 条件B の「その災いの族」）。
+   * ★ 1ヶ月ぶんの族（V.a.kin）ではなく**窓ぜんぶ**で最多の族を採る。
+   *   条件B が12ヶ月窓で判定するので、族も同じ窓で見ないと
+   *   「災いは12ヶ月前、族は今月の1件」という食い違いが起きる。
+   * ★ 同数なら族番号の小さいほう（#9-D と同じ決定性の規則）
+   */
+  kin12(v) {
+    let best = KIN_NONE, bestN = 0;
+    for (let g = 1; g < 7; g++) {
+      let n = 0;
+      for (let m = 0; m < 12; m++) n += this.kinRing[(v * 12 + m) * 7 + g];
+      if (n > bestN) { bestN = n; best = g; }
+    }
+    return best;
   }
 
   /** 9-E(a)：大きな災いか。★ 発火したら 12ヶ月あける */
@@ -326,4 +360,113 @@ export function harvestX(P, harvest, onX) {
     onX(i, X, set); n++;
   }
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// 9-B　確定イベント（正典3-7 の直訳。2件だけ）
+// ---------------------------------------------------------------------------
+//
+// | 人口が10人に届いた月の翌月（導入の終わり） | 嵐（導入版） | 天（台帳で決め打ち） |
+// | 人口が100人に届いた月（フェーズ2の入口）   | 疫病         | 疫（台帳で決め打ち） |
+// | それ以降 | 乱数のみ。確定イベントは無い | 死因から引く（9-D） |
+//
+// ★ **これが無いと宗教が一度も起きない。**#6-C の平常の門は T_i=35 で、
+//   ヘッドレスでは未叙爵の村長が 33.3 で止まる（正典 5334）。
+//   確定イベントの門（T_i=25・p0=0.90）だけが最初の1件を通す。
+//   正典 4426：「**オーナーが1人も呼ばなくても宗教は生える。**」
+//
+// ★ 導入版の嵐は **死者ゼロの軽い版に固定する。蔵にも収穫係数にも触れない。**
+//   正典 6705：M-33 の「8人＋台本・守りなし 1.8%」は嵐なしで測った値なので、
+//   人口10人の村（4軒）から蔵を抜くと A-25b の採用根拠が測り直しになる。
+//   **導入版から蔵と収穫係数を外せば、絶滅率の実測に一切影響しない。**
+
+export const SCRIPT_POP_STORM = 10;    // 人口10人に届いた月の翌月
+export const SCRIPT_POP_PLAGUE = 100;  // 人口100人に届いた月
+
+/** 確定イベントの進行状態。ワールドが1つ持つ */
+export const EVENT_WINDOW_MONTHS = 12;   // #6-C 条件B「**直近12ヶ月に**大きな災いがあった」
+
+export class Script {
+  constructor() {
+    this.stormAt = -1; this.stormDone = false; this.plagueDone = false;
+    // ★ 確定イベントは**12ヶ月ぶん生きる**。1ヶ月だけにすると、正典の検算
+    //   「村長 信心66 → 12ヶ月で80%」が「1ヶ月で12.6%」になり、宗教がほぼ起きない
+    this.liveKin = new Map();        // 村 → 族
+    this.liveUntil = -1;             // この tick まで条件Bが立つ
+  }
+  /** その村で確定イベントの窓が生きているなら台帳の族、無ければ0 */
+  kinAt(v, tick) { return tick <= this.liveUntil ? (this.liveKin.get(v) ?? 0) : 0; }
+  open(villages, kin, tick) {
+    this.liveKin = new Map(villages.map((v) => [v, kin]));
+    this.liveUntil = tick + EVENT_WINDOW_MONTHS * 30;
+  }
+  save() {
+    return { stormAt: this.stormAt, stormDone: this.stormDone, plagueDone: this.plagueDone,
+             liveKin: [...this.liveKin], liveUntil: this.liveUntil };
+  }
+  load(o) { Object.assign(this, o); this.liveKin = new Map(o.liveKin ?? []); return this; }
+}
+
+/**
+ * 確定イベントを回す。★ 乱数を1回も引かない（確定だから）。
+ * @returns {{kind:0|1|2, villages:number[], kin:number}} kind 0=無し 1=導入の嵐 2=フェーズ2の疫病
+ */
+export function scriptedEvent(P, V, H, pop, tick, script, rng, onX) {
+  const A = P.a, VA = V.a, nv = VA.len;
+
+  // ---- 導入の嵐（人口10人に届いた月の**翌月**）----
+  if (!script.stormDone) {
+    if (script.stormAt < 0 && pop >= SCRIPT_POP_STORM) script.stormAt = tick;
+    else if (script.stormAt >= 0 && tick >= script.stormAt + 30) {
+      script.stormDone = true;
+      // 家1軒だけが損壊（住人は3ヶ月 間借り＝疲労 段+1）／森・辺境の1名が負傷（軽・w=1）
+      let lodged = 0, hurt = 0;
+      for (let i = 0; i < A.len && (lodged < 1 || hurt < 1); i++) {
+        if (!A.alive[i]) continue;
+        if (lodged < 1) { A.fatigue[i] += 3; lodged++; }
+        if (hurt < 1 && (A.job[i] === 2 || A.job[i] === 4) && !A.hurtStage[i]) {
+          A.hurtStage[i] = 1; A.hurtPart[i] = PART_ARM; A.hurtHeal[i] = healMonths(P, i, 1); hurt++;
+        }
+      }
+      // ★ 蔵に触れない。収穫係数に触れない。死者を出さない。
+      //   ★ 不満の X も出さない ── 正典 6699 が導入版の中身を3つに**限定して列挙**しており、
+      //     X はその中に無い。「厄災という種類のものがある」だけを教える行事
+      const vs = [];
+      for (let v = 0; v < nv; v++) if (VA.alive[v]) { VA.kin[v] = KIN_HEAVEN; vs.push(v); }
+      script.open(vs, KIN_HEAVEN, tick);
+      return { kind: 1, villages: vs, kin: KIN_HEAVEN };
+    }
+  }
+
+  // ---- フェーズ2の入口の疫病（人口100人に届いた月）----
+  if (!script.plagueDone && pop >= SCRIPT_POP_PLAGUE) {
+    script.plagueDone = true;
+    // ★★ B-27：正典は「**その村**に宗派が1つも無ければ何も起きない」と**単数**で書いている（6709行）。
+    //   だが「人口が100人に届いた月」は国の目盛りなので、どの村かが書かれていない。
+    //   → **いちばん人の多い村1つ**に落とす。疫病の式そのものが `人口密度 × …` で
+    //     密度に比例すると決まっている（正典2367）ので、最大の村が最も素直な既定。
+    //   ★ 全村に落とすと国ぜんぶが同月に段3（からだ×0.52）になり、
+    //     実測で人口117→2 まで潰れた。「宗教を起こさせたいタイミング」が
+    //     「国が滅ぶタイミング」になってしまう。
+    let big = -1, bigN = -1;
+    for (let v = 0; v < nv; v++) if (VA.alive[v] && VA.pop[v] > bigN) { bigN = VA.pop[v]; big = v; }
+    const vs = [];
+    for (let v = 0; v < nv; v++) {
+      if (v !== big || !VA.alive[v]) continue;
+      vs.push(v); VA.kin[v] = KIN_PLAGUE;
+      for (let i = 0; i < A.len; i++) {
+        if (!A.alive[i] || A.village[i] !== v) continue;
+        // ★ **確定なのは「疫病が来ること」であって「全員がかかること」ではない。**
+        //   正典の検算は「確定疫病（村の12%が死ぬ）」なので、かかる割合は乱数版と同じ器を使う
+        if (rng.next() < PLAGUE_SICK_SHARE && !A.sickStage[i]) {
+          A.sickStage[i] = PLAGUE_STAGE;
+          A.sickHeal[i] = sickMonths(P, i, PLAGUE_STAGE);
+        }
+        if ((A.ageMonths[i] / 12 | 0) >= X_AGE) onX(i, PLAGUE_X, S_GOD_OUT);
+      }
+    }
+    script.open(vs, KIN_PLAGUE, tick);
+    return { kind: 2, villages: vs, kin: KIN_PLAGUE };
+  }
+  return { kind: 0, villages: [], kin: KIN_NONE };
 }
