@@ -109,6 +109,13 @@ export class Land {
   }
 
   /** 毎月：霧を引き直す（#17 §6-8。beginMonth → 拠点 の順） */
+  /**
+   * 霧の年次。**最後に見てからの経過年数を1つ進める**（既知だが可視でない土地だけ）。
+   * ★ #17 §6-6 が「毎年1月に1回」と決めており、これが霧の要（「N年前に見た地図」）。
+   *   呼んでいなかったので、経過年数が一度も進んでいなかった（2026-08-29 に繋いだ）。
+   */
+  fogYear() { F.ageFog(this.fog); }
+
   fogMonth(nVillages) {
     F.beginMonth(this.fog);
     for (let v = 0; v < nVillages; v++) {

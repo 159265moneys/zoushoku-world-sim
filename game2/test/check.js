@@ -1841,7 +1841,10 @@ check('**ストリームを1本使っても、他の11本は1ビットも動か�
     const w = new W.World(12345).genesis();
     // まだ誰も使っていないストリーム（厄災・狩り・宗教・犯罪・戦闘）を先に回しておく。
     // これは「あとで厄災を実装して乱数を引き始めた」状態と同じことを意味する
-    for (const k of [R.STREAM.DISASTER, R.STREAM.HUNT, R.STREAM.RELIGION,
+    // ★ 使い始めたストリームはこの一覧から外すこと。
+    //   厄災（6）は 2026-08-29 に年の収穫係数で使い始めたので外した。
+    //   これが「取り直すのは k に依存する検査だけ」の実体（#17 §10-3）
+    for (const k of [R.STREAM.HUNT, R.STREAM.RELIGION,
                      R.STREAM.CRIME, R.STREAM.BATTLE]) {
       for (let n = 0; n < burn; n++) w.R[k].next();
     }

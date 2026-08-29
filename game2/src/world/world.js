@@ -24,6 +24,7 @@ import { Houses } from './house.js';
 import {
   Villages, WHERE_FRONTIER, HOUSES_PER_VILLAGE,
   assignWork, produceAndEat, syncHouses, AREA_HOME, AREA_FIELD, EAT_ADULT,
+  drawHarvest, HARVEST_HARSH, HARVEST_POOR,
 } from './village.js';
 import { growMonth, seedEffortForAge } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
@@ -53,6 +54,7 @@ export class World {
     //   基準線（M-01/M-05/M-07/M-32）が全損する。this.R[STREAM.XXX] で引く
     this.R = makeStreams(this.seed);
     this._dirTmp = new Float64Array(6);      // 配分の受け皿（毎月10万人ぶん回るので確保しない）
+    this.harvest = 1.0;                      // その年の作柄（正典3-7。年の頭に引き直す）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -206,7 +208,7 @@ export class World {
     assignWork(P, V, t);
 
     if (this.land) this.land.fogMonth(V.len);
-    const food = produceAndEat(P, V, t, this.land);
+    const food = produceAndEat(P, V, t, this.land, this.harvest);
     for (const r of food) {
       if (r && r.shortage > 0 && this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');
     }
@@ -247,6 +249,11 @@ export class World {
     // 地縁（正典3-2「同じ村で育った／同じエリアで働いた ＝ 年数に比例して小さく＋」）。
     // ★ 毎年・**既に線がある相手だけ**（#8 §8 と同じ形）。全員に張ると O(n²) になる
     if (C.monthOf(t) % C.MONTHS_PER_YEAR === 0) {
+      if (this.land) this.land.fogYear();      // 霧の経過年数を1つ進める（#17 §6-6）
+      // ★ その年の作柄を引く（正典3-7）。厄災のストリーム（6番）なので他の11本は動かない
+      this.harvest = drawHarvest(this.R[STREAM.DISASTER]);
+      if (this.harvest < HARVEST_HARSH && this.once('harsh')) this.note('厳冬', `作柄 ${this.harvest.toFixed(2)}`);
+      else if (this.harvest < HARVEST_POOR && this.once('poor')) this.note('凶作', `作柄 ${this.harvest.toFixed(2)}`);
       const TA = this.ties.a, mon = C.monthOf(t);
       // 村ごとに、生きている12歳以上を並べる（決定的な順）
       const byV = new Array(V.a.len);

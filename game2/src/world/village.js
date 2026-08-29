@@ -74,11 +74,38 @@ export const EAT_CHILD = 0.5;
 //   産出の定数（FARM_YIELD 2.6・HUNT_YIELD 1.4・FIELD_SHARE 0.7）は
 //   `0.7×2.6×0.75 + 0.3×1.4×0.95 = 1.764` と 産出135.8 に固定されていて**動かせない**ので、
 //   固定されていない唯一の梃子がここだった。
-//   実測（60通り×120年）：蔵60→失敗20% ／ 80→17% ／ 100→12% ／ **120→10%（確定事項 M-10 の目標）**
-//   ★ 天井は壊れていない（蔵120・250年×6通りで最大人口1006・30軒到達4世界）。
-//   ★ 1軒4人（大人2＋子2）は月3・年36 食べるので、120 は **約3.3年ぶん**の備え
-export const STORE_PER_HOUSE = 120;
+//   実測（60通り×120年）
+//     災害ゼロのとき  蔵60→失敗20% ／ 80→17% ／ 100→12% ／ 120→10%
+//     ★ 2026-08-29 に**年の収穫係数**（凶作・厳冬）を入れたら 蔵120 で **23%** に跳ねた。
+//       測り直し：120→23% ／ 180→17% ／ **240→13%** ／ 300→13% ／ 400→13%
+//       **240 で頭打ち。**それ以上いくら大きくしても失敗率は下がらない。
+//   ★★ 目標は確定事項 M-10 の10%だが、**蔵という梃子は13%で飽和した。**
+//      産出3定数（FARM_YIELD 2.6・HUNT_YIELD 1.4・FIELD_SHARE 0.7）は
+//      `0.7×2.6×0.75 + 0.3×1.4×0.95 = 1.764` と 産出135.8 に固定されていて動かせない。
+//   ★★ そして 240 は 1軒4人で **約6.7年ぶん** ＝ 中世の穀倉としては大きすぎる。
+//      タダで大きくできてしまうのは、**正典が言う「糧は月4%腐る」が未実装**だから。
+//      腐敗が入れば大きな蔵に代金が付き、この値は下がるはず。
+export const STORE_PER_HOUSE = 240;
 export const FIELD_SHARE = 0.7;            // 働き手のうち畑へ回す割合
+
+// ---- 年の収穫係数（正典3-7・#17 §5-1） --------------------------------------
+// **年に1本。世界に1本。**平均1.0・ばらつき0.15・0.5〜1.5で切る。
+// ★ **凶作・厳冬・飢饉が全部ここから出る。**これが無いと 3-7 の自然7行のうち2行が丸ごと立たない。
+//   厳冬 ＝ 0.70未満（43年に1回） ／ 凶作 ＝ 0.85未満（6年に1回）
+// ★ **人工の耕地にだけ掛ける。**森林・川・海湖には掛けない（#17 §5-1）。
+//   だから「畑に寄せた国ほど凶作が痛い」が構造から出る。
+// ★ 嵐は収穫係数に一切触れない（#9-A）。嵐が殴るのは蔵と家であって流れではない。
+//   触ると嵐の年がほぼ100%で飢の災いを兼ね、族が2つ立って宗教の照合が壊れる。
+export const HARVEST_MEAN = 1.0, HARVEST_SD = 0.15;
+export const HARVEST_MIN = 0.5, HARVEST_MAX = 1.5;
+export const HARVEST_HARSH = 0.70;    // これ未満で厳冬
+export const HARVEST_POOR = 0.85;     // これ未満で凶作
+
+/** その年の作柄を引く。年に1度だけ。乱数は厄災のストリーム（6番） */
+export function drawHarvest(rng) {
+  const v = rng.normal(HARVEST_MEAN, HARVEST_SD);
+  return v < HARVEST_MIN ? HARVEST_MIN : v > HARVEST_MAX ? HARVEST_MAX : v;
+}
 
 // ★★ q の分母（2026-08-28）★★
 //   結果 ＝ 基準量 × q、q ＝ 実効値 / Q_DIVISOR（正典 #3-(h)／#17 §5-1）
@@ -174,7 +201,7 @@ export function assignWork(P, V, tick) {
  * 創世から RATION_YEARS 年のあいだは配給が足りない分を埋める（A-10）。
  * @returns 村ごとの明細
  */
-export function produceAndEat(P, V, tick, land = null) {
+export function produceAndEat(P, V, tick, land = null, harvest = 1.0) {
   const A = P.a, VA = V.a;
   const nv = V.len;
   const winter = C.isWinter(tick);
@@ -207,7 +234,7 @@ export function produceAndEat(P, V, tick, land = null) {
       //   ★ 怠業（③≥45）と自暴自棄（④≥65）の状態効果はこの1本に含む。二重に掛けない
       const q = P.effectiveOf(i, AREA_YIELD_STATS[job]) / Q_DIVISOR * moraleOf(P, i);
       if (job === AREA_FIELD) {
-        if (!winter) prodF[v] += FARM_YIELD * q;      // 冬は作物ができない
+        if (!winter) prodF[v] += FARM_YIELD * q * harvest;   // 冬は作物ができない。★収穫係数は畑だけ
       } else {
         prodW[v] += HUNT_YIELD * q * (winter ? WINTER_HUNT : 1);
       }
