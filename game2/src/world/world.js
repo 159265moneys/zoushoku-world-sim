@@ -247,14 +247,32 @@ export class World {
     // 地縁（正典3-2「同じ村で育った／同じエリアで働いた ＝ 年数に比例して小さく＋」）。
     // ★ 毎年・**既に線がある相手だけ**（#8 §8 と同じ形）。全員に張ると O(n²) になる
     if (C.monthOf(t) % C.MONTHS_PER_YEAR === 0) {
-      const TA = this.ties.a;
+      const TA = this.ties.a, mon = C.monthOf(t);
+      // 村ごとに、生きている12歳以上を並べる（決定的な順）
+      const byV = new Array(V.a.len);
+      for (let i = 0; i < P.a.len; i++) {
+        if (!P.a.alive[i] || (P.a.ageMonths[i] / 12 | 0) < 12) continue;
+        const v = P.a.village[i];
+        if (v >= V.a.len) continue;
+        (byV[v] ||= []).push(i);
+      }
       for (let i = 0; i < P.a.len; i++) {
         if (!P.a.alive[i]) continue;
         this.ties.dropDead(P, i);
-        for (let k = 0; k < 20; k++) {
-          const j = TA.to[k][i];
-          if (j < 0 || P.a.village[j] !== P.a.village[i]) continue;
-          this.ties.link(i, j, TIE_W.地縁, T_LAND, C.monthOf(t));   // ★ 種類を落とすと6種の線が血縁だけになる
+        const v = P.a.village[i];
+        const list = v < V.a.len ? byV[v] : null;
+        if (!list) continue;
+        // ★ 既にある線を太らせる ＋ 空いている枠を同じ村の者で埋める。
+        //   「すでに線がある相手だけ」にすると、地縁が血縁を太らせるだけになり、
+        //   村の顔なじみと線が1本も張られない（＝つながりが伸びず影響力が門に届かない）
+        for (const j of list) {
+          if (j === i) continue;
+          if (this.ties.slot(i, j) < 0) {
+            let empty = false;
+            for (let k = 0; k < 20; k++) if (TA.to[k][i] < 0) { empty = true; break; }
+            if (!empty) continue;                    // 枠が満杯なら新しい顔なじみは作らない
+          }
+          this.ties.link(i, j, TIE_W.地縁, T_LAND, mon);
         }
       }
     }
