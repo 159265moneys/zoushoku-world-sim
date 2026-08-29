@@ -324,6 +324,18 @@ export function exception(P, i, s) {
 }
 
 /** 治癒月数 = ceil((1 + 2w) × (1 − 傷の治りの素値/200))。傷の治り100 で半分 */
+/**
+ * 病が治るまでの月数。★★ B-26：正典は病の段（1軽/2重/3疫病）と緩和の倍率は書くが、
+ *   **治るまでの月数をどこにも書いていない。**負傷は healMonths が 傷の治り で持っている。
+ *   → 数字を発明せず、**負傷と同じ形をそのまま使い、効く能力だけ 病への強さ に替える**。
+ *     疫病（段3）・病への強さ42 なら (1+2×3)×(1−42/200) ＝ 5.5 → 6ヶ月。
+ *   ★ これが無いと、疫病にかかった者は**一生 からだ×0.52 のまま**になる（治る道が無い）。
+ */
+export function sickMonths(P, i, stage) {
+  const r = P.a.gene[ID.病への強さ][i] + P.a.ev[ID.病への強さ][i];
+  return Math.max(1, Math.ceil((1 + 2 * stage) * (1 - r / 200)));
+}
+
 export function healMonths(P, i, w) {
   const r = P.a.gene[ID.傷の治り][i] + P.a.ev[ID.傷の治り][i];
   return Math.max(1, Math.ceil((1 + 2 * w) * (1 - r / 200)));
@@ -471,11 +483,16 @@ export function healMonth(P, i, rng) {
  */
 export function conditionMonth(P, tick, loadOf, rng) {
   const A = P.a;
-  let scarred = 0, stunted = 0;
+  let scarred = 0, stunted = 0, healed = 0;
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i]) continue;
     const y = (A.ageMonths[i] / 12) | 0;
     // 病臥は非番と同じ（負荷0）
+    // 病の治癒（B-26）。★ 乱数を引かない。段が下がるのではなく、治ったら消える
+    if (A.sickStage[i] > 0) {
+      if (A.sickHeal[i] > 0) A.sickHeal[i]--;
+      if (A.sickHeal[i] <= 0) { A.sickStage[i] = 0; healed++; }
+    }
     fatigueMonth(P, i, A.sickStage[i] >= 2 ? LOAD_IDLE : loadOf(i));
     const before = A.stunt[i];
     stuntMonth(P, i, y, lackStage(P, i));
@@ -483,7 +500,7 @@ export function conditionMonth(P, tick, loadOf, rng) {
     griefDecay(P, i);
     scarred += healMonth(P, i, rng);
   }
-  return { scarred, stunted };
+  return { scarred, stunted, healed };
 }
 
 /**

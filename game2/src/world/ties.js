@@ -202,3 +202,34 @@ export class Ties {
   bytes() { return this.a.bytes(); }
   bytesPerRow() { return this.a.bytesPerRow(); }
 }
+
+/**
+ * つながりの数を**全員ぶん一気に**数える（#6-B）。
+ *
+ * ★ 素直に「その人へ向いている線」を村内総当たりで探すと O(人×村人数×20) になり、
+ *   10万人・村100人で約3.8秒／月かかる。**前向きに1周する**と厳密に同じ答えが
+ *   O(人×20) ＝ 200万回で出る（M-21 の実測 8.1ms／月 と同じ桁）。
+ *
+ * ★ さらに篩える：相性の上限は 50（AFFINITY_MAX）なので、
+ *   `好き嫌い = 相性 + 出来事の累積 ≥ 60` には **累積 ≥ 10** が要る。
+ *   これは近似ではなく厳密な足切りなので、相性の計算そのものを大半で省ける。
+ *
+ * @param out Int32Array（人数ぶん）。0で始めてここに数え上げる
+ */
+export const DELTA_MIN_FOR_POINT = TIE_POINT - AFFINITY_MAX;   // = 10
+
+export function countIncoming(P, ties, out) {
+  const A = ties.a, PA = P.a, n = Math.min(PA.len, ties.a.cap);
+  out.fill(0);
+  for (let i = 0; i < n; i++) {
+    if (!PA.alive[i]) continue;
+    for (let k = 0; k < SLOTS; k++) {
+      const j = A.to[k][i];
+      if (j < 0 || j >= PA.len || !PA.alive[j]) continue;
+      if (A.delta[k][i] < DELTA_MIN_FOR_POINT) continue;   // 相性が上限でも届かない
+      if (PA.village[j] !== PA.village[i]) continue;       // 同じ村・同じ局・自分が治める村
+      if (ties.feel(P, i, j) >= TIE_POINT) out[j]++;
+    }
+  }
+  return out;
+}

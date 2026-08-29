@@ -82,3 +82,36 @@ export function reputationMonth(P, tick) {
   }
   return { events };
 }
+
+// ---------------------------------------------------------------------------
+// 影響力（正典 #6-B）
+// ---------------------------------------------------------------------------
+//
+//   影響力 I = clamp(0, 100, ( 評判 R ＋ 立場 ＋ つながり点 ) / 3 )
+//     立場       = 爵位の段 × 10 ＋ 役職の段 × 15      ∈ [0, 95]
+//     つながり点 = min(100, 5 × n)                     n ＝ 好き嫌い[j→i] ≥ 60 の人数
+//
+// ★ **分母3の根拠**：3項の上限和が 100 + 95 + 100 = 295。3で割ると 98.3 で、
+//   **係数を1つも発明せずに 0〜100 に収まる唯一の割り方。**
+//
+// ★ 何に効くか
+//     宗教が起きる門         I ≥ 35（平常）／25（確定イベントの厄災）  … #6-C
+//     謀反の実行の門         I ≥ 35                                    … #4-(e)
+//     異端狩りの標的の順序   同じ確率の中では I の高い者から            … #7
+//     国民力③               I そのもの                                … 正典4-4
+//
+// ★ 正典の検算：無名の平民5.0／慕われた老人25.0／村長（男爵）36.7／
+//   街長（伯爵）60.0／局長（公爵）85.0／粛清された者0
+//   ＝ **T_i=35 は「村長格だけが通る」線。**
+
+export const INFLUENCE_DIV = 3;
+export const TITLE_STEP = 10, POST_STEP = 15;
+
+/** 立場 ＝ 爵位の段×10 ＋ 役職の段×15 */
+export const standing = (titleStep, postStep) => titleStep * TITLE_STEP + postStep * POST_STEP;
+
+/** 影響力 I */
+export function influence(rep, titleStep, postStep, tiePoint) {
+  const v = (rep + standing(titleStep, postStep) + tiePoint) / INFLUENCE_DIV;
+  return v < 0 ? 0 : v > 100 ? 100 : v;
+}

@@ -18,7 +18,7 @@ import * as C from '../core/calendar.js';
 import { makeStreams, STREAM, saveStreams, loadStreams } from '../core/rng.js';
 import {
   People, SEX_MALE, SEX_FEMALE, RANK_COMMON, ST_PREGNANT, agingAndDeath, lifespanOf,
-  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH,
+  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep,
 } from './people.js';
 import { Houses } from './house.js';
 import {
@@ -34,7 +34,9 @@ import * as DESIRE from './desire.js';    // 欲7つ（#3）
 import * as REP from './reputation.js';   // 評判（#6-A）
 import * as DIS from './discontent.js';   // 不満6本・恨み6本（第7部 §2・#4）
 import * as OFF from './office.js';       // 身分・爵位・役職（#10）
-import { Ties, W as TIE_W, T_BLOOD, T_LAND } from './ties.js';   // しがらみ（正典3-2）
+import { Ties, W as TIE_W, T_BLOOD, T_LAND } from './ties.js';
+import * as TIES from './ties.js';   // しがらみ（正典3-2）
+import * as DIS9 from './disaster.js';   // 厄災（#9・正典3-7）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -56,6 +58,8 @@ export class World {
     this.R = makeStreams(this.seed);
     this._dirTmp = new Float64Array(6);      // 配分の受け皿（毎月10万人ぶん回るので確保しない）
     this.harvest = 1.0;                      // その年の作柄（正典3-7。年の頭に引き直す）
+    this._tieN = new Int32Array(opts.cap ?? 256);   // つながりの数の受け皿（使い回す）
+    this.cal = new DIS9.Calamity(8);                // 厄災の台帳（#9-D の族・#9-E の r）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -75,6 +79,9 @@ export class World {
       mourned: 0, scarred: 0, stunted: 0,   // 状態12個（第7部 §1）
       seated: 0,                            // 席に座った回数（#10）
       pressure: 0,                          // 日常の基底圧の合計（#3 の ΣX）
+      // ---- 厄災（#9）----
+      storms: 0, plagues: 0, fires: 0, beasts: 0,
+      shock: 0,                             // 厄災の X の合計（⑤の溜め池の入口）
     };
   }
 
@@ -199,6 +206,25 @@ export class World {
     for (let k = 0; k < d.byCause.length; k++) this.counters.byCause[k] += d.byCause[k];
     if (d.byCause[DEATH_HUNGER] > 0 && this.once('hunger-death')) this.note('最初の餓死', '永久に戻らない');
 
+    // ---- 厄災（#9・正典3-7）。★ ①の直後・②の前。厄災の死者も「喪」の入力になる ----
+    //   嵐は**年の収穫係数に一切触れない**（#9-A）。殴るのは蔵と家であって、流れではない
+    this.cal.grow(V.a.len);
+    const dz = DIS9.disasterMonth(P, V, H, t, this.R[STREAM.DISASTER],
+      (i, X, set) => this.shock(i, X, set));
+    if (dz.dead > 0) {
+      this.counters.died += dz.dead;
+      this.counters.byCause[DIS9.DEATH_ACCIDENT] += dz.dead;
+    }
+    this.counters.storms += dz.storms; this.counters.plagues += dz.plagues;
+    this.counters.fires += dz.fires;   this.counters.beasts += dz.beasts;
+    if (dz.storms && this.once('storm')) this.note('嵐', '蔵が3割持っていかれた');
+    if (dz.plagues && this.once('plague')) this.note('疫病', '村の4分の1が伏せた');
+
+    // 死因を**村ごと**に数える（正典 9-D の残作業「byCause を村ごとに持つ」）
+    for (const i of d.dead) this.cal.count(P.a.village[i], P.a.deathCause[i]);
+    for (const i of dz.deadList) this.cal.count(P.a.village[i], P.a.deathCause[i]);
+    this.counters.mourned += COND.mourn(P, dz.deadList);
+
     widow(P);
     H.recount(P, t);
     const newHeads = H.succeed(P, H.index(P));
@@ -220,6 +246,10 @@ export class World {
     for (const r of food) {
       if (r && r.shortage > 0 && this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');
     }
+
+    // ---- 族の判定（#9-D）。★ ⑤の直後。蔵と飢えが確定してから。1月1族 ----
+    //   ここで村ごとの死者率 r（#9-E）も確定する。宗派（#8）が入る日にそのまま読む
+    this.cal.close(V, t, C.monthOf(t));
 
     // 状態の月次（第7部 §1）。疲労・発育不全・喪の減衰・負傷の治癒。
     // ★ 負荷は村と暦が知っていることなので、ここで決めて condition.js に渡す
@@ -278,6 +308,8 @@ export class World {
         }
       }
       OFF.officeYear(P, t, (i) => qv.get(i) ?? 0);
+      // ★ 厳冬 X=8 S={⑤}／凶作 X=5 S={⑤,③}（正典 2384-2385）。⑤の生涯到達値の主柱
+      DIS9.harvestX(P, this.harvest, (i, X, set) => this.shock(i, X, set));
       if (this.harvest < HARVEST_HARSH && this.once('harsh')) this.note('厳冬', `作柄 ${this.harvest.toFixed(2)}`);
       else if (this.harvest < HARVEST_POOR && this.once('poor')) this.note('凶作', `作柄 ${this.harvest.toFixed(2)}`);
       const TA = this.ties.a, mon = C.monthOf(t);
@@ -312,6 +344,17 @@ export class World {
 
     // 評判（#6-A）。風化と、供給源が在る出来事（子を5人育てた・60歳まで生きた）
     REP.reputationMonth(P, t);
+
+    // 影響力（#6-B）。★ 評判が確定した直後。乱数を1回も引かない
+    //   つながりの数は**前向きに1周**して数える（村内総当たりだと10万人で3.8秒／月かかる）
+    if (this._tieN.length < P.a.len) this._tieN = new Int32Array(P.a.len * 2);
+    TIES.countIncoming(P, this.ties, this._tieN);
+    for (let i = 0; i < P.a.len; i++) {
+      if (!P.a.alive[i]) continue;
+      const n = this._tieN[i];
+      P.a.tieN[i] = n > 65535 ? 65535 : n;
+      P.a.infl[i] = REP.influence(P.a.rep[i], titleStep(P.a.rank[i]), P.a.post[i], Ties.point(n));
+    }
 
     // 不満と恨みの薄れ（#4-(c)）。生存者・12歳以上だけ。⑤は薄れない（溜め池）
     for (let i = 0; i < P.a.len; i++) {
@@ -444,6 +487,21 @@ export class World {
     // ★ 日常は**不満**にしか入らない。恨みには一切入らない（#4-(b)）
     for (let d = 0; d < DIS.DIR_COUNT; d++) if (out[d] > 0) DIS.addDiscontent(P, i, d, out[d]);
     this.counters.pressure += sum;
+  }
+
+  /**
+   * 厄災の圧（#9 の X 表）。★ 日常（pressure）と同じ段を通す。
+   *   違うのは S を欲ではなく厄災が名指しすること（正典 6683「割り振りは項目2の配分に従う」）。
+   * ★ t=0（下手人がいない）。だから火災の S={⑤,①} は allocate が①を落として⑤へ回す
+   * ★ ④の月0.80の頭打ち（#5 §3）は日常ぶんと**共有しない**。
+   *   厄災は「日常の基底圧」ではないので、#5 §3 の「日常の④は月0.80まで」に含めない
+   */
+  shock(i, X, set) {
+    const P = this.people, out = this._dirTmp;
+    for (let d = 0; d < DIS.DIR_COUNT; d++) out[d] = 0;
+    DIS.allocate(P, i, X, set, 0, DIS.GATE_ON, out);
+    for (let d = 0; d < DIS.DIR_COUNT; d++) if (out[d] > 0) DIS.addDiscontent(P, i, d, out[d]);
+    this.counters.shock += X;
   }
 
   once(key) { if (this.firsts.has(key)) return false; this.firsts.add(key); return true; }

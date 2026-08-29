@@ -21,6 +21,7 @@ import * as D from '../src/world/desire.js';
 import * as REP from '../src/world/reputation.js';
 import * as DIS from '../src/world/discontent.js';
 import * as OFF from '../src/world/office.js';
+import * as TIES from '../src/world/ties.js';
 import * as C from '../src/core/calendar.js';
 import { make, Store, growArray } from '../src/core/arrays.js';
 import * as S from '../src/core/stats.js';
@@ -33,6 +34,7 @@ import * as W from '../src/world/world.js';
 import * as RUN from '../src/flow/run.js';
 import * as GIFT from '../src/world/gifts.js';
 import * as GG from '../src/core/gifts.gen.js';
+import * as DZ from '../src/world/disaster.js';   // 厄災（#9）
 
 // ★ 検査が「N年生き延びた世界」を要るとき、種を直書きしない。
 //   世界は層を足すたびに厳しくなるので、直書きの種はそのたびに絶滅世界に変わり、
@@ -1498,6 +1500,78 @@ check('#10 は乱数を1回も引かない（基準線を理由なく動かさ�
 });
 
 // ===========================================================================
+section('影響力（#6-B）');
+// ===========================================================================
+
+check('**影響力が正典 #6-B の検算7行と一致する**', () => {
+  // [評判, 爵位の段, 役職の段, つながり点, I]
+  const rows = [
+    ['無名の平民', 0, 0, 0, 15, 5.0], ['慕われた老人', 0, 0, 0, 75, 25.0],
+    ['発掘された者', 25, 0, 0, 100, 41.7], ['村長（男爵）', 10, 1, 1, 75, 36.7],
+    ['街長（伯爵）', 45, 3, 2, 75, 60.0], ['局長（公爵）', 60, 5, 3, 100, 85.0],
+    ['粛清された者', -40, 0, 0, 0, 0],
+  ];
+  for (const [name, r, p, q, pt, want] of rows) {
+    const got = REP.influence(r, p, q, pt);
+    if (Math.abs(got - want) > 0.06) return `${name} の I が ${got.toFixed(1)}（正典 ${want}）`;
+  }
+  // 分母3の根拠：3項の上限和 100+95+100=295 → /3 = 98.3 で 0〜100 に収まる
+  if (REP.influence(100, 5, 3, 100) > 100) return '上限を超えた';
+  if (REP.influence(-100, 0, 0, 0) !== 0) return '下限を割った';
+  return true;
+});
+
+// ★ 速さのために近似していないことの証明。
+//   村内総当たりだと O(人×村人数×20) で10万人・村100人で約3.8秒／月かかる。
+//   前向き1周なら O(人×20) ＝ 200万回。**答えは厳密に同じでなければならない。**
+check('つながりの数え上げが、総当たりと厳密に同じ答えを出す', () => {
+  for (const seed of [13, 1, 5]) {
+    const w = new W.World(seed).genesis();
+    w.runYears(80);
+    const P = w.people, A = P.a, alive = [...P.living()];
+    const fast = new Int32Array(A.len);
+    TIES.countIncoming(P, w.ties, fast);
+    for (const j of alive) {
+      const same = alive.filter(i => A.village[i] === A.village[j]);
+      const slow = w.ties.incoming(P, j, same);
+      if (slow !== fast[j]) return `種${seed} の i=${j} で 総当たり${slow} vs 前向き${fast[j]}`;
+    }
+  }
+  // 足切りが厳密であること：相性の上限50 なので、累積10未満では絶対に60に届かない
+  if (TIES.DELTA_MIN_FOR_POINT !== TIES.TIE_POINT - TIES.AFFINITY_MAX) return '足切りの線が式と合っていない';
+  return true;
+});
+
+check('★ 未叙爵の村長は門35を通らない。叙した瞬間に通る（正典 5334・5346）', () => {
+  // ★ 正典 5334 の検算行：**平民の村長（未叙爵・P=0,Q=1）＝ R10 + 立場15 + つながり75 → 33.3 ✗**
+  //   4363「謀反の候補には入れない（未叙爵の村長 I=33.3 は門35を通らない）」
+  //   3952「叙爵していない村長は、いくら怒らせてもサボタージュにしかならない。叙した瞬間に反乱の資格が付く」
+  //   ★ ヘッドレスでは叙爵する者がいない（原理II：法務局が空ならオーナーが直接叙爵する）。
+  //     だから「誰も門を通らない世界」は**正しい状態**であって、欠陥ではない。
+  if (Math.abs(REP.influence(10, 0, 1, 75) - 100 / 3) > 0.05) return '未叙爵の村長が 33.3 にならない';
+  if (REP.influence(10, 0, 1, 75) >= 35) return '未叙爵の村長が門を通ってしまう';
+  if (REP.influence(10, 1, 1, 75) < 35) return '男爵に叙しても門を通らない';   // 立場 15→25 で 36.7
+
+  // 実際の世界でも、村長が座り、その影響力が正典の帯に乗っていること
+  const w = livingWorld(100, 8);
+  const A = w.people.a;
+  let headman = -1, over = 0, adults = 0;
+  for (const i of w.people.living()) {
+    if ((A.ageMonths[i] / 12 | 0) < 18) continue;
+    adults++;
+    if (A.post[i] === P.POST_HEADMAN) headman = i;
+    if (A.infl[i] >= 35) over++;
+  }
+  if (adults < 10) return `大人が ${adults}人しかいない`;
+  if (headman < 0) return '100年たっても村長の席が埋まらない';
+  if (A.rank[headman] >= P.RANK_BARON) return '誰も叙していないのに村長が有爵になっている';
+  if (A.infl[headman] <= 0) return '村長の影響力が0のまま（立場が効いていない）';
+  // ★ 未叙爵しかいない世界なので、門を通る者は出ないか、出てもごく僅か
+  if (over / adults > 0.10) return `未叙爵だけの世界で ${(over / adults * 100).toFixed(0)}% が門を通っている`;
+  return true;
+});
+
+// ===========================================================================
 section('欲7つ（world/desire.js・#3）');
 // ===========================================================================
 
@@ -1798,6 +1872,120 @@ check('④の出口（結婚と初就労）が効く。生涯ひとりの者ほ�
   const mw = med(wed), ms = med(single);
   // ★ 正典：「生涯独身かつ無役で終わる者は残る。その者は④が高いのが正しい」
   if (!(ms > mw)) return `生涯ひとりの者の④ ${ms.toFixed(1)} が、伴侶ありの ${mw.toFixed(1)} を上回らない`;
+  return true;
+});
+
+// ===========================================================================
+section('厄災（world/disaster.js・#9・正典3-7）');
+// ===========================================================================
+
+// ★ 頻度は正典が「◯年に1回」で書いている。式から逆算して突き合わせる。
+//   ここが合っていないと、族（＝宗教の起源）の出る頻度がまるごとずれる
+check('厄災の頻度が正典の「◯年に1回」と合う', () => {
+  const perYear = (pm, months = 12) => 1 - Math.pow(1 - pm, months);
+  // 嵐：夏〜秋の6ヶ月の各月に0.7% → 4.12%/年 ＝ 24年に1回（正典 6672）
+  const storm = perYear(DZ.STORM_MONTH_P, DZ.STORM_TO - DZ.STORM_FROM + 1);
+  if (Math.abs(storm - 0.0412) > 0.0005) return `嵐が ${(storm * 100).toFixed(2)}%/年（正典4.12%）`;
+  // 疫病：100人・潔癖の平均50 → 20年に1回
+  const pl = (100 / 100) * ((100 - 50) / 100) * DZ.PLAGUE_BASE / 12;
+  const plY = 1 / perYear(pl);
+  if (Math.abs(plY - 20) > 1) return `疫病が ${plY.toFixed(1)}年に1回（正典20年）`;
+  // 火災：30軒 → 30年に1回
+  const fY = 1 / perYear((30 / 30) * (DZ.FIRE_PER_YEAR / 12));
+  if (Math.abs(fY - 30) > 1.5) return `火災が ${fY.toFixed(1)}年に1回（正典30年）`;
+  // 獣害：森10人 → 期待値 年1回
+  const beast = 10 * DZ.BEAST_PER_WORKER_YEAR;
+  if (Math.abs(beast - 1) > 1e-9) return `獣害が 森10人で年${beast}回（正典1回）`;
+  return true;
+});
+
+// ★ #9-A の一番大事な一文。ここが破れると嵐の年がほぼ100%で飢の災いを兼ね、
+//   族が2つ立って 9-E の照合（起源の族と一致するか）が壊れる
+check('★ 嵐は年の収穫係数に一切触れない（#9-A）', () => {
+  const src = readFileSync(join(GAME2, 'src/world/disaster.js'), 'utf8');
+  if (/harvest/i.test(src.replace(/\/\/[^\n]*/g, '').replace(/^export function harvestX[\s\S]*$/m, '')))
+    return '厄災が収穫係数に触っている';
+  // 嵐が触っていいのは 蔵（food）と 家 だけ
+  if (!/VA\.food\[v\] \*= \(1 - STORM_STORE\)/.test(src)) return '嵐が蔵を殴っていない';
+  return true;
+});
+
+check('厄災の点 X と向き S が正典 2384-2389 の表そのまま', () => {
+  const want = [
+    ['厳冬', DZ.HARSH_X, 8], ['凶作', DZ.POOR_X, 5], ['疫病', DZ.PLAGUE_X, 20],
+    ['火災（家）', DZ.FIRE_X_HOUSE, 10], ['火災（村）', DZ.FIRE_X_VILLAGE, 3],
+    ['獣害', DZ.BEAST_X, 6], ['嵐⑤', DZ.STORM_X_HOUSE[0], 12], ['嵐③', DZ.STORM_X_HOUSE[1], 4],
+    ['嵐その他⑤', DZ.STORM_X_OTHER[0], 4], ['嵐その他③', DZ.STORM_X_OTHER[1], 2],
+  ];
+  for (const [nm, got, exp] of want) if (got !== exp) return `${nm} が ${got}（正典 ${exp}）`;
+  // S の中身
+  const eq = (a, b) => a.length === b.length && a.every((x, k) => x === b[k]);
+  if (!eq(DZ.S_GOD_OUT, [DIS.D_GOD, DIS.D_OUT])) return '疫病の S が {⑤,⑥} でない';
+  if (!eq(DZ.S_GOD_PERSON, [DIS.D_GOD, DIS.D_PERSON])) return '火災（家）の S が {⑤,①} でない';
+  if (!eq(DZ.S_GOD_RULE, [DIS.D_GOD, DIS.D_RULE])) return '凶作の S が {⑤,③} でない';
+  if (!eq(DZ.S_OUT, [DIS.D_OUT])) return '獣害の S が {⑥} でない';
+  return true;
+});
+
+check('★ 族は1月1族。同数なら族番号の小さいほう（#9-D）', () => {
+  const c = new Int32Array(P.DEATH_COUNT);
+  // 老衰・難産・産褥・乳幼児 は族を持たない ＝ どれだけ死んでも族は立たない
+  c[1] = 9; c[5] = 9; c[6] = 9; c[7] = 9;
+  if (DZ.kinOfMonth(c) !== P.KIN_NONE) return '数えないはずの死因で族が立った';
+  // 病2→疫1 ／ 餓死4→飢2 が同数 → 小さい族番号（疫1）
+  c.fill(0); c[2] = 3; c[4] = 3;
+  if (DZ.kinOfMonth(c) !== 1) return `同数で ${DZ.kinOfMonth(c)}（族番号の小さい 1疫 のはず）`;
+  // 餓死が勝てば 飢2
+  c.fill(0); c[2] = 1; c[4] = 5;
+  if (DZ.kinOfMonth(c) !== 2) return '餓死が最多なのに族が飢(2)にならない';
+  // 事故3 → 天3
+  c.fill(0); c[3] = 2;
+  if (DZ.kinOfMonth(c) !== 3) return '事故が最多なのに族が天(3)にならない';
+  return true;
+});
+
+// ★ 掟：ストリーム内では、分岐で呼び出し回数を変えない。
+//   厄災は村ごとに**必ず4回**引く（嵐・疫病・火災・獣害）。当たらなくても引いて捨てる
+check('★ 厄災は村ごとに必ず4回引く（当たらなくても引いて捨てる）', () => {
+  const src = readFileSync(join(GAME2, 'src/world/disaster.js'), 'utf8');
+  const m = src.match(/const rStorm = rng\.next\(\), rPlague = rng\.next\(\), rFire = rng\.next\(\), rBeast = rng\.next\(\);/);
+  if (!m) return '4回まとめて引いていない';
+  // 引いたあとに「生きている村か」を見ていること（＝死んだ村でも引く）
+  const after = src.slice(src.indexOf(m[0]) + m[0].length, src.indexOf(m[0]) + m[0].length + 120);
+  if (!/if \(!VA\.alive\[v\]/.test(after)) return '生死の判定が抽選より前にある（分岐で回数が変わる）';
+  return true;
+});
+
+// ★ 厄災が入るまで ⑤ は生涯 0.006 だった。⑤ は時間減衰がゼロの溜め池なので、
+//   厄災の X 表が ⑤ の生涯到達値を**単独で**決めている（正典 2374）
+check('★ 厄災が ⑤（神・世界へ）を生涯ゼロから引き上げた', () => {
+  const w = livingWorld(120, 10);
+  const A = w.people.a;
+  const five = [];
+  for (const i of w.people.living()) {
+    if ((A.ageMonths[i] / 12 | 0) < 40) continue;
+    five.push(A.dis[DIS.D_GOD][i]);
+  }
+  if (five.length < 3) return `40歳以上が ${five.length}人しかいない`;
+  five.sort((a, b) => a - b);
+  const med = five[five.length >> 1];
+  if (med < 1) return `40歳以上の ⑤ の中央値が ${med.toFixed(3)}（厄災が届いていない）`;
+  if (med > 100) return '⑤ が器の上限を超えた';
+  // ★ 嵐・疫病・火災・獣害が実際に起きていること
+  const c = w.counters;
+  if (c.storms + c.plagues + c.fires + c.beasts === 0) return '120年で厄災が1回も起きない';
+  return true;
+});
+
+check('村ごとの死因と族が world に繋がっている（正典 9-D の残作業）', () => {
+  const w = livingWorld(60, 5);
+  if (!w.cal) return '厄災の台帳（Calamity）がワールドに無い';
+  const VA = w.villages.a;
+  if (VA.kin === undefined) return '村に族の列（kin）が無い';
+  if (VA.kinRate === undefined) return '村に死者率の列（kinRate）が無い';
+  let ok = false;
+  for (let v = 0; v < VA.len; v++) if (VA.alive[v] && VA.kinRate[v] > 0) ok = true;
+  if (!ok) return '60年たっても村の死者率が1つも立たない';
   return true;
 });
 
