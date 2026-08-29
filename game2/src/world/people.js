@@ -82,9 +82,17 @@ export const INFANT_AGE = 5;
 // ---- 族（#9-D。その月・その村で最多だった死因から引く。宗教の起源になる） ---
 // 「数えない」死因（老衰・難産・産褥・乳幼児）は族を持たない。
 // 同数で並んだら族番号の小さいほうを採る（決定性のため）。
-export const KIN_NONE = 0, KIN_PLAGUE = 1, KIN_HEAVEN = 2, KIN_FAMINE = 3,
+// ★ 番号の並びは 正典 9-C（6713-6718）と #6-C（5868）が2箇所とも
+//   **疫 → 飢 → 天 → 兵 → 罰 → 内** で一致している。
+//   9-D は「同数で並んだら**族番号の小さいほうを採る**」ので、並びが逆だと
+//   餓死2・事故2 の村で別の宗教が起きる（起源補正が 蓄財−20/慰霊+10 と
+//   信仰性+15/儀礼+15 で別物になる）。★2026-08-29 に 天↔飢 を正典の順へ直した
+export const KIN_NONE = 0, KIN_PLAGUE = 1, KIN_FAMINE = 2, KIN_HEAVEN = 3,
              KIN_WAR = 4, KIN_PUNISH = 5, KIN_STRIFE = 6;
-export const KIN_NAMES = ['—', '疫', '天', '飢', '兵', '罰', '内'];
+export const KIN_NAMES = ['—', '疫', '飢', '天', '兵', '罰', '内'];
+// ★ 6『内』は永久に origin になれない（#6-C 5870・9-C 6718）。
+//   宗教の結果として起きた集団自殺から新しい宗教が起きる、という循環を潰すため
+export const KIN_CAN_ORIGIN = (kin) => kin >= KIN_PLAGUE && kin <= KIN_PUNISH;
 
 /** 死因 → 族。添字が死因番号 */
 export const DEATH_KIN = [

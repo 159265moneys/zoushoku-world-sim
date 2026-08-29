@@ -194,7 +194,10 @@ export function clearDeadTargets(P, i) {
  */
 export function decayMonth(P, i) {
   const A = P.a;
-  const k = toughMul(P.effective(i, ID.図太さ));
+  // ★ 正典 #4-(c) と #5 が2箇所とも「図太さ**現在値**」と書いている（実効値ではない）。
+  //   こころは努力値が積まれないので、現在値 ＝ 才能 ＋ drift。
+  //   drift はまだ器が無いので、いまは才能そのもの
+  const k = toughMul(A.gene[ID.図太さ][i] + A.ev[ID.図太さ][i]);
   const a = resignMul((A.ageMonths[i] / 12) | 0);
   for (let d = 0; d < DIR_COUNT; d++) {
     if (d === D_GOD || d === D_OUT) continue;         // ⑤は薄れない／⑥は年末だけ

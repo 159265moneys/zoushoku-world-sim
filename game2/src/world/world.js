@@ -32,6 +32,7 @@ import * as COND from './condition.js';   // 状態12個（第7部 §1）
 import * as DESIRE from './desire.js';    // 欲7つ（#3）
 import * as REP from './reputation.js';   // 評判（#6-A）
 import * as DIS from './discontent.js';   // 不満6本・恨み6本（第7部 §2・#4）
+import { Ties, W as TIE_W, T_BLOOD, T_LAND } from './ties.js';   // しがらみ（正典3-2）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -57,6 +58,8 @@ export class World {
     this.people = new People(opts.cap ?? 256);
     this.houses = new Houses(64);
     this.villages = new Villages(4);
+    // ★ しがらみは別の配列（0-3e）。1人あたり上位20本だけ持つ
+    this.ties = new Ties(opts.cap ?? 256);
     this.map = null;                   // ★ 地図。opts.map で生える（#17）
     this.land = null;                  // ★ 村と区画を繋ぐ橋
     this.log = [];                     // 節目（年代記の素）
@@ -148,13 +151,28 @@ export class World {
   // ---- 進める ------------------------------------------------------------
   /** 1日。日ごとに起きるのは出産だけ（妊娠10ヶ月がちょうどで終わるため） */
   stepDay() {
-    const t = this.tick;
-    this.people.tickNow = t;      // 妊娠・産後の「段」を出すのに要る（第7部 §1）
+    const t = this.tick, P = this.people;
+    P.tickNow = t;                // 妊娠・産後の「段」を出すのに要る（第7部 §1）
     const b = birthDay(this.people, this.houses, this.villages, t,
                        this.R[STREAM.BIRTH], this.R[STREAM.GIFT]);
     if (b.born) {
       this.counters.born += b.born;
       if (this.once('birth')) this.note('初めての子', `${b.born}人`);
+    }
+    // 血縁の線（正典3-3 の派閥の線の1位）。生まれた子と、親・きょうだい
+    // ★ きょうだいは母の20枠から引く（全走査しない。#15）
+    for (const c of b.babies) {
+      const A = P.a, m = A.mother[c], f = A.father[c];
+      if (m >= 0) this.ties.linkBoth(c, m, TIE_W.親子, T_BLOOD, C.monthOf(t));
+      if (f >= 0) this.ties.linkBoth(c, f, TIE_W.親子, T_BLOOD, C.monthOf(t));
+      if (m >= 0) {
+        const TA = this.ties.a;
+        for (let k = 0; k < 20; k++) {
+          const j = TA.to[k][m];
+          if (j < 0 || j === c || !A.alive[j]) continue;
+          if (A.mother[j] === m) this.ties.linkBoth(c, j, TIE_W.きょうだい, T_BLOOD, C.monthOf(t));
+        }
+      }
     }
     if (b.mothersLost) {
       this.counters.died += b.mothersLost;
@@ -226,6 +244,21 @@ export class World {
       }
     }
 
+    // 地縁（正典3-2「同じ村で育った／同じエリアで働いた ＝ 年数に比例して小さく＋」）。
+    // ★ 毎年・**既に線がある相手だけ**（#8 §8 と同じ形）。全員に張ると O(n²) になる
+    if (C.monthOf(t) % C.MONTHS_PER_YEAR === 0) {
+      const TA = this.ties.a;
+      for (let i = 0; i < P.a.len; i++) {
+        if (!P.a.alive[i]) continue;
+        this.ties.dropDead(P, i);
+        for (let k = 0; k < 20; k++) {
+          const j = TA.to[k][i];
+          if (j < 0 || P.a.village[j] !== P.a.village[i]) continue;
+          this.ties.link(i, j, TIE_W.地縁, T_LAND, C.monthOf(t));   // ★ 種類を落とすと6種の線が血縁だけになる
+        }
+      }
+    }
+
     // 評判（#6-A）。風化と、供給源が在る出来事（子を5人育てた・60歳まで生きた）
     REP.reputationMonth(P, t);
 
@@ -259,9 +292,10 @@ export class World {
     growMonth(P, V, t);
 
     const m = marryMonth(P, H, V, t, this.R[STREAM.MARRY]);
-    for (const c of m.couples ?? []) {                          // 結婚した者は 不満④ −15（#5 §4）
-      DIS.relieveSelf(P, c[0], DIS.SELF_RELIEF.結婚);
+    for (const c of m.couples ?? []) {
+      DIS.relieveSelf(P, c[0], DIS.SELF_RELIEF.結婚);           // 不満④ −15（#5 §4）
       DIS.relieveSelf(P, c[1], DIS.SELF_RELIEF.結婚);
+      this.ties.linkBoth(c[0], c[1], TIE_W.伴侶, T_BLOOD, C.monthOf(t));   // 伴侶の線（正典3-2）
     }
     this.counters.married += m.married; this.counters.blocked += m.blocked;
     if (m.blocked > 0 && this.once('village-full')) {

@@ -87,13 +87,24 @@ function pityCounter(P) {
  */
 export function drawGift(P, rng) {
   const pity = pityCounter(P);
-  // 天井。届いているものがあれば確定で出す
-  for (let g = 1; g <= G.COUNT; g++) {
-    pity[g] += 1;
-    if (pity[g] >= pityOf(g)) { pity[g] = 0; return g; }
-  }
-  // 届いていなければ、重みで抽選
+
+  // ★ 正典 #16 の実装の掟。順番そのものが仕様なので、崩さないこと（2026-08-29 に直した）
+  //   (1) 先に**10本すべて** pity[g]++ する
+  //       （当たった時点で return すると、それ以降の授かりものの天井が系統的に遅れる）
+  for (let g = 1; g <= G.COUNT; g++) pity[g] += 1;
+
+  //   (2) **乱数は出産あたり必ず1回。天井が当たっても引いて捨てる**
+  //       ★ ここが 12ストリーム分割の掟「ストリーム内では、分岐で呼び出し回数を変えない」
+  //         の根拠そのもの。引かずに return すると、同じ種でも世界が分岐する
   const r = rng.next();
+
+  //   (3) 天井は**添字の大きい順（G > SSS > SS > S）**に見る
+  //       昇順だと、天井の低い長寿（S）が奇跡（G）を押しのける
+  for (let g = G.COUNT; g >= 1; g--) {
+    if (pity[g] >= pityOf(g)) { pity[g] = 0; return g; }   // (4) リセットは出た1本だけ
+  }
+
+  // 天井が無ければ、いま引いた r を重みで使う
   let acc = 0;
   for (let g = 1; g <= G.COUNT; g++) {
     acc += baseRateOf(g);
