@@ -210,6 +210,30 @@ export class Sects {
 export const T_FAITH = 60, T_INFL = 35, P0 = 0.05;              // 平常
 export const T_FAITH_EVENT = 50, T_INFL_EVENT = 25, P0_EVENT = 0.90;   // 確定イベント
 
+// ★★ **最初の1つが根付くまでは、確定イベントの門をそのまま使う**（オーナー裁定 2026-08-29）
+//   オーナー：「宗教は大事なので、**最初期の宗教＝種のきっかけは有り余っていい**」
+//
+//   ★ 新しい門を発明していない。正典が既に持っている2つ目の門を、
+//     正典自身が書いた理由の範囲まで広げただけ：
+//     正典5907「T_i=25（確定）は…**フェーズ1・2には役職が無いか村長1人しかいない**ので、
+//               確定イベントで宗教を起こさせるにはここまで下げる必要がある」
+//     ── この理由は確定イベントの2ヶ月だけでなく**序盤ぜんぶ**に当てはまる。
+//
+//   ★ 実測でここが漏斗だった（種3・400年）：
+//       条件B（災い）  860村・回 → ＋条件C（空白）582 → ＋条件A（資格者がその村にいる）**26**
+//       → 400年の期待発起数 0.43件。
+//     災いの村と資格者が同じ村に居合わせる確率が小さいのが本体。
+//
+//   ★ **根付いたら平常へ戻る。**「有り余る」のは最初の1つまで。
+export const ROOTED_FOLLOWERS = DISSOLVE_MIN;   // 消滅しない大きさ＝根付いた
+
+/** 世界にまだ根付いた宗派が1つも無いか（＝序盤の門を使うか） */
+export function isEarly(sects) {
+  const SA = sects.a;
+  for (let s = 1; s < SA.len; s++) if (SA.alive[s] && SA.followers[s] >= ROOTED_FOLLOWERS) return false;
+  return true;
+}
+
 export const BIG_DEAD_SHARE_FOUND = 0.08;   // 条件B(b1)：直近12ヶ月の死者 ≥ 村の人口の8%
 export const W_BASE_RATE = 3, W_DIV = 5, W_MIN = 1.0, W_MAX = 3.0;
 export const FOUND_AGE = 12;                // その村の12歳以上ひとりずつ
@@ -245,6 +269,8 @@ const ID_PIETY = S.needId('信心');
  * @returns {{founded:number, ids:number[]}}
  */
 export function foundMonth(P, V, sects, cal, tick, rng, eventKin = () => 0) {
+  // ★ まだ1つも根付いていないあいだは、確定イベントの門で通す（上の裁定）
+  const early = isEarly(sects);
   const A = P.a, VA = V.a, nv = VA.len;
   const out = { founded: 0, ids: [] };
 
@@ -265,13 +291,13 @@ export function foundMonth(P, V, sects, cal, tick, rng, eventKin = () => 0) {
     const dead12 = cal.deaths12(v);
     const pop = VA.pop[v] || list.length;
     const scriptKin = eventKin(v);
-    const event = scriptKin > 0;
+    const event = scriptKin > 0 || early;      // ★ 序盤は確定イベントと同じ門
     const b1 = pop > 0 && dead12 >= pop * BIG_DEAD_SHARE_FOUND;
     const bigNow = b1 || event;
 
     // ---- 条件C（空白）その災いの族に、答えている宗派が村内に無い ----
     // ★ 確定イベントの月は台帳の族で上書き（9-D）。それ以外は12ヶ月窓の死因から引く
-    const kin = event ? scriptKin : cal.kin12(v);
+    const kin = scriptKin > 0 ? scriptKin : cal.kin12(v);
     let answered = false;
     if (kin !== KIN_NONE) {
       for (const i of list) {
@@ -283,11 +309,12 @@ export function foundMonth(P, V, sects, cal, tick, rng, eventKin = () => 0) {
     const canOrigin = kin >= KIN_PLAGUE && kin <= KIN_PUNISH;
     const live = bigNow && !answered && canOrigin;
     const w = weightOf(pop > 0 ? dead12 / pop : 0);
+    let bornHere = false;
 
     for (const i of list) {
       // ★ 掟：条件を満たさなくても必ず1回引く
       const r = rng.next();
-      if (!live || out.founded) continue;                  // 1つの村で1月に2つは起きない
+      if (!live || bornHere) continue;                     // ★ 1つの村で1月に2つは起きない（村ごと）
       const piety = A.gene[ID_PIETY][i] + A.ev[ID_PIETY][i];
       if (r >= foundP(piety, A.infl[i], w, event)) continue;
 
@@ -308,7 +335,7 @@ export function foundMonth(P, V, sects, cal, tick, rng, eventKin = () => 0) {
       for (const j of chosen) {
         A.sect[j] = id; A.faith[j] = SEED_FAITH; A.mode[j] = MODE_LAY; A.sectMon[j] = 0;
       }
-      out.founded++; out.ids.push(id);
+      out.founded++; out.ids.push(id); bornHere = true;
     }
   }
   return out;
