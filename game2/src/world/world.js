@@ -38,6 +38,7 @@ import { Ties, W as TIE_W, T_BLOOD, T_LAND } from './ties.js';
 import * as TIES from './ties.js';   // しがらみ（正典3-2）
 import * as DIS9 from './disaster.js';   // 厄災（#9・正典3-7）
 import * as SECT from './sect.js';       // 宗派（正典3-6・#6-C・#8）
+import * as WAR from './war.js';         // 戦争（O-27）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -87,6 +88,9 @@ export class World {
       shock: 0,                             // 厄災の X の合計（⑤の溜め池の入口）
       // ---- 宗派（#8）----
       sectsFounded: 0, sectsDissolved: 0, converted: 0,
+      // ---- 戦争（O-27）----
+      wars: 0, warDead: 0, warKills: 0, warFled: 0, warWon: 0,
+      warByStat: 0, warByLuck: 0, ennobled: 0,
       zealots: 0, resigned: 0, apostates: 0,
     };
   }
@@ -245,6 +249,7 @@ export class World {
     // 席の生成と任命（#10-D ＋ B-15）。★ 軒数が確定してから。乱数を1回も引かない
     const off = OFF.officeMonth(P, V, H, t);
     this.counters.seated += off.seated;
+    this.counters.ennobled += off.ennobled;
     if (off.seated > 0 && this.once('headman')) this.note('最初の村長', '10軒目が建った');
 
     if (this.land) this.land.fogMonth(V.len);
@@ -256,6 +261,27 @@ export class World {
     // ---- 族の判定（#9-D）。★ ⑤の直後。蔵と飢えが確定してから。1月1族 ----
     //   ここで村ごとの死者率 r（#9-E）も確定する。宗派（#8）が入る日にそのまま読む
     this.cal.close(V, t, C.monthOf(t));
+
+    // ---- 戦争（O-27）。★ 厄災の直後・族の判定の前。戦死も族「兵」の入力になる ----
+    //   正典3155「敵からの宣戦は来る」。ヘッドレスでも戦は向こうから来る
+    const wr = WAR.warMonth(P, this.population(), t, this.R[STREAM.BATTLE], (i) => {
+      // 家族が戦死（正典3-2 の出来事表 X=25／10）。★ 恨みではなく不満へ
+      const m = P.a.mother[i], f = P.a.father[i], sp = P.a.spouse[i];
+      for (const k of [m, f, sp]) {
+        if (k >= 0 && k < P.a.len && P.a.alive[k]) this.shock(k, 25, DIS9.S_GOD_RULE);
+      }
+    });
+    if (wr.fought) {
+      this.counters.wars++; this.counters.warDead += wr.dead;
+      this.counters.warKills += wr.kills; this.counters.warFled += wr.fled;
+      this.counters.warWon += wr.won;
+      this.counters.warByStat += wr.byStat; this.counters.warByLuck += wr.byLuck;
+      this.counters.byCause[8] += wr.dead;
+      // ★ 数えるのは**戦死した者だけ**。生きている全員を数えると村の台帳が壊れる
+      for (const i of wr.deadList) if (P.a.village[i] !== 0xFFFF) this.cal.count(P.a.village[i], 8);
+      this.counters.mourned += COND.mourn(P, wr.deadList);   // 戦死も「喪」の入力になる
+      if (this.once('war')) this.note('最初の戦', `団結が折れる。戦死は戻らない（${wr.won ? '勝ち' : '負け'}・戦死${wr.dead}）`);
+    }
 
     // ---- 確定イベント（9-B）。★ 族は台帳で決め打ちなので 9-D の上書きになる ----
     //   これが無いと宗教が一度も起きない（平常の門 T_i=35 に未叙爵の村長 33.3 が届かない）
