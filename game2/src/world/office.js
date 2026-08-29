@@ -20,6 +20,7 @@ import * as S from '../core/stats.js';
 import {
   RANK_SERF, RANK_COMMON, RANK_KNIGHT, RANK_BARON, RANK_DUKE, RANK_NAMES, titleStep,
   POST_NONE, POST_HEADMAN, POST_MAYOR, POST_CHIEF, HEADMAN_HOUSES,
+  BUREAUS, BUREAU_MAX, TOWN_VILLAGES, RANK_DUKE as R_DUKE,
   GRADE_MIN, GRADE_MAX, GRADE_YEARS, GRADE_REP, NO_VILLAGE,
 } from './people.js';
 import { civicTotal } from './condition.js';
@@ -135,6 +136,14 @@ export const APPOINT_MIN_AGE = 18;
 //   **老衰まで生きた（+5）や子を5人育てた（+5）だけでは絶対に届かない。**
 //   ＝「長生きしただけの村長は叙されない。手柄を立てた者だけが叙される」が数になる。
 export const ENNOBLE_REP_MIN = 20;
+
+// ★★ **戦果は減衰しない。**これが「評判**というか**功績」の意味。
+//   正典 #6-A は評判を「年−1で0へ戻る」と決めているので、
+//   評判だけを基準にすると、席に就いた者が叙爵に届く窓が**就任後の数年だけ**になる。
+//   実測：400年・村120・街13 でも**公爵が1人も生まれず、局が1つも座らなかった。**
+//   → **討ち取った者は、いつ討ち取ったかに関わらず功績を持つ。**
+//     オーナー裁定「目に見えてわかる戦果」がそのまま叙爵の鍵になる。
+export const ENNOBLE_KILLS_MIN = 1;   // 1人でも討ち取っていれば功績
 export const ENNOBLE_MIN_POST = POST_HEADMAN;   // 席に就いている者だけ（治める土地が要る）
 
 /**
@@ -146,34 +155,87 @@ export function officeMonth(P, V, H, tick) {
   let seated = 0, ennobled = 0;
 
   // ---- 村ごとに、席が生えているか・埋まっているかを見る ----
+  // ★ **1周で済ませる。**村ごとに全人口をなめると O(村数 × 人口) になり、
+  //   村278・人口12,000 で月330万回。10万人の世界では動かない（#12 の要件）。
+  const cur = new Int32Array(nv).fill(-1);      // その村の村長
+  const best = new Int32Array(nv).fill(-1);     // 空席のときの既定の候補
+  const bestV = new Float64Array(nv).fill(-1);
+  for (let i = 0; i < A.len; i++) {
+    if (!A.alive[i]) continue;
+    const pv = A.postVillage[i];
+    if (A.post[i] === POST_HEADMAN && pv < nv) cur[pv] = i;
+    const v = A.village[i];
+    if (v >= nv) continue;
+    if (A.post[i] !== POST_NONE) continue;
+    if ((A.ageMonths[i] / 12 | 0) < APPOINT_MIN_AGE) continue;
+    const c = civicTotal(P, i);                 // 国民力①の降順。同点は添字の小さい順
+    if (c > bestV[v]) { bestV[v] = c; best[v] = i; }
+  }
   for (let v = 0; v < nv; v++) {
     if (!V.a.alive[v]) continue;
     if (V.a.houses[v] < HEADMAN_HOUSES) continue;      // まだ席が生えていない（10軒目・#10-D）
-
-    // その村の村長が生きているか
-    let cur = -1;
-    for (let i = 0; i < A.len; i++) {
-      if (!A.alive[i] || A.post[i] !== POST_HEADMAN) continue;
-      if (A.postVillage[i] === v) { cur = i; break; }
-    }
-    if (cur >= 0) continue;                            // 埋まっている
-
-    // ---- 空席。既定の運転で埋める（B-15）----
-    // 国民力①の降順。同点は添字の小さい順（決定的）
-    let best = -1, bestV = -1;
-    for (let i = 0; i < A.len; i++) {
-      if (!A.alive[i] || A.village[i] !== v) continue;
-      if ((A.ageMonths[i] / 12 | 0) < APPOINT_MIN_AGE) continue;
-      if (A.post[i] !== POST_NONE) continue;           // 既に別の席に座っている
-      const c = civicTotal(P, i);
-      if (c > bestV) { bestV = c; best = i; }
-    }
-    if (best < 0) continue;                            // 座れる者がいない
-
-    setPost(P, best, POST_HEADMAN, v, tick);
+    if (cur[v] >= 0) continue;                         // 埋まっている
+    if (best[v] < 0) continue;                         // 座れる者がいない
+    setPost(P, best[v], POST_HEADMAN, v, tick);
+    A.postSince[best[v]] = tick;
     seated++;
     // ★ 役職に就いても自動では叙爵しない（#10-E）。
     //   「無印なのに冠をかぶっている ＝ 平民出身の村長」がそのまま盤面に出る
+  }
+
+  // ---- 街長の席（#10-D「村が9つ以上のとき生える」）----
+  // ★ 街 ＝ 村 ÷ 9（切り捨て）。人口900 → 村9 → 街1 → 局1（正典 8-3）
+  let live = 0;
+  for (let v = 0; v < nv; v++) if (V.a.alive[v]) live++;
+  const towns = Math.min(BUREAU_MAX, Math.floor(live / TOWN_VILLAGES));
+
+  let mayors = 0, chiefs = 0;
+  const taken = new Uint8Array(BUREAUS.length + 1);
+  let duke = -1, dukeSince = Infinity, mayorBest = -1, mayorV = -1;
+  for (let i = 0; i < A.len; i++) {
+    if (!A.alive[i]) continue;
+    const post = A.post[i];
+    if (post === POST_MAYOR) mayors++;
+    else if (post === POST_CHIEF) { chiefs++; taken[A.bureau[i]] = 1; }
+    // 局長の候補：公爵で、まだ局に就いていない者。在任の長い順
+    if (A.rank[i] >= R_DUKE && post !== POST_CHIEF && A.rankSince[i] < dukeSince) {
+      dukeSince = A.rankSince[i]; duke = i;
+    }
+    // 街長の候補。★★ **村長からの昇任を含める。**
+    //   無役だけから選ぶと、功績で男爵になった村長が街長に昇れず、
+    //   正典 8-3「1つしかない街長の席を**9回まわして**公爵を9人作る」が構造的に回せない。
+    //   実測：400年・村120・街13 でも公爵0・局0 のまま。
+    //   ★ 既に有爵の者（＝功績を証明済み）を優先する。同格なら国民力①の降順
+    if ((post === POST_NONE || post === POST_HEADMAN) && (A.ageMonths[i] / 12 | 0) >= APPOINT_MIN_AGE) {
+      const c = A.civicSum[i] + A.rank[i] * 1000;   // 有爵が必ず前に出る
+      if (c > mayorV) { mayorV = c; mayorBest = i; }
+    }
+  }
+
+  // ---- 局の席（正典 8-3「局は街が生えるたびに1つ生える」）----
+  // ★ 局長 ＝ **公爵でなければ座れない**（#10-A）。公爵は「街1つ＝村9以上」を治めた者。
+  //   だから局を10そろえるには街長の席を9回まわして公爵を9人作るしかない。
+  //   ★ そのたびに「**領地を失った公爵**」（P=5・Q=0・I=56.7）が1人生まれ、
+  //     #4-(e) の検算で年2.5%の謀反の主役になる。**10局そろった国は必ず謀反層を9人抱える。**
+  //   （正典 8-3 が「誰も書いていなかった帰結」として明文化している）
+  if (chiefs < towns) {
+    const best = duke;                          // 上の1周で見つけた公爵
+    if (best >= 0) {
+      let slot = 0;
+      for (let k = 1; k <= BUREAUS.length; k++) if (!taken[k]) { slot = k; break; }
+      if (slot) {
+        setPost(P, best, POST_CHIEF, NO_VILLAGE, tick);
+        A.bureau[best] = slot; A.postSince[best] = tick;
+        chiefs++; seated++;
+      }
+    }
+  }
+
+  // ---- 街長の席。空いていれば埋める ----
+  if (mayors < towns && mayorBest >= 0) {
+    // ★ 村長から昇るときは村の席が空く。翌月、既定の運転で誰かが座る（B-15）
+    setPost(P, mayorBest, POST_MAYOR, NO_VILLAGE, tick);
+    A.postSince[mayorBest] = tick; seated++;
   }
 
   // ---- 功績で叙する（B-33 のオーナー裁定）----
@@ -181,13 +243,22 @@ export function officeMonth(P, V, H, tick) {
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i]) continue;
     if (A.post[i] < ENNOBLE_MIN_POST) continue;
-    if (A.rank[i] >= RANK_BARON) continue;                 // もう有爵
-    if (A.rep[i] < ENNOBLE_REP_MIN) continue;              // 功績が足りない
-    // 治める土地の大きさで爵位が決まる（#10-A）。村長は村1つ＝男爵
-    const want = rankForVillages(A.post[i] === POST_HEADMAN ? 1 : 3);
+    // ★★ **功績の門は「初めて叙されるとき」だけ。**
+    //   一度でも叙された者（＝功績を証明済み）は、以後 **爵位が治める土地に従う**（#10-A）。
+    //   でなければ、男爵の村長が街長に昇っても公爵になれず、局が永久に座らない。
+    //   正典 #10-A「治める土地の大きさで爵位が決まる」がそのまま効く形。
+    if (A.rank[i] < RANK_BARON) {
+      // 功績 ＝ **戦果（減衰しない）** または **いまの評判**（施し・発掘など戦以外の道）
+      if (A.kills[i] < ENNOBLE_KILLS_MIN && A.rep[i] < ENNOBLE_REP_MIN) continue;
+    }
+    // 治める土地の大きさで爵位が決まる（#10-A）
+    //   村長 → 村1つ＝男爵 ／ 街長 → 村9つ＝**公爵** ／ 局長 → 公爵のまま
+    const want = A.post[i] === POST_HEADMAN ? rankForVillages(1)
+               : rankForVillages(TOWN_VILLAGES);
+    if (A.rank[i] >= want) continue;
     if (setRank(P, i, want, tick) > 0) ennobled++;
   }
-  return { seated, ennobled };
+  return { seated, ennobled, towns, mayors, chiefs };
 }
 
 // ---------------------------------------------------------------------------

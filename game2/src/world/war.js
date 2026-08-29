@@ -253,11 +253,20 @@ export function warMonth(P, pop, tick, rng, onFamilyDeath) {
     return { fought: 0, dead: 0, deadList: [], kills: 0, fled: 0, won: 0, byStat: 0, byLuck: 0 };
   }
 
-  // ---- 徴兵。★ 度胸の高い順ではなく**添字の順**（誰を出すかはオーナーの動詞。既定は無作為でない）
-  // ★ 出せるのは働き盛りの3割まで。そのうえで部隊は 12〜40（旧 battle.js の規模）
+  // ---- 徴兵。★ 出せるのは働き盛りの3割まで。部隊は 12〜40（旧 battle.js の規模）
   const n = Math.min(FORCE_MAX, Math.max(FORCE_MIN, Math.floor(levy.length * LEVY_SHARE)));
   if (levy.length < n) return { fought: 0, dead: 0, deadList: [], kills: 0, fled: 0, won: 0, byStat: 0, byLuck: 0 };
+  // ★★ **籤で引く。**添字の順にすると「いつも同じ最年長者だけが戦に出る」ことになり、
+  //   戦果＝叙爵の道が一部の者に固定される。誰が引かれるかは運、
+  //   引かれてからどうなるかはステ ── オーナー裁定「ステ依存の確率数学のはずなので
+  //   **わんちゃん一発逆転**もあると思う」がここで形になる。
+  //   （誰を出すかは本来 軍務局＝オーナーの動詞。空席のあいだの既定として籤を置く）
+  for (let k = levy.length - 1; k > 0; k--) {
+    const j = Math.floor(rng.next() * (k + 1));
+    const t = levy[k]; levy[k] = levy[j]; levy[j] = t;
+  }
   const force = levy.slice(0, n);
+  force.sort((a, b) => a - b);           // ★ 以後の走査を決定的にする
   const stats = force.map((i) => combatOf(P, i));
   const home = side('home', force.map((i, k) => unit(i, stats[k], 'home')));
   const away = makeGhost(stats, n, rng);
