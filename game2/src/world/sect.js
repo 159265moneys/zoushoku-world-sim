@@ -351,7 +351,18 @@ export function sectMonth(P, sects) {
 // ---------------------------------------------------------------------------
 // §4  faith の毎月の動き（★飽和させる）
 // ---------------------------------------------------------------------------
-//   faith ← clamp(0, 100, faith + 流入 × (1 − faith/100) − 流出)
+//   faith ← clamp(0, 100, faith + 流入 × (1 − faith/100) − 流出 × (faith/100))
+//
+// ★★ B-31：**正典の更新式と、正典自身の平衡表が食い違っている。**
+//   正典が書いた更新式   faith + 流入×(1−faith/100) − 流出        → 平衡 100×(1 − 流出/流入)
+//   正典が書いた平衡の式 faith* = 100 × 流入 ÷ (流入 + 流出)
+//   この2つが一致するのは、**流出にも ×(faith/100) が掛かるとき**だけ：
+//     f + i(1−f/100) − o(f/100) = f  ⇔  i = f(i+o)/100  ⇔  f = 100 i/(i+o) ✓
+//   → **平衡表（6行の実データ）のほうを採る。**字面どおりに実装すると
+//     流入0.314・流出0.220 で 58.8 ではなく 30.0 に落ち、実測で faith が
+//     60→20 へ沈み、段2（faith≥35）が村から消えて**伝播が永久に止まった**
+//     （500年で改宗のべ2件・宗派3件すべて消滅・信者0）。
+//   ★ 流出を「持っている量の割合」で引くのは減衰の自然な形でもあり、faith が負にならない。
 //     流入 = 0.35 ×(信心/60)× 村の同宗派率 ×(1 + 伝播の速さ/100) + 0.40 × 儀礼の頻度/100
 //     流出 = 0.35 ×(1 − 信心/100) + 0.40 ×(V⑤/100)
 //
@@ -363,6 +374,12 @@ export function sectMonth(P, sects) {
 
 export const IN_SOCIAL = 0.35, IN_RITE = 0.40, PIETY_DIV = 60;
 export const OUT_PIETY = 0.35, OUT_GOD = 0.40;
+
+/** 月次の更新。★ 流出も faith に比例する（B-31。平衡表と一致させるため） */
+export function faithStep1(faith, inflow, outflow) {
+  const f = faith + inflow * (1 - faith / 100) - outflow * (faith / 100);
+  return f < 0 ? 0 : f > 100 ? 100 : f;
+}
 
 export function faithFlow(piety, sameRate, spread, rite, v5) {
   const inflow = IN_SOCIAL * (piety / PIETY_DIV) * sameRate * (1 + spread / 100)
@@ -564,7 +581,7 @@ export function beliefMonth(P, V, sects, ties, tick, rng, chiefSect = SECT_NONE)
       const same = (bySect.get(`${v},${s}`) ?? 0) / Math.max(1, pop12[v]);
       const { inflow, outflow } = faithFlow(
         piety, same, sects.ax(s, '伝播の速さ'), sects.ax(s, '儀礼の頻度'), v5);
-      let f = A.faith[i] + inflow * (1 - A.faith[i] / 100) - outflow;
+      let f = faithStep1(A.faith[i], inflow, outflow);
       if (A.mode[i] === MODE_ZEALOT && f < ZEAL_FAITH_FLOOR) f = ZEAL_FAITH_FLOOR;
       A.faith[i] = f < 0 ? 0 : f > 100 ? 100 : f;
       if (A.sectMon[i] < 65535) A.sectMon[i]++;
