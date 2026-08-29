@@ -33,6 +33,7 @@ import * as COND from './condition.js';   // 状態12個（第7部 §1）
 import * as DESIRE from './desire.js';    // 欲7つ（#3）
 import * as REP from './reputation.js';   // 評判（#6-A）
 import * as DIS from './discontent.js';   // 不満6本・恨み6本（第7部 §2・#4）
+import * as OFF from './office.js';       // 身分・爵位・役職（#10）
 import { Ties, W as TIE_W, T_BLOOD, T_LAND } from './ties.js';   // しがらみ（正典3-2）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
@@ -72,6 +73,7 @@ export class World {
       ceilingFired: 0,
       split: 0, splitFailed: 0,        // ★ 分村できた／r>12里で詰まった
       mourned: 0, scarred: 0, stunted: 0,   // 状態12個（第7部 §1）
+      seated: 0,                            // 席に座った回数（#10）
       pressure: 0,                          // 日常の基底圧の合計（#3 の ΣX）
     };
   }
@@ -200,12 +202,18 @@ export class World {
     widow(P);
     H.recount(P, t);
     const newHeads = H.succeed(P, H.index(P));
-    for (const i of newHeads) {
-      REP.award(P, i, REP.REP_EVENT.家督を継いだ);              // 評判 +8（#6-A）
-      DIS.relieveSelf(P, i, DIS.SELF_RELIEF.家督);              // 不満④ −12（#5 §4）
+    for (const { heir, from } of newHeads) {
+      REP.award(P, heir, REP.REP_EVENT.家督を継いだ);           // 評判 +8（#6-A）
+      DIS.relieveSelf(P, heir, DIS.SELF_RELIEF.家督);           // 不満④ −12（#5 §4）
+      OFF.inherit(P, heir, from, t);   // 身分の世襲（#10-F）。役職は世襲しない
     }
     syncHouses(V, H);
     assignWork(P, V, t);
+
+    // 席の生成と任命（#10-D ＋ B-15）。★ 軒数が確定してから。乱数を1回も引かない
+    const off = OFF.officeMonth(P, V, H, t);
+    this.counters.seated += off.seated;
+    if (off.seated > 0 && this.once('headman')) this.note('最初の村長', '10軒目が建った');
 
     if (this.land) this.land.fogMonth(V.len);
     const food = produceAndEat(P, V, t, this.land, this.harvest);
@@ -252,6 +260,24 @@ export class World {
       if (this.land) this.land.fogYear();      // 霧の経過年数を1つ進める（#17 §6-6）
       // ★ その年の作柄を引く（正典3-7）。厄災のストリーム（6番）なので他の11本は動かない
       this.harvest = drawHarvest(this.R[STREAM.DISASTER]);
+      // 等級 g と 平民の段（村内の財の五分位）。#10-B・#10-C。乱数を引かない
+      const qv = new Map();
+      {
+        const byV = new Map();
+        for (let i = 0; i < P.a.len; i++) {
+          if (!P.a.alive[i]) continue;
+          const v = P.a.village[i];
+          if (v === 0xFFFF) continue;
+          (byV.get(v) ?? byV.set(v, []).get(v)).push(i);
+        }
+        for (const [, list] of byV) {
+          list.sort((a, b) => P.a.wealth[a] - P.a.wealth[b] || a - b);
+          for (let k = 0; k < list.length; k++) {
+            qv.set(list[k], Math.min(4, Math.floor(k * 5 / Math.max(1, list.length))));
+          }
+        }
+      }
+      OFF.officeYear(P, t, (i) => qv.get(i) ?? 0);
       if (this.harvest < HARVEST_HARSH && this.once('harsh')) this.note('厳冬', `作柄 ${this.harvest.toFixed(2)}`);
       else if (this.harvest < HARVEST_POOR && this.once('poor')) this.note('凶作', `作柄 ${this.harvest.toFixed(2)}`);
       const TA = this.ties.a, mon = C.monthOf(t);

@@ -17,6 +17,7 @@ import { make } from '../core/arrays.js';
 export const HOUSE_SPEC = {
   village: 'u16',
   head: 'i32',        // 家長
+  prevHead: 'i32',    // 前の家長。★身分の世襲（#10-F）の元。継いだ瞬間にしか読まない
   mate: 'i32',        // 伴侶
   founded: 'i32',     // 建った tick
   ended: 'i32',       // 絶えた tick（絶えていなければ -1）
@@ -114,7 +115,7 @@ export class Houses {
       // 家長が死んだか、家を出て（＝所帯を持って）いたら空ける。
       // 空いた席は succeed() が中にいる者から埋める（A-21b：長男は継ぐしかない）
       const hd = A.head[h];
-      if (hd >= 0 && (!PA.alive[hd] || PA.house[hd] !== h)) A.head[h] = NO_ONE;
+      if (hd >= 0 && (!PA.alive[hd] || PA.house[hd] !== h)) { A.prevHead[h] = hd; A.head[h] = NO_ONE; }
       const mt = A.mate[h];
       if (mt >= 0 && (!PA.alive[mt] || PA.house[mt] !== h)) A.mate[h] = NO_ONE;
       if (A.size[h] === 0) { this.end(h, tick); ended++; }
@@ -137,7 +138,8 @@ export class Houses {
         if (score > bestAge) { bestAge = score; best = i; }
       }
       A.head[h] = best;
-      if (best >= 0) succeeded.push(best);      // 評判 +8 の入口（#6-A）。award は world.js が呼ぶ
+      // 評判 +8 と 身分の世襲（#10-F）の入口。award は world.js が呼ぶ
+      if (best >= 0) succeeded.push({ heir: best, from: A.prevHead[h] });
     }
     return succeeded;
   }

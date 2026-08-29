@@ -27,12 +27,38 @@ import { lifespanOverride, deathless } from './gifts.js';
 export const SEX_MALE = 0, SEX_FEMALE = 1;
 export const SEX_NAMES = ['男', '女'];
 
-// A-21b の4段（富の段は未決だが、この4段で置いている）
-export const RANK_POOR = 0, RANK_COMMON = 1, RANK_RICH = 2, RANK_NOBLE = 3;
-export const RANK_NAMES = ['貧民', '平民', '富裕', '貴族'];
+// ---- 身分の段（正典 #10-A。★2026-08-26 に農奴ぶん1段足して 0〜7 になった） -----
+//
+// ★ 正典の中で 0〜7 と 0〜6 が8箇所に割れていた。0〜7 が正しい（B-17 の裁定）。
+//   根拠：#10-A の表7行すべてと `P = max(0, rank − 2)` が 0〜7 で整合し、
+//   #10-A 自身が「P の値は1つも動いていない。rank を1つずらして分母を合わせただけ」と書いている。
+//
+// ★ 旧 RANK_POOR/COMMON/RICH/NOBLE（0〜3）は破棄（#10-H が明記）。
+//   「貧民・富裕・貴族」は新しい体系に対応物が無い。富は rank ではなく commonTier（平民の段）へ。
+export const RANK_SERF = 0, RANK_COMMON = 1, RANK_KNIGHT = 2, RANK_BARON = 3,
+             RANK_VISCOUNT = 4, RANK_EARL = 5, RANK_MARQUIS = 6, RANK_DUKE = 7;
+export const RANK_COUNT = 8;
+export const RANK_NAMES = ['農奴', '平民', '騎士', '男爵', '子爵', '伯爵', '侯爵', '公爵'];
 
-// 就き始める年齢（A-21b）。貧民は7歳で働き始めるが、教える者がいない
-export const WORK_START_AGE = [7, 10, 10, 7];
+/** 爵位の段 P（0..5）。★ 平民も騎士も P=0（騎士は土地を治めないから。正典 #6-B） */
+export const titleStep = (rank) => (rank < RANK_BARON ? 0 : rank - 2);
+
+// 就き始める年齢。★ この8つの数は正典に無い（正典は「各家庭と身分に任せる」としか書かない）。
+//   旧 [7,10,10,7]（貧民7・平民10・富裕10・貴族7）の意図
+//   ＝「貧しい子は早く働き、貴族の子も早くから仕込まれる」をそのまま8段へ広げた。
+//   ★ 4要素のままだと rank 4以上で undefined になり、比較が全部 false になって
+//     貴族が生後0ヶ月から働き始める（6箇所が黙って壊れる）
+export const WORK_START_AGE = [7, 10, 7, 7, 7, 7, 7, 7];
+
+// ---- 役職の段 Q（正典 #10-D。身分とは別軸。世襲しない） ---------------------
+export const POST_NONE = 0, POST_HEADMAN = 1, POST_MAYOR = 2, POST_CHIEF = 3;
+export const POST_NAMES = ['無役', '村長', '街長', '局長'];
+export const HEADMAN_HOUSES = 10;      // 村長の席は「10軒目が建った日」に生える
+
+// ---- 等級 g（正典 #10-C。階級章の横線＝銅銀金） -----------------------------
+export const GRADE_MIN = 1, GRADE_MAX = 3;
+export const GRADE_YEARS = [0, 8, 16];      // g1→2 は在任8年、g2→3 は16年
+export const GRADE_REP = [0, 30, 55];       // ＋ 評判がこの値以上
 
 // 未所属を表す値。Uint32/Uint16 なので -1 が置けない
 export const NO_HOUSE = 0xFFFFFFFF;
@@ -196,6 +222,15 @@ export const SPEC = {
   grief: 'f32',          // 喪の s。Σ k×exp(−経過月/τ)。毎月 exp(−1/τ) を掛けて減らす
   griefTau: 'f32',       // その者の τ（情と教義の死の受容から出る。喪に入った月に決める）
   hardBirth: 'u8',       // 直近の出産が難産だったか（産褥期のからだを0.72に置換する）
+
+  // ---- 身分・爵位・役職（正典 #10-H） -------------------------------------
+  // ★ rank は既存の列を意味づけし直した（0〜3 の旧4段 → 0〜7 の新8段）。
+  //   全員が rank=1（平民）なので、意味づけを変えても値は1つも動かない
+  grade: 'u8',           // 等級 g（1〜3。階級章の横線＝銅銀金）
+  post: 'u8',            // 役職の段 Q（0無役 / 1村長 / 2街長 / 3局長）。世襲しない
+  rankSince: 'i32',      // いまの rank に叙された tick（等級の在任年数の起点）
+  commonTier: 'u8',      // 平民の段 1〜5（村内の財の五分位。★毎年引き直す。下がる）
+  postVillage: 'u16',    // 治めている村（村長のとき）。★爵位は治める土地の大きさで決まる
 
   // ---- 欲7つ（正典 #3。倍率と式は world/desire.js） ----------------------
   rep: 'f32',            // 評判 R ∈ [−100,+100]（#6-A）。年−1で0へ戻る。死んだら凍結

@@ -17,7 +17,7 @@
 
 import * as S from '../core/stats.js';
 import { ST_PREGNANT } from '../core/states.js';
-import { NO_ONE, NO_VILLAGE } from './people.js';
+import { NO_ONE, NO_VILLAGE, titleStep } from './people.js';
 
 // ---- 欲の番号 -------------------------------------------------------------
 export const PRIDE = 0, GREED = 1, ENVY = 2, WRATH = 3,
@@ -282,8 +282,8 @@ export function desireMonth(P, V, tick, opts) {
     u[ENVY]     = unmetA(P, i, REF_ENVY,     sEnvy,  isInnate(P, i, ENVY));
 
     // ---- B群 ----
-    // ★ 立場（爵位・役職）はまだ存在しないので 0。**正典の検算と同じ「無役の平民」の姿**
-    u[PRIDE] = unmetPride(0, 0, A.rep[i], isInnate(P, i, PRIDE));
+    // 立場 ＝ 爵位の段×10 ＋ 役職の段×15（#10-G）。2026-08-29 に繋いだ
+    u[PRIDE] = unmetPride(titleStep(A.rank[i]), A.post[i], A.rep[i], isInnate(P, i, PRIDE));
     // ★ 戦・私闘・処刑・狩りの仕留めは供給源がまだ無い。全員 U=1.000（正典の検算と同じ）
     u[WRATH] = unmetWrath(0, 0, 0, 0, false);
     const bore12 = A.lastBirth[i] >= 0 && tick - A.lastBirth[i] < 360;

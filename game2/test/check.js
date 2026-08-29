@@ -20,6 +20,7 @@ import * as COND from '../src/world/condition.js';
 import * as D from '../src/world/desire.js';
 import * as REP from '../src/world/reputation.js';
 import * as DIS from '../src/world/discontent.js';
+import * as OFF from '../src/world/office.js';
 import * as C from '../src/core/calendar.js';
 import { make, Store, growArray } from '../src/core/arrays.js';
 import * as S from '../src/core/stats.js';
@@ -1383,6 +1384,116 @@ check('職に就いていると努力値が積まれる（100年で実際に増�
   for (const i of w.people.living()) {
     for (const s of S.BY_CATEGORY[S.HEART]) if (w.people.a.ev[s][i] !== 0) return `${S.NAME[s]} に積まれた`;
   }
+  return true;
+});
+
+// ===========================================================================
+section('身分・爵位・役職（world/office.js・#10）');
+// ===========================================================================
+
+check('身分は8段（農奴〜公爵）で、爵位の段 P は #10-A の表どおり', () => {
+  if (P.RANK_COUNT !== 8) return `${P.RANK_COUNT}段`;
+  if (P.RANK_NAMES.length !== 8) return '名前が8つでない';
+  // #10-A の表：平民も騎士も P=0（★騎士は土地を治めないから）／男爵1〜公爵5
+  const want = [0, 0, 0, 1, 2, 3, 4, 5];
+  for (let r = 0; r < 8; r++) {
+    if (P.titleStep(r) !== want[r]) return `${P.RANK_NAMES[r]} の P が ${P.titleStep(r)}（正典 ${want[r]}）`;
+  }
+  // ★ 働き始める年齢が8要素ある。4要素のままだと rank4以上で undefined になり
+  //   比較が全部 false になって貴族が生後0ヶ月から働き始める
+  if (P.WORK_START_AGE.length !== 8) return `WORK_START_AGE が ${P.WORK_START_AGE.length}要素`;
+  for (const v of P.WORK_START_AGE) if (!(v >= 1 && v <= 18)) return `働き始める年齢が ${v}`;
+  return true;
+});
+
+// ★ B-17 の裁定。正典 #10-F は「次男以降 ＝ rank 0」と書いているが、それは農奴を足す前の記述。
+//   そのまま実装すると**貴族の次男が全員農奴になり、公爵家が6世代で消える。**
+//   正典3-1 は「農奴になる道は2本だけ」と明記していて真正面から衝突する。
+check('世襲で農奴を作らない（B-17。下限は平民）', () => {
+  const pp = new P.People(4); const i = pp.spawn(0), j = pp.spawn(0);
+  pp.a.alive[i] = 1; pp.a.alive[j] = 1;
+  pp.a.rank[i] = P.RANK_DUKE;                    // 公爵
+  OFF.inherit(pp, j, i, 0);                      // 長男が継ぐ
+  if (pp.a.rank[j] !== P.RANK_MARQUIS) return `公爵の跡継ぎが ${P.RANK_NAMES[pp.a.rank[j]]}（侯爵のはず）`;
+  // 平民が継いでも農奴にならない
+  const k = pp.spawn(0); pp.a.alive[k] = 1;
+  pp.a.rank[i] = P.RANK_COMMON;
+  OFF.inherit(pp, k, i, 0);
+  if (pp.a.rank[k] !== P.RANK_COMMON) return `平民の跡継ぎが ${P.RANK_NAMES[pp.a.rank[k]]}（平民のはず）`;
+  // 直に農奴へ落とそうとしても止まる
+  OFF.setRank(pp, k, P.RANK_SERF, 0);
+  if (pp.a.rank[k] !== P.RANK_COMMON) return '世襲で農奴が作れてしまう';
+  return true;
+});
+
+check('叙爵の代金が #10-E どおり（評判+10／不満④ −10×ΔP／野心 +8×ΔP）', () => {
+  const pp = new P.People(4); const i = pp.spawn(0);
+  pp.a.alive[i] = 1; pp.a.ageMonths[i] = 30 * 12; pp.a.rank[i] = P.RANK_COMMON;
+  pp.a.dis[DIS.D_SELF][i] = 60;
+  const amb = S.needId('野心');
+  const dP = OFF.setRank(pp, i, P.RANK_BARON, 0);      // 平民 → 男爵（ΔP = 1）
+  if (dP !== 1) return `ΔP が ${dP}`;
+  if (Math.abs(pp.a.rep[i] - 10) > 1e-6) return `評判が ${pp.a.rep[i]}（+10 のはず）`;
+  if (Math.abs(pp.a.dis[DIS.D_SELF][i] - 50) > 1e-6) return `不満④ が ${pp.a.dis[DIS.D_SELF][i]}（60−10 のはず）`;
+  if (Math.abs(pp.a.ev[amb][i] - 8) > 1e-6) return `野心が ${pp.a.ev[amb][i]}（+8 のはず）`;
+  if (pp.a.grade[i] !== 1) return '叙爵で等級が1にリセットされない';
+  // ★ 叙爵は5回（平民→公爵）。5×8 = ちょうど上限+40
+  for (const r of [P.RANK_VISCOUNT, P.RANK_EARL, P.RANK_MARQUIS, P.RANK_DUKE]) OFF.setRank(pp, i, r, 0);
+  if (Math.abs(pp.a.ev[amb][i] - 40) > 1e-6) return `公爵まで叙して野心が ${pp.a.ev[amb][i]}（+40 ちょうどのはず）`;
+  OFF.setRank(pp, i, P.RANK_COMMON, 0);
+  OFF.setRank(pp, i, P.RANK_DUKE, 0);
+  if (pp.a.ev[amb][i] > 40 + 1e-6) return `上げ下げを繰り返すと野心が上限を超える（${pp.a.ev[amb][i]}）`;
+  return true;
+});
+
+// ★ B-15 の裁定。正典は「任免はオーナーの専権」としか書いておらず、
+//   オーナーが押さないときに誰が座るかが無い ＝ ヘッドレスでは席が永久に空。
+//   正典 #13-G の推挙（野心型＝国民力①の降順）を既定の運転として流用した。
+check('★ 席が生えて、オーナーが何もしなくても埋まる（B-15）', () => {
+  const w = livingWorld(100, 8);
+  const A = w.people.a;
+  let seats = 0, headmen = 0;
+  for (let v = 0; v < w.villages.a.len; v++) {
+    if (w.villages.a.alive[v] && w.villages.a.houses[v] >= P.HEADMAN_HOUSES) seats++;
+  }
+  for (const i of w.people.living()) if (A.post[i] === P.POST_HEADMAN) headmen++;
+  if (!seats) return '100年たっても村長の席が1つも生えない（10軒に届かない）';
+  if (!headmen) return `席が ${seats} 生えているのに誰も座っていない`;
+  if (headmen > seats) return `席 ${seats} に対して村長が ${headmen}人`;
+  // ★ 役職に就いても自動では叙爵しない（#10-E）
+  for (const i of w.people.living()) {
+    if (A.post[i] === P.POST_HEADMAN && A.rank[i] >= P.RANK_BARON) {
+      return '村長になっただけで自動的に叙爵されている（#10-E に反する）';
+    }
+  }
+  return true;
+});
+
+check('★ 立場が傲慢に効く。全員1.000の張り付きが解ける（#10-G → #3）', () => {
+  // #10-G の検算表そのもの。立場 = P×10 + Q×15
+  for (const [rank, post, want] of [
+    [P.RANK_COMMON, P.POST_NONE, 0], [P.RANK_COMMON, P.POST_HEADMAN, 15],
+    [P.RANK_BARON, P.POST_HEADMAN, 25], [P.RANK_EARL, P.POST_MAYOR, 60],
+    [P.RANK_DUKE, P.POST_NONE, 50], [P.RANK_DUKE, P.POST_CHIEF, 95],
+  ]) {
+    const got = P.titleStep(rank) * 10 + post * 15;
+    if (got !== want) return `${P.RANK_NAMES[rank]}・${P.POST_NAMES[post]} の立場が ${got}（正典 ${want}）`;
+  }
+  // 実際の世界で、傲慢が 1.000 でない者が出ること
+  const w = livingWorld(100, 8);
+  const A = w.people.a;
+  let relieved = 0;
+  for (const i of w.people.living()) {
+    if ((A.ageMonths[i] / 12 | 0) < 18) continue;
+    if (D.unmetPride(P.titleStep(A.rank[i]), A.post[i], A.rep[i], false) < 0.999) relieved++;
+  }
+  if (!relieved) return '100年たっても傲慢が全員1.000に張り付いたまま';
+  return true;
+});
+
+check('#10 は乱数を1回も引かない（基準線を理由なく動かさない）', () => {
+  const src = readFileSync(join(GAME2, 'src/world/office.js'), 'utf8');
+  if (/rng|Math\.random/.test(src)) return 'office.js が乱数を引いている';
   return true;
 });
 
