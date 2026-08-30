@@ -24,7 +24,7 @@ import { Houses } from './house.js';
 import {
   Villages, WHERE_FRONTIER, HOUSES_PER_VILLAGE,
   assignWork, produceAndEat, syncHouses, AREA_HOME, AREA_FIELD, EAT_ADULT,
-  drawHarvest, HARVEST_HARSH, HARVEST_POOR,
+  drawHarvest, STORE_PER_HOUSE, HARVEST_HARSH, HARVEST_POOR,
 } from './village.js';
 import { growMonth, seedEffortForAge } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
@@ -71,6 +71,7 @@ export class World {
     this.foreignSect = 0;                           // 異国の宗派（捕虜が入る日に1つだけ作る）
     this.near = null;                               // 近い順3村（分村のたびに数え直す）
     this.marryPressure = 0;                         // 婚姻圧カード（民生局・既定0）
+    this.shareStores = true;                        // 備蓄の融通（農業局・既定オン。#11-G）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -100,6 +101,8 @@ export class World {
       // ---- 異端狩り（#7）----
       warned: 0, exiled: 0, burned: 0, misfired: 0,
       captives: 0, refused: 0,
+      // ---- 派閥（正典3-3）／備蓄の融通（#11-G）----
+      factions: 0, biggestFaction: 0, foodSent: 0, villagesFed: 0,
       warByStat: 0, warByLuck: 0, ennobled: 0,
       zealots: 0, resigned: 0, apostates: 0,
     };
@@ -290,6 +293,26 @@ export class World {
     if (off.seated > 0 && this.once('headman')) this.note('最初の村長', '10軒目が建った');
 
     if (this.land) this.land.fogMonth(V.len);
+    // ---- #11-G 食料の村間移送。★ 産出の**前**に、先月の不足を近い村から埋める ----
+    //   正典7217：RATION_YEARS は「創世から10年の時限措置」であって、
+    //   村をまたいで蔵を送る機構ではない。ここが本体。
+    //   ★ 到達率が距離で段になるので**遠い村は救われない** ── カードが代金を持つ
+    if (this.land) {
+      // ★ 正典は「**受け手 B = 産出 < 消費 の村**」。蔵は見ない ──
+      //   蔵を引くと、蔵が厚いあいだは誰も受け手にならず移送が永久に起きない（実測：送った量0）
+      const shortOf = (v) => {
+        const d = V.a.pop[v] * 0.6 * EAT_ADULT + V.a.pop[v] * 0.4 * 0.5;
+        return Math.max(0, d - V.a.produced[v]);
+      };
+      const distOf = (a, b) => {
+        const dx = (this.land.px[a] - this.land.px[b]) / PPL;
+        const dy = (this.land.py[a] - this.land.py[b]) / PPL;
+        return Math.hypot(dx, dy);
+      };
+      const tr = NEAR.transferMonth(V, shortOf, distOf, this.shareStores);
+      this.counters.foodSent += tr.sent; this.counters.villagesFed += tr.moved;
+    }
+
     const food = produceAndEat(P, V, t, this.land, this.harvest);
     for (const r of food) {
       if (r && r.shortage > 0 && this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');

@@ -95,3 +95,76 @@ export function spreadP(d, lines) {
   if (lines <= 0) return 0;
   return SPREAD_P0 * Math.exp(-d / SPREAD_DECAY) * Math.min(1, lines / SPREAD_LINES);
 }
+
+// ---------------------------------------------------------------------------
+// #11-G　食料の村間移送
+// ---------------------------------------------------------------------------
+//
+// ★ 正典7217：`RATION_YEARS(=10)` は village.js の「創世から10年は不足を無条件に埋める
+//   時限措置」であって、**村をまたいで蔵を送る機構ではない**（攻撃-A D-9）。
+//   村間の移送は設計にも実装にも無かったので、ここで機構ごと定義する。
+//
+// ★ 到達率が距離で段になるので、**遠い村は救われない。**
+//   「備蓄の融通をオフ」にすると遠い村が飢える（正典3973）＝ オーナーのカードが代金を持つ。
+
+// ★★ B-35：正典 #11-G は「送り手 ＝ 蔵 > STORE_PER_HOUSE × 軒数 × 0.80」と書き、
+//   同じ節で「★ 蔵は **STORE_PER_HOUSE = 60／軒** の天井があり」と前提を明記している。
+//   だが実装の既定は **240**（2026-08-29 に校正。60 だと絶滅率 38.5% で世界が保たない。
+//   240 で 24.5%）。240 のまま 0.80 を掛けると閾値が **192／軒**になり、
+//   実測の村は **62／軒** しか持たないので**移送が永久に起きない**（実測：送った量0）。
+//
+//   → **閾値は正典が校正した 60／軒 のまま使い、蔵の上限（農業局のつまみ）とは切り離す。**
+//     正典4015 が「蔵の上限」を農業局のつまみと明記している以上、
+//     つまみを回すたびに「余裕がある」の定義まで動くのは筋が悪い。
+//     0.80 と 0.50 は 60 に対して校正された比率なので、その積を絶対量として持つ。
+export const CALIBRATED_STORE = 60;      // 正典 #11-G が前提にしている 蔵／軒
+export const SEND_LINE = CALIBRATED_STORE * 0.80;   // 48／軒 を超えていれば送り手
+export const KEEP_LINE = CALIBRATED_STORE * 0.50;   // 30／軒 は自分に残す
+
+/** 到達率。★ d > 14里 は送れない（徒歩で往復できない） */
+export function reachOf(d) {
+  if (d <= 4) return 1.00;
+  if (d <= 8) return 0.90;
+  if (d <= 14) return 0.70;
+  return 0;
+}
+
+/**
+ * 備蓄の融通（農業局の方針カード・既定オン）。★ 乱数を1回も引かない。
+ * @param shortOf (v) → その村の不足（産出 < 消費 のときの差）。無ければ0
+ * @param distOf (a,b) → 2村の距離（里）
+ * @returns {{sent, moved}} 送った量と、救った村の数
+ */
+export function transferMonth(V, shortOf, distOf, on = true) {
+  if (!on) return { sent: 0, moved: 0 };
+  const nv = V.a.len;
+  const need = [], give = [];
+  for (let v = 0; v < nv; v++) {
+    if (!V.a.alive[v]) continue;
+    const s = shortOf(v);
+    if (s > 0) { need.push(v); continue; }
+    if (V.a.food[v] > SEND_LINE * V.a.houses[v]) give.push(v);
+  }
+  if (!need.length || !give.length) return { sent: 0, moved: 0 };
+
+  let sent = 0, moved = 0;
+  for (const b of need) {
+    let want = shortOf(b);
+    // ★ 近い順に処理する
+    const order = give.slice().sort((x, y) => distOf(b, x) - distOf(b, y) || x - y);
+    for (const a of order) {
+      if (want <= 0) break;
+      const reach = reachOf(distOf(b, a));
+      if (!reach) continue;                       // 14里より遠い村からは届かない
+      const spare = V.a.food[a] - KEEP_LINE * V.a.houses[a];
+      if (spare <= 0) continue;
+      const move = Math.min(spare, want) * reach;
+      if (move <= 0) continue;
+      V.a.food[a] -= move / reach;                // 出た量（道中で減るのは受け手側の取り分）
+      V.a.food[b] += move;
+      sent += move; want -= move;
+    }
+    if (want < shortOf(b)) moved++;
+  }
+  return { sent, moved };
+}

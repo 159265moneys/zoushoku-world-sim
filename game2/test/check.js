@@ -2232,6 +2232,37 @@ check('★ 結婚の範囲は「半径ではなく村数」で切る（#11-D）'
   return true;
 });
 
+check('**食料の村間移送の到達率が正典 #11-G の表と一致する**', () => {
+  for (const [d, want] of [[2, 1.00], [4, 1.00], [6, 0.90], [8, 0.90], [10, 0.70], [14, 0.70], [15, 0]]) {
+    if (NEAR.reachOf(d) !== want) return `d=${d}里 が ${NEAR.reachOf(d)}（正典 ${want}）`;
+  }
+  // ★★ B-35：正典 #11-G は「蔵は STORE_PER_HOUSE = 60／軒」を前提に 0.80／0.50 を置いている。
+  //   実装の既定は 240（60 だと絶滅率38.5%で世界が保たない。240 で24.5%）。
+  //   240 に 0.80 を掛けると閾値が 192／軒になり、実測の村は 62／軒 しか持たないので
+  //   **移送が永久に起きない**。→ 閾値は正典が校正した 60／軒 のまま使う
+  if (NEAR.CALIBRATED_STORE !== 60) return '正典の校正点（60／軒）を使っていない';
+  if (NEAR.SEND_LINE !== 48 || NEAR.KEEP_LINE !== 30) return '送り手/残す線が正典の比率と違う';
+  return true;
+});
+
+// ★★ #11-D・#11-F・#11-G はどれも**村の座標**が要る ＝ 地図（opts.map）が要る。
+//   既定は地図なしなので、この3つは既定では眠っている。地図ありで動くことを見る
+check('★ 地図があれば 結婚の範囲・疫病の伝播・備蓄の融通 が動く', () => {
+  const w = new W.World(3, { map: true }).genesis();
+  w.runYears(200);
+  if (!w.land) return '地図を頼んだのに land が無い';
+  if (w.population() < 10) return `人口が ${w.population()}人しかない`;
+  // 近い順3村が埋まっている
+  if (!w.near) return '近い順3村が作られていない';
+  let hasNear = false;
+  for (let k = 0; k < w.near.near.length; k++) if (w.near.near[k] >= 0) { hasNear = true; break; }
+  if (!hasNear) return '近い順3村が1つも埋まっていない';
+  // 備蓄の融通が起きている（#11-G）
+  if (!(w.counters.foodSent > 0)) return '備蓄の融通が1度も起きない';
+  if (!(w.counters.villagesFed > 0)) return '救われた村が1つも無い';
+  return true;
+});
+
 check('★ 村外婚が実際に起きている（血のプールが村1つに閉じていない）', () => {
   let cross = 0, tot = 0, worlds = 0;
   for (const w of pooledWorlds(250, 5)) {
