@@ -217,18 +217,49 @@ export class Ties {
  * @param out Int32Array（人数ぶん）。0で始めてここに数え上げる
  */
 export const DELTA_MIN_FOR_POINT = TIE_POINT - AFFINITY_MAX;   // = 10
+// ★ 上側の足切り。相性の**下限**は 25（AFFINITY_MIN）なので、
+//   累積が 60−25 ＝ 35 以上あれば、相性がどんなに低くても好き嫌いは必ず60を超える。
+//   → **相性を計算せずに数えてよい。**これも近似ではなく厳密。
+//   地縁は年1.0ずつ積むので、35年連れ添った相手は全部この道を通る＝実測の大半がここ。
+export const DELTA_ALWAYS_POINT = TIE_POINT - AFFINITY_MIN;    // = 35
+
+// 相性に使う7ステの実効値を置く場所（呼び出しのあいだ使い回す）
+let _aff = new Float64Array(0);
 
 export function countIncoming(P, ties, out) {
   const A = ties.a, PA = P.a, n = Math.min(PA.len, ties.a.cap);
   out.fill(0);
+  const NA = AFF_IDS.length;
+
+  // ★★ **実効値を1人1回だけ計算する。**
+  //   `P.effective()` は呼ばれるたびに状態12個の枠をまるごと作り直すので、
+  //   `affinity` は1回で14回ぶん作っていた。20スロットぶん回すと1人あたり280回。
+  //   実測：1,304人で 19.4ms／月 ＝ この関数だけで月の6割。
+  //   ここで 7×人数 に落とす（**答えは1つも変わらない。同じ月の同じ状態を読むだけ**）。
+  if (_aff.length < n * NA) _aff = new Float64Array(n * NA * 2);
+  for (let i = 0; i < n; i++) {
+    if (!PA.alive[i]) continue;
+    const b = i * NA;
+    for (let k = 0; k < NA; k++) _aff[b + k] = P.effective(i, AFF_IDS[k]);
+  }
+
   for (let i = 0; i < n; i++) {
     if (!PA.alive[i]) continue;
     for (let k = 0; k < SLOTS; k++) {
       const j = A.to[k][i];
       if (j < 0 || j >= PA.len || !PA.alive[j]) continue;
-      if (A.delta[k][i] < DELTA_MIN_FOR_POINT) continue;   // 相性が上限でも届かない
+      const d = A.delta[k][i];
+      if (d < DELTA_MIN_FOR_POINT) continue;               // 相性が上限でも届かない
       if (PA.village[j] !== PA.village[i]) continue;       // 同じ村・同じ局・自分が治める村
-      if (ties.feel(P, i, j) >= TIE_POINT) out[j]++;
+      // ★ 相性が下限でも届く ＝ 相性を計算しない
+      if (d >= DELTA_ALWAYS_POINT) { out[j]++; continue; }
+      // 相性 ＝ 50 −（7ステの差の平均）× 0.5。上で作った表から読む
+      const bi = i * NA, bj = j * NA;
+      let dif = 0;
+      for (let m = 0; m < NA; m++) { const x = _aff[bi + m] - _aff[bj + m]; dif += x < 0 ? -x : x; }
+      let aff = 50 - (dif / NA) * 0.5;
+      if (aff < AFFINITY_MIN) aff = AFFINITY_MIN; else if (aff > AFFINITY_MAX) aff = AFFINITY_MAX;
+      if (aff + d >= TIE_POINT) out[j]++;
     }
   }
   return out;
