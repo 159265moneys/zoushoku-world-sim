@@ -42,6 +42,7 @@ import * as WAR from './war.js';         // 戦争（O-27）
 import * as HER from './heresy.js';      // 異端狩り（#7）
 import * as FAC from './faction.js';     // 派閥（正典3-3）
 import * as NEAR from './near.js';       // 近い順3村（#11-D・#11-F）
+import * as PLAN from './plan.js';       // 具申と差し止め（#14）
 // ★ 地図（#17）。**2026-08-30 から既定でオン。**
 //   #11-D 結婚の範囲・#11-F 疫病の村間伝播・#11-G 備蓄の融通 は3つとも「村の距離」を読み、
 //   距離は村の座標にしかない。地図が無いと3つとも黙って何もしない（死にコードになる）。
@@ -78,6 +79,7 @@ export class World {
     this.near = null;                               // 近い順3村（分村のたびに数え直す）
     this.marryPressure = 0;                         // 婚姻圧カード（民生局・既定0）
     this.shareStores = true;                        // 備蓄の融通（農業局・既定オン。#11-G）
+    this.plans = new PLAN.Plans();                  // 予定の待ち行列（#14）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -109,6 +111,8 @@ export class World {
       captives: 0, refused: 0,
       // ---- 派閥（正典3-3）／備蓄の融通（#11-G）----
       factions: 0, biggestFaction: 0, foodSent: 0, villagesFed: 0,
+      // ---- 具申（#14）----
+      plansRan: 0, plansSilent: 0, plansOverflow: 0, distortSum: 0,
       warByStat: 0, warByLuck: 0, ennobled: 0,
       zealots: 0, resigned: 0, apostates: 0,
     };
@@ -291,6 +295,27 @@ export class World {
     }
     syncHouses(V, H);
     assignWork(P, V, t);
+
+    // ---- 具申（#14）。★ 役職者が予定を立て、猶予を過ぎたら**勝手に実行される** ----
+    //   ヘッドレスでは誰も止めないので全部通る。それでも
+    //   **歪み**（命じたとおりには一度も実行されない）と **L の段** は世界に効く
+    for (let i = 0; i < P.a.len; i++) {
+      if (!P.a.alive[i] || !P.a.post[i]) continue;
+      if (!P.a.loyalty[i]) P.a.loyalty[i] = PLAN.baselineL(P, i);
+      const perYear = PLAN.plansPerYear(P.a.post[i]);
+      if (!perYear) continue;
+      // 年 perYear 件 ＝ 12/perYear ヶ月に1件。★ 立案の位相を人ごとにずらす（乱数を引かない）
+      const every = Math.max(1, Math.round(12 / perYear));
+      if ((C.monthOf(t) + (i % every)) % every !== 0) continue;
+      // 叙爵・粛清・異端の処分・国境処理だけが「重」（#14 の表）。いまは軽だけが立つ
+      this.plans.add(P, i, P.a.postVillage[i], PLAN.LIGHT, t, P.a.bureau[i]);
+    }
+    const pl = this.plans.runDue(P, t, (i) => P.a.loyalty[i], (p, d) => {
+      this.counters.distortSum += Math.abs(d);
+    });
+    this.counters.plansRan += pl.ran;
+    this.counters.plansSilent += pl.silent;
+    this.counters.plansOverflow += pl.overflowed;
 
     // 席の生成と任命（#10-D ＋ B-15）。★ 軒数が確定してから。乱数を1回も引かない
     const off = OFF.officeMonth(P, V, H, t);

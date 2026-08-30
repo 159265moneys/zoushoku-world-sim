@@ -40,6 +40,7 @@ import * as HER from '../src/world/heresy.js';   // 異端狩り（#7）
 import * as WAR from '../src/world/war.js';      // 戦争と捕虜（O-27）
 import * as FAC from '../src/world/faction.js';  // 派閥（正典3-3）
 import * as NEAR from '../src/world/near.js';    // 近い順3村（#11-D・#11-F）
+import * as PLAN from '../src/world/plan.js';    // 具申と差し止め（#14）
 
 // ★ 検査が「N年生き延びた世界」を要るとき、種を直書きしない。
 //   世界は層を足すたびに厳しくなるので、直書きの種はそのたびに絶滅世界に変わり、
@@ -2176,6 +2177,73 @@ check('★ 宗派が実際に起きて、信者が付き、消滅の規則が在
   // ★ **信者が根付くかは別問題。**いまは根付かない（台帳の未達項目）。
   //   ここで「200年後に信者がいること」を求めると、正典が保証していない結果を
   //   検査が要求することになる。**機構が在ることだけを見る。**
+  return true;
+});
+
+// ===========================================================================
+section('具申と差し止め（world/plan.js・#14）');
+// ===========================================================================
+
+// > **既定＝実行。**役職者が予定を立て、猶予を過ぎたら勝手に実行される。
+// > オーナーは猶予のあいだだけ止められる。
+check('**猶予が正典 #14 の検算2行と一致する**', () => {
+  // 中央値（従順66・野心48・誇り60）→ m=1.24 → 軽37日／重112日
+  const a = PLAN.graceMul(66, 48, 60);
+  if (Math.abs(a - 1.24) > 0.005) return `m が ${a.toFixed(3)}（正典1.24）`;
+  if (Math.abs(PLAN.graceDays(PLAN.LIGHT, a) - 37) > 0.5) return `軽が ${PLAN.graceDays(0, a).toFixed(0)}日（正典37）`;
+  if (Math.abs(PLAN.graceDays(PLAN.HEAVY, a) - 112) > 0.5) return `重が ${PLAN.graceDays(1, a).toFixed(0)}日（正典112）`;
+  // 従順50・野心66・誇り77 → m=1.00（★実質止めさせない局長）
+  if (PLAN.graceMul(50, 66, 77) !== 1.0) return '止めさせない局長で m が 1.00 にならない';
+  // ★ 中心は 50/50/50。歪み式の中心（60/48/66/66）を流用しない
+  if (PLAN.graceMul(50, 50, 50) !== 1.0) return '中心 50/50/50 で m が 1.00 にならない';
+  if (PLAN.graceMul(100, 0, 0) !== 2.0) return '上限が 2.0 で切られていない';
+  if (PLAN.BASE_DAYS[PLAN.LIGHT] !== 30 || PLAN.BASE_DAYS[PLAN.HEAVY] !== 90) return '基底猶予が正典と違う';
+  return true;
+});
+
+check('**歪みが正典7836 の式そのまま（中心 60/48/66/66 で 0）**', () => {
+  if (PLAN.distortion(60, 48, 66, 66) !== 0) return '中心で 0 にならない';
+  // ★ 誇りと野心が上げ、従順と保身が下げる
+  if (!(PLAN.distortion(90, 48, 66, 66) > 0)) return '誇りが歪みを増やしていない';
+  if (!(PLAN.distortion(60, 90, 66, 66) > 0)) return '野心が歪みを増やしていない';
+  if (!(PLAN.distortion(60, 48, 95, 66) < 0)) return '従順が歪みを減らしていない';
+  if (!(PLAN.distortion(60, 48, 66, 95) < 0)) return '保身が歪みを減らしていない';
+  // 上限 ±0.40。★ L<40 の局長だけ ±0.60
+  if (Math.abs(PLAN.distortion(100, 100, 0, 0)) !== 0.40) return '上限が ±0.40 でない';
+  if (Math.abs(PLAN.distortion(100, 100, 0, 0, 30)) !== 0.60) return 'L<40 で ±0.60 に開かない';
+  return true;
+});
+
+check('★ L の段が正典 #14 の表そのまま', () => {
+  if (PLAN.L_REPORT !== 55 || PLAN.L_DISTORT !== 40 || PLAN.L_REVOLT !== 20) return 'L の段が正典と違う';
+  // ★ L が下がる事由は1つだけ ── オーナーが上書きしたとき。−8 × (0.5 + 誇り/100)
+  if (Math.abs(PLAN.overrideCost(60) - 8 * 1.1) > 1e-9) return `上書きの代金が ${PLAN.overrideCost(60)}（正典 −8×(0.5+誇り/100)）`;
+  if (!(PLAN.overrideCost(100) > PLAN.overrideCost(0))) return '誇りが高いほど痛くなっていない';
+  if (PLAN.L_RECOVER !== 2) return '回復が 年+2 でない';
+  return true;
+});
+
+check('★ 件数の川が正典3855 のまま（村長4／街長12／局長12 件/年）', () => {
+  if (PLAN.plansPerYear(P.POST_HEADMAN) !== 4) return '村長が 4件/年 でない';
+  if (PLAN.plansPerYear(P.POST_MAYOR) !== 12) return '街長が 12件/年 でない';
+  if (PLAN.plansPerYear(P.POST_CHIEF) !== 12) return '局長が 12件/年 でない';
+  if (PLAN.plansPerYear(P.POST_NONE) !== 0) return '無役が予定を立てている';
+  // 待ち行列の上限（軽50／重180）。溢れたら古いものから実行される（止められない）
+  if (PLAN.QUEUE_CAP[PLAN.LIGHT] !== 50 || PLAN.QUEUE_CAP[PLAN.HEAVY] !== 180) return '待ち行列の上限が正典と違う';
+  return true;
+});
+
+check('★ 具申の川が実際に流れている（ヘッドレスでは誰も止めないので全部通る）', () => {
+  const w = livingWorld(250, 30);
+  const c = w.counters;
+  if (!c.plansRan) return '250年で予定が1件も実行されない';
+  // ★ オーナーが居ないので上書きが起きない ＝ L は基準値のまま ＝ 黙殺も溢れも起きない
+  if (c.plansSilent) return `誰も上書きしていないのに黙殺が ${c.plansSilent}件`;
+  if (c.plansOverflow) return `オーナーが居ないのに待ち行列が ${c.plansOverflow}件 溢れた`;
+  // ★ 歪みは必ず立つ（命じたとおりには一度も実行されない）
+  const mean = c.distortSum / c.plansRan;
+  if (!(mean > 0)) return '歪みが1件も立っていない';
+  if (mean > PLAN.DISTORT_CAP) return `歪みの平均が ${mean.toFixed(3)}（上限 ${PLAN.DISTORT_CAP} を超えている）`;
   return true;
 });
 
