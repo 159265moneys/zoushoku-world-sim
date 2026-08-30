@@ -569,7 +569,7 @@ export function calamityBranch(kin, origin, rate, lastRate, event, systemized, p
 // 月次 ── faith・⑤の出口・伝播 をこの順で1周する
 // ---------------------------------------------------------------------------
 import * as DIS from './discontent.js';
-import { T_FAITH as TIE_FAITH } from './ties.js';
+import { T_FAITH as TIE_FAITH, affinityTable, feelWith } from './ties.js';
 
 const EMPTY = [];   // 線の種類3（信仰・宗派）。門の T_f とは別物
 
@@ -587,12 +587,15 @@ export function beliefMonth(P, V, sects, ties, tick, rng, chiefSect = SECT_NONE)
 
   // ---- 村ごとの宗派の頭数（同宗派率・誘い手の分母に要る）----
   const pop12 = new Int32Array(nv);
-  const bySect = new Map();                        // `${v},${s}` → 人数
+  // ★ 鍵は**数値**にする。`${v},${s}` の文字列連結は人数ぶん走るので、
+  //   1,304人の実測でここが beliefMonth の重さの一因だった。宗派IDは 4096 未満に収まる
+  const KEY = (v, sx) => v * 4096 + sx;
+  const bySect = new Map();                        // KEY(v,s) → 人数
   // ★★ 村ごと・宗派ごとの**信徒の名簿**を1周で作る。
   //   これが無いと、伝播の判定が「人 × 宗派 × 全人口」の三重走査になり **O(人口²)**。
   //   実測：300年36秒 → 400年202秒（人口1,007→4,802）と超線形に膨らんでいた。
   //   #12 が要求する10万人では絶対に動かない。
-  const roster = new Map();                        // `${v},${s}` → 添字の配列
+  const roster = new Map();                        // KEY(v,s) → 添字の配列
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i] || (A.ageMonths[i] / 12 | 0) < FOUND_AGE) continue;
     const v = A.village[i];
@@ -600,7 +603,7 @@ export function beliefMonth(P, V, sects, ties, tick, rng, chiefSect = SECT_NONE)
     pop12[v]++;
     const s = A.sect[i];
     if (s) {
-      const k = `${v},${s}`;
+      const k = KEY(v, s);
       bySect.set(k, (bySect.get(k) ?? 0) + 1);
       if (A.faith[i] >= INVITE_FAITH) (roster.get(k) ?? roster.set(k, []).get(k)).push(i);
     }
@@ -616,7 +619,7 @@ export function beliefMonth(P, V, sects, ties, tick, rng, chiefSect = SECT_NONE)
 
     // ---- §4 faith の月次。★飽和させる ----
     if (s && SA.alive[s]) {
-      const same = (bySect.get(`${v},${s}`) ?? 0) / Math.max(1, pop12[v]);
+      const same = (bySect.get(KEY(v, s)) ?? 0) / Math.max(1, pop12[v]);
       const { inflow, outflow } = faithFlow(
         piety, same, sects.ax(s, '伝播の速さ'), sects.ax(s, '儀礼の頻度'), v5);
       let f = faithStep1(A.faith[i], inflow, outflow);
@@ -667,6 +670,8 @@ export function beliefMonth(P, V, sects, ties, tick, rng, chiefSect = SECT_NONE)
   }
 
   // ---- §6 伝播（入信・改宗）----
+  //   ★ 誘い手を数えるのに好き嫌いを何度も引くので、相性の表を1枚だけ作ってから読む
+  const tab = affinityTable(P);
   //   ★ 狂信は動かない。sectMon<12 のあいだは改宗の判定を回さない
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i] || (A.ageMonths[i] / 12 | 0) < FOUND_AGE) continue;
@@ -680,12 +685,12 @@ export function beliefMonth(P, V, sects, ties, tick, rng, chiefSect = SECT_NONE)
     let bestS = 0, bestInvite = -1;
     for (let s = 1; s < SA.len; s++) {
       if (!SA.alive[s] || s === cur) continue;
-      if (!(bySect.get(`${v},${s}`) > 0)) continue;
+      if (!(bySect.get(KEY(v, s)) > 0)) continue;
       // 誘い手：同じ村の s の信徒（faith ≥ 35）のうち、i への好き嫌い[→i] が 55 以上 の人数
       // ★ 名簿から引く。全人口を走らない
       let invite = 0;
-      for (const j of roster.get(`${v},${s}`) ?? EMPTY) {
-        if (ties.feel(P, j, i) >= INVITE_LIKE) invite++;
+      for (const j of roster.get(KEY(v, s)) ?? EMPTY) {
+        if (feelWith(tab, ties, j, i) >= INVITE_LIKE) invite++;
       }
       const r = rng.next();                       // ★ 候補の宗派ごとに必ず1回引く
       if (!invite) continue;                      // 線の無い相手からは伝わらない
@@ -697,7 +702,7 @@ export function beliefMonth(P, V, sects, ties, tick, rng, chiefSect = SECT_NONE)
     if (cur) {
       A.faith[i] = CONVERT_FAITH; st.converted++;
       // 旧宗派の信徒からの好き嫌いが本人へ −20。★ 名簿から引く
-      for (const j of roster.get(`${v},${cur}`) ?? EMPTY) ties.link(j, i, CONVERT_HATE, TIE_FAITH, mon);
+      for (const j of roster.get(KEY(v, cur)) ?? EMPTY) ties.link(j, i, CONVERT_HATE, TIE_FAITH, mon);
     } else { A.faith[i] = JOIN_FAITH; st.joined++; }
     A.sect[i] = bestS; A.mode[i] = MODE_LAY; A.sectMon[i] = 0;
     A.dis[DIS.D_GOD][i] *= V5_ON_JOIN;

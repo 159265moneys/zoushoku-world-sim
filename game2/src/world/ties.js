@@ -226,23 +226,45 @@ export const DELTA_ALWAYS_POINT = TIE_POINT - AFFINITY_MIN;    // = 35
 // 相性に使う7ステの実効値を置く場所（呼び出しのあいだ使い回す）
 let _aff = new Float64Array(0);
 
-export function countIncoming(P, ties, out) {
-  const A = ties.a, PA = P.a, n = Math.min(PA.len, ties.a.cap);
-  out.fill(0);
-  const NA = AFF_IDS.length;
-
-  // ★★ **実効値を1人1回だけ計算する。**
-  //   `P.effective()` は呼ばれるたびに状態12個の枠をまるごと作り直すので、
-  //   `affinity` は1回で14回ぶん作っていた。20スロットぶん回すと1人あたり280回。
-  //   実測：1,304人で 19.4ms／月 ＝ この関数だけで月の6割。
-  //   ここで 7×人数 に落とす（**答えは1つも変わらない。同じ月の同じ状態を読むだけ**）。
+/**
+ * 相性の表を1枚作る。★ `P.effective()` は呼ばれるたびに**状態12個の枠をまるごと作り直す**ので、
+ *   相性を何度も引く処理（つながり点・伝播の誘い手）は、頭で1回だけ作ってから読む。
+ *   `affinity` は7ステ×2人で14回呼ぶので、20スロットぶん回すと**1人あたり280回**だった。
+ *   **同じ月の同じ状態を読むだけなので、値は1つも変わらない。**近似ではない。
+ */
+export function affinityTable(P) {
+  const PA = P.a, n = PA.len, NA = AFF_IDS.length;
   if (_aff.length < n * NA) _aff = new Float64Array(n * NA * 2);
   for (let i = 0; i < n; i++) {
     if (!PA.alive[i]) continue;
     const b = i * NA;
     for (let k = 0; k < NA; k++) _aff[b + k] = P.effective(i, AFF_IDS[k]);
   }
+  return { a: _aff, w: NA };
+}
 
+/** 表から読む相性。`affinity(P,i,j)` と同じ値 */
+export function affinityWith(tab, i, j) {
+  const a = tab.a, NA = tab.w, bi = i * NA, bj = j * NA;
+  let d = 0;
+  for (let m = 0; m < NA; m++) { const x = a[bi + m] - a[bj + m]; d += x < 0 ? -x : x; }
+  const v = 50 - (d / NA) * 0.5;
+  return v < AFFINITY_MIN ? AFFINITY_MIN : v > AFFINITY_MAX ? AFFINITY_MAX : v;
+}
+
+/** 表から読む好き嫌い[i → j]。`ties.feel(P,i,j)` と同じ値 */
+export function feelWith(tab, ties, i, j) {
+  if (i === j) return FEEL_MAX;
+  const base = affinityWith(tab, i, j);
+  const k = ties.slot(i, j);
+  const v = k < 0 ? base : base + ties.a.delta[k][i];
+  return v < FEEL_MIN ? FEEL_MIN : v > FEEL_MAX ? FEEL_MAX : v;
+}
+
+export function countIncoming(P, ties, out) {
+  const A = ties.a, PA = P.a, n = Math.min(PA.len, ties.a.cap);
+  out.fill(0);
+  const tab = affinityTable(P);
   for (let i = 0; i < n; i++) {
     if (!PA.alive[i]) continue;
     for (let k = 0; k < SLOTS; k++) {
@@ -251,15 +273,9 @@ export function countIncoming(P, ties, out) {
       const d = A.delta[k][i];
       if (d < DELTA_MIN_FOR_POINT) continue;               // 相性が上限でも届かない
       if (PA.village[j] !== PA.village[i]) continue;       // 同じ村・同じ局・自分が治める村
-      // ★ 相性が下限でも届く ＝ 相性を計算しない
+      // ★ 相性が下限（25）でも届く ＝ 相性を計算しない。これも厳密な足切り
       if (d >= DELTA_ALWAYS_POINT) { out[j]++; continue; }
-      // 相性 ＝ 50 −（7ステの差の平均）× 0.5。上で作った表から読む
-      const bi = i * NA, bj = j * NA;
-      let dif = 0;
-      for (let m = 0; m < NA; m++) { const x = _aff[bi + m] - _aff[bj + m]; dif += x < 0 ? -x : x; }
-      let aff = 50 - (dif / NA) * 0.5;
-      if (aff < AFFINITY_MIN) aff = AFFINITY_MIN; else if (aff > AFFINITY_MAX) aff = AFFINITY_MAX;
-      if (aff + d >= TIE_POINT) out[j]++;
+      if (affinityWith(tab, i, j) + d >= TIE_POINT) out[j]++;
     }
   }
   return out;

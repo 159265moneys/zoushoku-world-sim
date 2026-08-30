@@ -298,6 +298,21 @@ export function afterBirthStage(P, i) {
  * ステ1本ぶんの例外倍率（Π(例外倍率[i])）。M[枠] の外に掛かる。
  * 古傷の部位・発育不全・妊娠が、名指しのステだけをさらに削る。
  */
+/**
+ * その人に例外倍率の**元が1つでもあるか**。★ 無ければ `exception` は必ず 1.0。
+ * 古傷・発育不全・先天障害（体／隠れ）・妊娠 のどれも無い者が大半なので、
+ * ここで弾くと 国民力①（75ステ）の計算から `exception` の呼び出しがまるごと消える。
+ * ★ 近似ではない。**無い者は本当に 1.0 になる**（下の exception と同じ条件を見ている）。
+ */
+export function hasException(P, i) {
+  const A = P.a;
+  for (let k = 0; k < SCAR_SLOTS; k++) if (A.scarPart[k][i]) return true;
+  if (A.stunt[i]) return true;
+  const dt = A.defectType[i];
+  if (dt === DEFECT_BODY || dt === DEFECT_HIDDEN) return true;
+  return pregStage(P, i) > 0;
+}
+
 export function exception(P, i, s) {
   const A = P.a;
   let m = 1;
@@ -583,11 +598,19 @@ export const CIVIC_TOP = 5;
 
 const _civ = [0, 0, 0];
 const _top = new Float64Array(64);
-function top5(P, i, cat, m) {
+function top5(P, i, cat, m, exc) {
   const A = P.a, list = S.BY_CATEGORY[cat];
-  for (let k = 0; k < list.length; k++) {
-    const s = list[k];
-    _top[k] = (A.gene[s][i] + A.ev[s][i]) * m * exception(P, i, s);
+  // ★ 例外の元が1つも無い者は `exception` を1回も呼ばない（大半がこちら）
+  if (!exc) {
+    for (let k = 0; k < list.length; k++) {
+      const s = list[k];
+      _top[k] = (A.gene[s][i] + A.ev[s][i]) * m;
+    }
+  } else {
+    for (let k = 0; k < list.length; k++) {
+      const s = list[k];
+      _top[k] = (A.gene[s][i] + A.ev[s][i]) * m * exception(P, i, s);
+    }
   }
   // 上位5本だけ要るので、全部は並べない
   let sum = 0;
@@ -603,6 +626,7 @@ function top5(P, i, cat, m) {
 /** 国民力① ＝ ( 50×上位5本(からだ) + 25×上位5本(あたま) ) / 75 */
 export function civicTotal(P, i) {
   frames(P, i, _civ, true);
-  return (CIVIC_BODY_W * top5(P, i, S.BODY, _civ[S.BODY])
-        + CIVIC_MIND_W * top5(P, i, S.MIND, _civ[S.MIND])) / (CIVIC_BODY_W + CIVIC_MIND_W);
+  const exc = hasException(P, i);            // ★ 1人につき1回だけ見る
+  return (CIVIC_BODY_W * top5(P, i, S.BODY, _civ[S.BODY], exc)
+        + CIVIC_MIND_W * top5(P, i, S.MIND, _civ[S.MIND], exc)) / (CIVIC_BODY_W + CIVIC_MIND_W);
 }
