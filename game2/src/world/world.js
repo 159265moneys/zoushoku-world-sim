@@ -40,6 +40,7 @@ import * as DIS9 from './disaster.js';   // 厄災（#9・正典3-7）
 import * as SECT from './sect.js';       // 宗派（正典3-6・#6-C・#8）
 import * as WAR from './war.js';         // 戦争（O-27）
 import * as HER from './heresy.js';      // 異端狩り（#7）
+import * as FAC from './faction.js';     // 派閥（正典3-3）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -462,6 +463,13 @@ export class World {
       // 信仰が好き嫌いに乗る（#8 §8）。★ 既に線がある相手だけ。40年で最大 ±20。
       //   相性（25〜50）と同じ桁になるので、**信仰が派閥の線に乗る**
       SECT.beliefYear(P, this.sects, this.ties, t);
+
+      // 派閥（正典3-3）。★ 手で作らない。**線が密になっている塊を数え直すだけ。**
+      //   信仰が線に乗った**直後**に数える（宗派が派閥の形を変えるので）
+      const fa = FAC.factionYear(P, this.ties);
+      this.counters.factions = fa.count;
+      this.counters.biggestFaction = fa.biggest;
+      if (fa.count && this.once('faction')) this.note('派閥', `${fa.count}個。最大${fa.biggest}人`);
     }
 
     // 評判（#6-A）。風化と、供給源が在る出来事（子を5人育てた・60歳まで生きた）

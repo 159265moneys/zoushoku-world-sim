@@ -38,6 +38,7 @@ import * as DZ from '../src/world/disaster.js';   // 厄災（#9）
 import * as SECT from '../src/world/sect.js';    // 宗派（#8・正典3-6・#6-C）
 import * as HER from '../src/world/heresy.js';   // 異端狩り（#7）
 import * as WAR from '../src/world/war.js';      // 戦争と捕虜（O-27）
+import * as FAC from '../src/world/faction.js';  // 派閥（正典3-3）
 
 // ★ 検査が「N年生き延びた世界」を要るとき、種を直書きしない。
 //   世界は層を足すたびに厳しくなるので、直書きの種はそのたびに絶滅世界に変わり、
@@ -2170,6 +2171,66 @@ check('★ 宗派が実際に起きて、信者が付き、消滅の規則が在
   // ★ **信者が根付くかは別問題。**いまは根付かない（台帳の未達項目）。
   //   ここで「200年後に信者がいること」を求めると、正典が保証していない結果を
   //   検査が要求することになる。**機構が在ることだけを見る。**
+  return true;
+});
+
+// ===========================================================================
+section('派閥（world/faction.js・正典3-3）');
+// ===========================================================================
+
+// > **派閥を手で作らない。人と人の線が密になっている塊を、派閥と呼ぶ。**
+// > **線に乗るのは「好き嫌い」であって「評判」ではない。**
+check('線の重みが正典3-3 の順（上ほど強い）そのまま', () => {
+  const T = FAC.TYPE_W;
+  // 1 血縁 > 2 主従 > 3 信仰 > 4 怨恨 > 5 財 > 6 地縁
+  const order = [TIES.T_BLOOD, TIES.T_FAVOR, TIES.T_FAITH, TIES.T_FEUD, TIES.T_COIN, TIES.T_LAND];
+  for (let k = 1; k < order.length; k++) {
+    if (!(T[order[k - 1]] > T[order[k]])) return `${k}位と${k + 1}位の重みが逆転している`;
+  }
+  if (T[TIES.T_NONE] !== 0) return '線種なしに重みが付いている';
+  // ★ 塊に数えるのは好き嫌い60以上（#6-B のつながり点と同じ線）
+  if (FAC.JOIN_FEEL !== TIES.TIE_POINT) return '塊に数える線が つながり点 と違う';
+  return true;
+});
+
+check('★ 派閥は手で作られていない（線の塊として出てくる）', () => {
+  const src = readFileSync(join(GAME2, 'src/world/faction.js'), 'utf8');
+  // 乱数を1回も引かない
+  if (/rng|Math\.random/.test(src)) return '派閥が乱数を引いている（決定的でない）';
+  // 恨みは #4 が別に持っているので、塊には好きの側だけを数える
+  if (!/塊に数えるのは\*\*好きの側だけ\*\*/.test(src)) return '恨みと好きの区別が書かれていない';
+  const w = livingWorld(300, 60);
+  const A = w.people.a;
+  const fa = FAC.factionYear(w.people, w.ties);
+  if (!fa.count) return '300年たっても派閥が1つも立たない';
+  // ★ 同じ入力で2度呼んで同じ答え（決定的）
+  const before = A.faction.slice(0, A.len);   // ★ 列は cap ぶんあるので len で切る
+  const fb = FAC.factionYear(w.people, w.ties);
+  if (fb.count !== fa.count) return '2度呼ぶと違う答えになる（決定的でない）';
+  for (let i = 0; i < A.len; i++) if (A.alive[i] && A.faction[i] !== before[i]) return '2度目で所属が変わった';
+  // 大きさの下限より小さい塊は派閥と呼ばない
+  const sz = new Map();
+  for (const i of w.people.living()) if (A.faction[i]) sz.set(A.faction[i], (sz.get(A.faction[i]) ?? 0) + 1);
+  for (const [, n] of sz) if (n < FAC.MIN_SIZE) return `${n}人の塊が派閥になっている（下限 ${FAC.MIN_SIZE}）`;
+  return true;
+});
+
+check('★ 派閥の芯は影響力で決まる（評判ではない）', () => {
+  const w = livingWorld(300, 60);
+  const A = w.people.a;
+  FAC.factionYear(w.people, w.ties);
+  let checked = 0;
+  const sz = new Map();
+  for (const i of w.people.living()) if (A.faction[i]) sz.set(A.faction[i], (sz.get(A.faction[i]) ?? 0) + 1);
+  for (const [f] of [...sz].sort((a, b) => b[1] - a[1]).slice(0, 5)) {
+    const core = FAC.coreOf(w.people, f);
+    if (core < 0) return `派閥${f} に芯がいない`;
+    for (const i of w.people.living()) {
+      if (A.faction[i] === f && A.infl[i] > A.infl[core] + 1e-9) return `派閥${f} の芯より影響力の高い者がいる`;
+    }
+    checked++;
+  }
+  if (!checked) return '派閥が1つも立たない';
   return true;
 });
 
