@@ -39,6 +39,7 @@ import * as TIES from './ties.js';   // しがらみ（正典3-2）
 import * as DIS9 from './disaster.js';   // 厄災（#9・正典3-7）
 import * as SECT from './sect.js';       // 宗派（正典3-6・#6-C・#8）
 import * as WAR from './war.js';         // 戦争（O-27）
+import * as HER from './heresy.js';      // 異端狩り（#7）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -64,6 +65,7 @@ export class World {
     this.cal = new DIS9.Calamity(8);                // 厄災の台帳（#9-D の族・#9-E の r）
     this.sects = new SECT.Sects(16);                // 宗派の台帳（正典3-6・#6-C）
     this.script = new DIS9.Script();                // 確定イベント（9-B）の進行
+    this.inq = new HER.Inquisition();               // 異端審問会（#7）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -90,6 +92,8 @@ export class World {
       sectsFounded: 0, sectsDissolved: 0, converted: 0,
       // ---- 戦争（O-27）----
       wars: 0, warDead: 0, warKills: 0, warFled: 0, warWon: 0,
+      // ---- 異端狩り（#7）----
+      warned: 0, exiled: 0, burned: 0, misfired: 0,
       warByStat: 0, warByLuck: 0, ennobled: 0,
       zealots: 0, resigned: 0, apostates: 0,
     };
@@ -314,6 +318,17 @@ export class World {
     if (bl.apostates && this.once('apostate')) this.note('最初の棄教', '⑤の4割が恨み③へ移った');
     // 継承（#8 §5）。★ 7歳の誕生月に1回だけ。信仰は血ではなく育ちで伝わる
     SECT.inheritMonth(P, this.R[STREAM.RELIGION]);
+
+    // ---- 異端狩り（#7）。★ 信仰が確定した直後。乱数は犯罪のストリーム（9番）----
+    //   祭祀局と刑務局が両方座り、正統宗派の信仰性≥75・硬さ≥50 が24ヶ月続いて初めて生える
+    const hz = HER.heresyMonth(P, this.sects, this.inq, t, this.R[STREAM.CRIME]);
+    if (hz.warned || hz.exiled || hz.burned) {
+      this.counters.warned += hz.warned; this.counters.exiled += hz.exiled;
+      this.counters.burned += hz.burned; this.counters.misfired += hz.misfired;
+      this.counters.byCause[9] += hz.burned;
+      if (hz.burned && this.once('burn')) this.note('最初の焚刑', '焼く教団は、焼かれた者から生まれる');
+      if (this.once('inquisition')) this.note('異端審問会', `正統＝宗派${hz.star}・厳格さ${hz.hs.toFixed(0)}・激しさ${hz.hv.toFixed(0)}`);
+    }
 
     // 状態の月次（第7部 §1）。疲労・発育不全・喪の減衰・負傷の治癒。
     // ★ 負荷は村と暦が知っていることなので、ここで決めて condition.js に渡す

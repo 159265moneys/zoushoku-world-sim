@@ -36,6 +36,7 @@ import * as GIFT from '../src/world/gifts.js';
 import * as GG from '../src/core/gifts.gen.js';
 import * as DZ from '../src/world/disaster.js';   // 厄災（#9）
 import * as SECT from '../src/world/sect.js';    // 宗派（#8・正典3-6・#6-C）
+import * as HER from '../src/world/heresy.js';   // 異端狩り（#7）
 
 // ★ 検査が「N年生き延びた世界」を要るとき、種を直書きしない。
 //   世界は層を足すたびに厳しくなるので、直書きの種はそのたびに絶滅世界に変わり、
@@ -2168,6 +2169,127 @@ check('★ 宗派が実際に起きて、信者が付き、消滅の規則が在
   // ★ **信者が根付くかは別問題。**いまは根付かない（台帳の未達項目）。
   //   ここで「200年後に信者がいること」を求めると、正典が保証していない結果を
   //   検査が要求することになる。**機構が在ることだけを見る。**
+  return true;
+});
+
+// ===========================================================================
+section('異端狩り（world/heresy.js・#7）');
+// ===========================================================================
+
+// ★ #7 は正典が実測の表を3つ持っている。19行ぜんぶを実装そのもので突き合わせる
+check('**網の目 G が正典 #7 §3 の表6行と一致する**', () => {
+  for (const [hs, want] of [[9.8, 21.7], [19.0, 16.6], [24.4, 13.6], [30.3, 10.3], [40.2, 4.8], [46.5, 4.0]]) {
+    const g = HER.meshOf(hs);
+    if (Math.abs(g - want) > 0.15) return `H_s ${hs} → G ${g.toFixed(1)}（正典 ${want}）`;
+  }
+  // ★ 床4：H_s が高くても門が0にならない（自派の全員が候補になるのを止める）
+  if (HER.meshOf(100) !== HER.G_FLOOR) return '床4が効いていない';
+  // ★ 上限 2×d*：H_s=0 でも捕虜(40)と無信仰(30)は必ず網に入る
+  const gMax = HER.meshOf(0);
+  if (gMax > 2 * HER.D_MED + 1e-9) return '上限 2×d* が効いていない';
+  if (gMax > P.NOFAITH_D) return `H_s=0 の教団の網から無信仰が逃げる（G=${gMax.toFixed(1)} > 30）`;
+  if (gMax > HER.CAPTIVE_D) return '捕虜が逃げる';
+  return true;
+});
+
+check('**摘発の年率が正典 #7 §3 の表8行と一致する**', () => {
+  const rows = [[9.8, 30, 0.346], [24.4, 13.6, 0.177], [24.4, 22.1, 0.468], [24.4, 30, 0.861],
+                [24.4, 40, 1.075], [40.2, 30, 1.414], [46.5, 40, 2.039], [24.4, 5, 0.024]];
+  for (const [hs, d, want] of rows) {
+    const y = (1 - Math.pow(1 - HER.catchP(hs, d), 12)) * 100;
+    if (Math.abs(y - want) > 0.02) return `H_s ${hs}・d ${d} → ${y.toFixed(3)}%（正典 ${want}%）`;
+  }
+  // ★ d を2乗にする理由：1乗だと H_s と d が可換になり、
+  //   「厳格な教団」と「大きくズレた個体」の区別が付かない
+  const a = HER.catchP(48.8, 13.6), b = HER.catchP(24.4, 27.2);
+  if (Math.abs(a - b) < 1e-9) return 'H_s と d が可換になっている（2乗が効いていない）';
+  if (HER.catchP(100, 100) > HER.P_CAP + 1e-12) return '天井 0.0020 が効いていない';
+  return true;
+});
+
+check('**誤爆率が正典 #7 §5 の表5行と一致する**', () => {
+  for (const [hv, hs, want] of [[29.3, 40.2, 7.3], [35.8, 24.4, 11.3], [55.6, 19.0, 18.9],
+                                [69.2, 40.2, 17.3], [83.3, 3, 33.9]]) {
+    const m = HER.misfireP(hv, hs) * 100;
+    if (Math.abs(m - want) > 0.15) return `H_v ${hv}・H_s ${hs} → ${m.toFixed(1)}%（正典 ${want}%）`;
+  }
+  // ★ 厳格さが高いほど網が正確（誤爆が減る）／激しさが高いほど誤爆が増える
+  if (!(HER.misfireP(50, 40) < HER.misfireP(50, 10))) return '厳格さが誤爆を減らしていない';
+  if (!(HER.misfireP(60, 25) > HER.misfireP(30, 25))) return '激しさが誤爆を増やしていない';
+  return true;
+});
+
+// ★ 正典の一番大事な帰結。H_s は100に届かないので、
+//   「審問会が自分の信者を食い尽くして国が消える」が構造的に起きない
+check('★ 規範意識42以上の者は、どんな教団の自派狩りにも掛からない（#7 §3）', () => {
+  const src = readFileSync(join(GAME2, 'src/world/heresy.js'), 'utf8');
+  if (!/const line = 100 - hs;/.test(src)) return '自派狩りの門が 100 − H_s になっていない';
+  // 実測の H_s の最大は 58.6（帯なし）。門は 100 − 58.6 = 41.4
+  const maxHs = 58.6;
+  if (100 - maxHs > 42) return `門が ${(100 - maxHs).toFixed(1)}（42以下のはず）`;
+  // ★ そして自派狩りは「獲物が絶えたとき」の1本だけ
+  if (!/獲物が絶えたとき/.test(src)) return '獲物が絶えたときの切り替えが無い';
+  return true;
+});
+
+check('★ ズレ d は6項目だけ。無信仰30・捕虜40 は実測分布の上に置かれている', () => {
+  if (HER.D_AXES.length !== 6) return `${HER.D_AXES.length}項目`;
+  for (const n of HER.D_AXES) if (SECT.AX[n] === undefined) return `${n} という軸が無い`;
+  // ★ 導出値（恐怖への耐性・恨みの風化率・帰属の付け替え）を混ぜない
+  for (const n of ['恐怖への耐性', '恨みの風化率', '帰属の付け替え']) {
+    if (HER.D_AXES.includes(n)) return `導出値 ${n} が混ざっている`;
+  }
+  // 別宗派どうしの d の p99.7 は 28.7、最大 38.1（正典の実測）
+  //   → 無信仰30 は p99.7 の上、捕虜40 は最大より上
+  if (!(P.NOFAITH_D > 28.7)) return '無信仰30 が別宗派の p99.7 より下';
+  if (!(HER.CAPTIVE_D > 38.1)) return '捕虜40 が別宗派の最大より下';
+  return true;
+});
+
+// ★ 世界がまだ祭祀局・刑務局に届かないので、**その場を組み立てて**動くことを見る
+check('★ 審問会は 祭祀局＋刑務局＋信仰性75＋硬さ50 が24ヶ月続いて初めて生える', () => {
+  const w = livingWorld(150, 20);
+  const A = w.people.a;
+  const inq = new HER.Inquisition();
+  // 宗派を1つ立てて、そこに祭祀局長と刑務局長を座らせる
+  const people = [...w.people.living()].filter((i) => (A.ageMonths[i] / 12 | 0) >= 18);
+  if (people.length < 4) return `大人が ${people.length}人しかいない`;
+  const d = new Float64Array(SECT.AXES.length);
+  d[SECT.AX.信仰性] = 80; d[SECT.AX.教義の硬さ] = 60;
+  d[SECT.AX.異端狩りの厳格さ] = 24.4; d[SECT.AX.異端狩りの激しさ] = 10;   // 戒告どまりの教団
+  const sid = w.sects.create(P.KIN_PLAGUE, 0, people[0], w.tick, d);
+  const rites = people[0], jail = people[1];
+  A.post[rites] = P.POST_CHIEF; A.bureau[rites] = P.BUREAUS.indexOf('祭祀局') + 1; A.sect[rites] = sid;
+  A.post[jail] = P.POST_CHIEF;  A.bureau[jail] = P.BUREAUS.indexOf('刑務局') + 1;
+  const rng = w.R[8];
+  // 23ヶ月では生えない
+  for (let m = 0; m < HER.INQ_MONTHS - 1; m++) HER.heresyMonth(w.people, w.sects, inq, w.tick, rng);
+  if (inq.alive) return `${HER.INQ_MONTHS - 1}ヶ月で生えてしまった`;
+  HER.heresyMonth(w.people, w.sects, inq, w.tick, rng);
+  if (!inq.alive) return `${HER.INQ_MONTHS}ヶ月たっても生えない`;
+  // ★ 一度生えたら消えない
+  A.post[jail] = P.POST_NONE;
+  HER.heresyMonth(w.people, w.sects, inq, w.tick, rng);
+  if (!inq.alive) return '刑務局長が消えたら審問会も消えた（一度生えたら消えないはず）';
+  // ★ 門を満たさない教団では生えない
+  const inq2 = new HER.Inquisition();
+  d[SECT.AX.信仰性] = 70;                       // 75 未満
+  for (let m = 0; m < HER.INQ_MONTHS + 2; m++) HER.heresyMonth(w.people, w.sects, inq2, w.tick, rng);
+  if (inq2.alive) return '信仰性70 の教団が審問会を生やした（門は75）';
+  return true;
+});
+
+check('★ 処し方は3段。焚刑は H_v ≥ 50 だけ（正典 #7 §4）', () => {
+  const src = readFileSync(join(GAME2, 'src/world/heresy.js'), 'utf8');
+  if (HER.WARN_MAX !== 25 || HER.EXILE_MAX !== 50) return '3段の線が正典と違う';
+  // 正典の実測：焚刑の線50 で 起源≠罰 の 6.4%、起源＝罰 の 71.8%（傾き11.2倍）
+  //   → 「焼く教団は、焼かれた者から生まれる」が確率の傾きとして残る
+  if (!/焼く教団は、焼かれた者から生まれる/.test(src)) return '設計の一文が落ちている';
+  // 家族の恨みは①執行者と③統治へ。★⑥ではない（自国の統治が自国民にやった行為だから）
+  if (!/DIS\.addGrudge\(P, k, DIS\.D_RULE, BURN_KIN_G3\)/.test(src)) return '焚刑の恨みが③に入っていない';
+  if (/D_OUT/.test(src)) return '恨みが⑥（外）に入っている';
+  // 組織の恨み：焚刑1件 +10／破門 +4。★これだけが世代を跨ぐ
+  if (HER.HOUSE_G_BURN !== 10 || HER.HOUSE_G_EXILE !== 4) return '家門→祭祀局 の恨みが正典と違う';
   return true;
 });
 
