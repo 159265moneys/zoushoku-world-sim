@@ -103,13 +103,20 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
   const deadList = [];
 
   // 村ごとの人・働き手を数える
+  // ★★ **名簿を1度だけ作る。**厄災が当たるたびに全人口を走査して「その村の人」を探すと
+  //   **O(村数 × 人口)** になる。実測（人口4,680→10,073・村89→199）で
+  //   **1人あたり3.09倍**の超線形になっていた ＝ 10万人では原理的に動かない（#12 の要件）。
+  //   獣害だけで月76件当たるので、ここが効く
   const pop = new Int32Array(nv), forest = new Int32Array(nv), clean = new Float64Array(nv);
+  const roster = new Array(nv);
+  const EMPTY = [];
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i]) continue;
     const v = A.village[i];
     if (v === NO_VILLAGE || v >= nv) continue;
     pop[v]++; clean[v] += A.gene[ID_CLEAN][i] + A.ev[ID_CLEAN][i];
     if (A.job[i] === 2 || A.job[i] === 4) forest[v]++;    // 森／辺境
+    (roster[v] ||= []).push(i);
   }
 
   for (let v = 0; v < nv; v++) {
@@ -124,8 +131,8 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
       VA.food[v] *= (1 - STORM_STORE);
       const hurtHouses = Math.max(1, Math.ceil(VA.houses[v] * STORM_HOUSES));
       let broken = 0;
-      for (let i = 0; i < A.len && broken < hurtHouses; i++) {
-        if (!A.alive[i] || A.village[i] !== v) continue;
+      for (const i of roster[v] ?? EMPTY) {
+        if (broken >= hurtHouses) break;
         // 損壊家の住人：間借り＝疲労の段を1つ押し上げる／1名が負傷（軽・w=1）
         A.fatigue[i] += 3;                                   // 段が1つ上がる量
         if (!A.hurtStage[i]) {
@@ -135,8 +142,7 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
         if (old12(i)) { onX(i, STORM_X_HOUSE[0], S_GOD); onX(i, STORM_X_HOUSE[1], S_RULE); }
         broken++;
       }
-      for (let i = 0; i < A.len; i++) {
-        if (!A.alive[i] || A.village[i] !== v) continue;
+      for (const i of roster[v] ?? EMPTY) {
         if (A.job[i] === 2 || A.job[i] === 4) {
           // ★ 掟：ストリーム内では、分岐で呼び出し回数を変えない。
           //   死んだ人で continue すると負傷の抽選が飛ぶので、**先に2回とも引く**
@@ -156,8 +162,7 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
                   + (importP ? importP(v) : 0);
     if (rPlague < pPlague) {
       plagues++;
-      for (let i = 0; i < A.len; i++) {
-        if (!A.alive[i] || A.village[i] !== v) continue;
+      for (const i of roster[v] ?? EMPTY) {
         if (rng.next() < PLAGUE_SICK_SHARE) {
           A.sickStage[i] = PLAGUE_STAGE;
           A.sickHeal[i] = sickMonths(P, i, PLAGUE_STAGE);   // ★ 治る道（B-26）
@@ -174,12 +179,11 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
       // どの家が焼けたか。★ 分岐の中で1回だけ引く（当たった月にしか要らない）
       const pick = Math.floor(rng.next() * n);
       let seen = 0, burned = -1;
-      for (let i = 0; i < A.len; i++) {
-        if (!A.alive[i] || A.village[i] !== v) continue;
+      for (const i of roster[v] ?? EMPTY) {
         if (seen++ === pick) { burned = A.house[i]; break; }
       }
-      for (let i = 0; i < A.len; i++) {
-        if (!A.alive[i] || A.village[i] !== v || !old12(i)) continue;
+      for (const i of roster[v] ?? EMPTY) {
+        if (!old12(i)) continue;
         // ★ 焼失した家の本人 X=10 S={⑤,①}／それ以外の村民 X=3 S={⑤}
         //   ①は「相手のいない①は絶対に作らない」（allocate 段2）ので t=0 で自然に落ちる
         if (burned >= 0 && A.house[i] === burned) onX(i, FIRE_X_HOUSE, S_GOD_PERSON);
@@ -199,8 +203,7 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
       //   → 当たった月に **1人だけ** 襲われる。X=6 S={⑥} は「森に出た者」全員に積む
       const pick = Math.floor(rng.next() * forest[v]);
       let seen = 0;
-      for (let i = 0; i < A.len; i++) {
-        if (!A.alive[i] || A.village[i] !== v) continue;
+      for (const i of roster[v] ?? EMPTY) {
         if (A.job[i] !== 2 && A.job[i] !== 4) continue;
         if (seen++ === pick) {
           if (rng.next() < BEAST_DEAD) { P.kill(i, tick, DEATH_ACCIDENT); deadList.push(i); }
