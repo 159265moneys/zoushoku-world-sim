@@ -1,0 +1,121 @@
+// 方針カード（つまみ）。#18 §1。**乱数を1回も引かない。**
+//
+// > **つまみは段ごとに生える。既定は上から降りる。**
+// >   国（局）10局 × 10枚 ＝ 100枚 ／ 街 10本 ／ 村 6本
+//
+// ★ **継承がこの機構の本体。**これが無いと 1,000村 × 6本 ＝ 6,000本になる：
+//     村のつまみ ＝ 上書きが無ければ、属する拠点の同名のつまみ
+//     拠点のつまみ ＝ 上書きが無ければ、国の同名のつまみ
+//   → **既定のままの村はつまみを1本も持たない（メモリ 0バイト）。**
+//     1,000村の1割が平均2本を上書きしても 400バイト。
+//
+// ★ **目盛りは −2〜+2 の5段。**どのカードも必ず5段。
+//   中身はカードごとに実数の刻み s が違う：`値 = clamp(範囲, 既定 + 段 × s)`。
+//   ★ 実数は必ず段の横に出す（正典6-2「意味はプリセット、量は数値」を破らない）。
+//   ★ 100本のスライダーに101目盛りは判断ではなく表計算になる。
+//     段はそれを避けるためだけの**表示層**であって、中の実数が本体。
+//
+// ★ 柱5（命令も報告も人の性格で歪む）を破らない ──
+//   **歪むのは実行者であって、つまみの数値ではない**（歪みは #14 が持つ）。
+
+export const STEP_MIN = -2, STEP_MAX = 2;
+
+/**
+ * カードの定義。
+ * @param key   一意の名前
+ * @param scope 'nation' | 'town' | 'village'
+ * @param base  既定（段0のときの実数）
+ * @param s     1段あたりの刻み
+ * @param lo,hi 実数の範囲
+ */
+function card(key, scope, bureau, base, s, lo, hi, note = '', defStep = 0) {
+  return { key, scope, bureau, base, s, lo, hi, note, defStep };
+}
+
+// ---- 村の6本（#18 §1 の表そのまま）----------------------------------------
+export const VILLAGE_CARDS = [
+  card('糧に寄せる', 'village', '農業局', 55, -3.5, 34.5, 62,
+       '1軸5段。食料に立つ人月 −3.5／段。段0 ＝ 55人月 ＝ #3-(h) の基準'),
+  card('病んだ者を働かせるか', 'village', '民生局', 0, 1, -2, 2, '状態12個の変化 年0.7件/人 → 0'),
+  card('家督と縁組の既定', 'village', '法務局', 0, 1, -2, 2, '節目 年0.32件/人 → 0'),
+  card('余剰を蔵に積むか売るか', 'village', '農業局', 0, 1, -2, 2, '3-6d（配給か市か）の村版'),
+  card('開墾の申請', 'village', '農業局', 0, 1, -2, 2, '出すと #18 の条件2で上がる'),
+  card('よそ者の受け入れ', 'village', '民生局', 0, 25, 0, 100, '#11-D（婚姻圧）の村版'),
+];
+
+// ---- 国のつまみ（いま実装に消費者が居るものだけ。残りは局が入る日に足す）----
+export const NATION_CARDS = [
+  // ★ オン/オフは「段 −2..0 がオフ、+1..+2 がオン」に畳む（#18 §1 の例）。
+  //   #11-G は**既定オン**なので、既定の段は 0 ではなく **+1**。
+  //   → 既定の段をカードが持つ（Cards は「既定と違う段」だけを格納する）
+  card('備蓄の融通', 'nation', '農業局', 1, 1, -2, 2,
+       '正典4015・#11-G。★既定オン', 1),
+  // ★ 刻み90 の根拠：段−2 が **60** ＝ 正典 #11-G が前提にしている値ちょうど。
+  //   既定240 は 2026-08-29 の校正値（60 だと絶滅率38.5%、240 で24.5%）。
+  //   **正典の値をカードの端に置く**ことで、オーナーが「正典どおりの厳しい国」を選べる
+  card('蔵の上限', 'nation', '農業局', 240, 90, 60, 720,
+       '正典4015「農業局のつまみ：蔵の上限」。段−2 が正典 #11-G の前提60'),
+  card('婚姻圧', 'nation', '民生局', 0, 25, 0, 100,
+       '正典4016「民生局：婚姻圧 0〜100・既定0」。#11-D の h の身分の項が緩む'),
+  card('徴兵率', 'nation', '軍務局', 0.20, 0.10, 0, 0.40,
+       '#18 §1 の例そのまま（既定20% s=10 → −2 は 0%、+2 は 40%）'),
+];
+
+export const ALL_CARDS = [...NATION_CARDS, ...VILLAGE_CARDS];
+const BY_KEY = new Map(ALL_CARDS.map((c) => [c.key, c]));
+export const cardOf = (key) => BY_KEY.get(key);
+
+/** 段から実数を出す。★ `値 = clamp(範囲, 既定 + 段 × s)` */
+export function valueOf(key, step) {
+  const c = BY_KEY.get(key);
+  if (!c) throw new Error('そんなカードは無い：' + key);
+  const st = step < STEP_MIN ? STEP_MIN : step > STEP_MAX ? STEP_MAX : step;
+  const v = c.base + st * c.s;
+  return v < c.lo ? c.lo : v > c.hi ? c.hi : v;
+}
+/** オン/オフのカード（段 −2..0 がオフ、+1..+2 がオン） */
+export const isOn = (step) => step >= 1;
+
+// ---------------------------------------------------------------------------
+/**
+ * つまみの束。★ **既定と同じ段なら格納しない**（既定のままの村は 0バイト）。
+ * 上書きの持ち方：拠点ごとに `(カードID, 段)` の可変配列（#18 §1）。
+ */
+export class Cards {
+  constructor() {
+    this.nation = new Map();     // key → 段
+    this.town = new Map();       // `${街},${key}` → 段
+    this.village = new Map();    // `${村},${key}` → 段
+  }
+
+  /** 段を置く。★ **既定と同じ段なら格納しない**（既定のままの村は 0バイト） */
+  set(scope, box, key, step) {
+    const m = scope === 'nation' ? this.nation : scope === 'town' ? this.town : this.village;
+    const k = scope === 'nation' ? key : `${box},${key}`;
+    const def = BY_KEY.get(key)?.defStep ?? 0;
+    if (step === def) m.delete(k); else m.set(k, step);
+  }
+
+  /**
+   * その村で効いている段。★ 継承：村 → 街 → 国 → 0（既定）
+   * @param townOf (村) → 属する街。無ければ −1
+   */
+  step(key, village = -1, townOf = null) {
+    if (village >= 0) {
+      const v = this.village.get(`${village},${key}`);
+      if (v !== undefined) return v;
+      const town = townOf ? townOf(village) : -1;
+      if (town >= 0) {
+        const t = this.town.get(`${town},${key}`);
+        if (t !== undefined) return t;
+      }
+    }
+    return this.nation.get(key) ?? (BY_KEY.get(key)?.defStep ?? 0);
+  }
+
+  /** その村で効いている実数 */
+  value(key, village = -1, townOf = null) { return valueOf(key, this.step(key, village, townOf)); }
+
+  /** 実際に格納しているバイト数の目安（カードIDと段で2バイト） */
+  get bytes() { return (this.nation.size + this.town.size + this.village.size) * 2; }
+}

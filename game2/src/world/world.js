@@ -43,6 +43,7 @@ import * as HER from './heresy.js';      // 異端狩り（#7）
 import * as FAC from './faction.js';     // 派閥（正典3-3）
 import * as NEAR from './near.js';       // 近い順3村（#11-D・#11-F）
 import * as PLAN from './plan.js';       // 具申と差し止め（#14）
+import * as CARD from './cards.js';      // 方針カード（つまみ・#18 §1）
 // ★ 地図（#17）。**2026-08-30 から既定でオン。**
 //   #11-D 結婚の範囲・#11-F 疫病の村間伝播・#11-G 備蓄の融通 は3つとも「村の距離」を読み、
 //   距離は村の座標にしかない。地図が無いと3つとも黙って何もしない（死にコードになる）。
@@ -77,8 +78,9 @@ export class World {
     this.inq = new HER.Inquisition();               // 異端審問会（#7）
     this.foreignSect = 0;                           // 異国の宗派（捕虜が入る日に1つだけ作る）
     this.near = null;                               // 近い順3村（分村のたびに数え直す）
-    this.marryPressure = 0;                         // 婚姻圧カード（民生局・既定0）
-    this.shareStores = true;                        // 備蓄の融通（農業局・既定オン。#11-G）
+    // ★ #18 §1：つまみは段ごとに生え、既定は上から降りる（村 → 街 → 国）。
+    //   ハードコードしていた摘みを、ここで正式なカードにした
+    this.cards = new CARD.Cards();
     this.plans = new PLAN.Plans();                  // 予定の待ち行列（#14）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
@@ -340,7 +342,7 @@ export class World {
         const dy = (this.land.py[a] - this.land.py[b]) / PPL;
         return Math.hypot(dx, dy);
       };
-      const tr = NEAR.transferMonth(V, shortOf, distOf, this.shareStores);
+      const tr = NEAR.transferMonth(V, shortOf, distOf, CARD.isOn(this.cards.step('備蓄の融通')));
       this.counters.foodSent += tr.sent; this.counters.villagesFed += tr.moved;
     }
 
@@ -600,7 +602,7 @@ export class World {
     growMonth(P, V, t);
 
     const nearOf = (v, k) => this.near.near[v * NEAR.NEAR + k];
-    const m = marryMonth(P, H, V, t, this.R[STREAM.MARRY], nearOf, this.ties, this.marryPressure);
+    const m = marryMonth(P, H, V, t, this.R[STREAM.MARRY], nearOf, this.ties, this.cards.value('婚姻圧'));
     for (const c of m.couples ?? []) {
       DIS.relieveSelf(P, c[0], DIS.SELF_RELIEF.結婚);           // 不満④ −15（#5 §4）
       DIS.relieveSelf(P, c[1], DIS.SELF_RELIEF.結婚);

@@ -41,6 +41,7 @@ import * as WAR from '../src/world/war.js';      // 戦争と捕虜（O-27）
 import * as FAC from '../src/world/faction.js';  // 派閥（正典3-3）
 import * as NEAR from '../src/world/near.js';    // 近い順3村（#11-D・#11-F）
 import * as PLAN from '../src/world/plan.js';    // 具申と差し止め（#14）
+import * as CARD from '../src/world/cards.js';   // 方針カード（#18 §1）
 
 // ★ 検査が「N年生き延びた世界」を要るとき、種を直書きしない。
 //   世界は層を足すたびに厳しくなるので、直書きの種はそのたびに絶滅世界に変わり、
@@ -2177,6 +2178,74 @@ check('★ 宗派が実際に起きて、信者が付き、消滅の規則が在
   // ★ **信者が根付くかは別問題。**いまは根付かない（台帳の未達項目）。
   //   ここで「200年後に信者がいること」を求めると、正典が保証していない結果を
   //   検査が要求することになる。**機構が在ることだけを見る。**
+  return true;
+});
+
+// ===========================================================================
+section('方針カード（world/cards.js・#18 §1）');
+// ===========================================================================
+
+// > **つまみは段ごとに生える。既定は上から降りる。**目盛りは −2〜+2 の5段。
+check('**段と実数の対応が正典 #18 §1 の例と一致する**', () => {
+  // 軍務局・徴兵率 既定20% s=10 → −2 は 0%、+2 は 40%
+  if (Math.abs(CARD.valueOf('徴兵率', -2) - 0) > 1e-9) return '徴兵率 −2 が 0% でない';
+  if (Math.abs(CARD.valueOf('徴兵率', 0) - 0.20) > 1e-9) return '徴兵率 段0 が 20% でない';
+  if (Math.abs(CARD.valueOf('徴兵率', 2) - 0.40) > 1e-9) return '徴兵率 +2 が 40% でない';
+  // 糧に寄せる 段0 ＝ 55人月 ＝ #3-(h) の基準
+  if (CARD.valueOf('糧に寄せる', 0) !== 55) return '糧に寄せる 段0 が 55人月 でない';
+  // ★ オン/オフは 段−2..0 がオフ、+1..+2 がオン
+  for (const st of [-2, -1, 0]) if (CARD.isOn(st)) return `段${st} がオンになっている`;
+  for (const st of [1, 2]) if (!CARD.isOn(st)) return `段${st} がオフになっている`;
+  // どのカードも必ず5段。範囲でも切る
+  for (const c of CARD.ALL_CARDS) {
+    if (CARD.valueOf(c.key, -99) !== CARD.valueOf(c.key, CARD.STEP_MIN)) return `${c.key} が下で切れていない`;
+    if (CARD.valueOf(c.key, 99) !== CARD.valueOf(c.key, CARD.STEP_MAX)) return `${c.key} が上で切れていない`;
+  }
+  return true;
+});
+
+// ★★ 継承がこの機構の本体。これが無いと 1,000村 × 6本 ＝ 6,000本になる
+check('★★ つまみの継承（村 → 街 → 国）。既定のままの村は 0バイト', () => {
+  const c = new CARD.Cards();
+  const townOf = () => 1;
+  if (c.bytes !== 0) return '何も置いていないのに容量を食っている';
+  if (c.step('婚姻圧', 5, townOf) !== 0) return '既定が国から降りていない';
+  c.set('nation', 0, '婚姻圧', 2);
+  if (c.step('婚姻圧', 5, townOf) !== 2) return '国の段が村に降りていない';
+  c.set('town', 1, '婚姻圧', -1);
+  if (c.step('婚姻圧', 5, townOf) !== -1) return '街の上書きが国に勝っていない';
+  c.set('village', 5, '婚姻圧', 1);
+  if (c.step('婚姻圧', 5, townOf) !== 1) return '村の上書きが街に勝っていない';
+  // ★ 既定と同じ段に戻したら格納しない
+  const before = c.bytes;
+  c.set('village', 5, '婚姻圧', 0);
+  if (c.bytes >= before) return '既定に戻しても容量を食っている';
+  // 別の村は影響を受けない
+  if (c.step('婚姻圧', 9, townOf) !== -1) return '村5の上書きが村9に漏れている';
+  return true;
+});
+
+check('★ 既定オンのカードは既定の段が0ではない（#11-G 備蓄の融通）', () => {
+  const c = new CARD.Cards();
+  // 正典4015・#11-G は「備蓄の融通・既定オン」。段0 がオフなので、既定の段は +1
+  if (!CARD.isOn(c.step('備蓄の融通'))) return '備蓄の融通の既定がオフになっている';
+  if (c.bytes !== 0) return '既定なのに容量を食っている';
+  c.set('nation', 0, '備蓄の融通', -2);
+  if (CARD.isOn(c.step('備蓄の融通'))) return 'オフにできない';
+  // ★ 蔵の上限は段−2 が正典 #11-G の前提60
+  if (CARD.valueOf('蔵の上限', -2) !== 60) return `蔵の上限 −2 が ${CARD.valueOf('蔵の上限', -2)}（正典の前提60）`;
+  if (CARD.valueOf('蔵の上限', 0) !== 240) return '蔵の上限 段0 が実装の既定240 でない';
+  return true;
+});
+
+check('★ カードが世界に効く（備蓄の融通をオフにすると移送が止まる）', () => {
+  const on = new W.World(3).genesis(); on.runYears(150);
+  const off = new W.World(3).genesis();
+  off.cards.set('nation', 0, '備蓄の融通', -2);
+  off.runYears(150);
+  if (!(on.counters.foodSent > 0)) return '既定オンなのに移送が起きない';
+  if (off.counters.foodSent !== 0) return `オフにしたのに ${off.counters.foodSent.toFixed(0)} 送っている`;
+  if (on.cards.bytes !== 0) return '既定のままの世界が容量を食っている';
   return true;
 });
 
