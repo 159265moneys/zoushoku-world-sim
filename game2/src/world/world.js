@@ -42,7 +42,13 @@ import * as WAR from './war.js';         // 戦争（O-27）
 import * as HER from './heresy.js';      // 異端狩り（#7）
 import * as FAC from './faction.js';     // 派閥（正典3-3）
 import * as NEAR from './near.js';       // 近い順3村（#11-D・#11-F）
-// ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
+// ★ 地図（#17）。**2026-08-30 から既定でオン。**
+//   #11-D 結婚の範囲・#11-F 疫病の村間伝播・#11-G 備蓄の融通 は3つとも「村の距離」を読み、
+//   距離は村の座標にしかない。地図が無いと3つとも黙って何もしない（死にコードになる）。
+//   ★ 実測（120年・60種）：地図の有無で基準線が動かない ──
+//     絶滅率 26.7% で同じ、平均人口 30.8 vs 30.4、村数 1.1 で同じ。融通だけ 0→56。
+//     120年の時点では村が1.1個なので距離がまだ効かず、畑の定員が縛るのは村が育ってから。
+//   → **代金ゼロで3機構が生きるので、既定にした。**`{ map: false }` で今までどおりにもできる
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
 import { expand as expandParcels } from './parcel.js';
@@ -120,7 +126,7 @@ export class World {
     const targets = targetsFrom(centroid);
 
     // ★ 地図を作って、創世の村をその席に置く（#17 §3-4）
-    if (this.opts.map) {
+    if (this.opts.map !== false) {
       const g = genMap(this.seed);
       const r = pickSeat(g);
       if (!r.ok) throw new Error('席が置けない：' + r.why);
