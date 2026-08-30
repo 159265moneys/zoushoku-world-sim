@@ -17,6 +17,7 @@
 import * as S from '../core/stats.js';
 import * as C from '../core/calendar.js';
 import { make } from '../core/arrays.js';
+import { fertMul, FERT_BASE } from './land.js';   // 地力（#17 §5-1）
 import { NO_VILLAGE, ST_HUNGRY, ST_PREGNANT, WORK_START_AGE } from './people.js';
 import * as DIS from './discontent.js';   // 不満6本（#4-(h) の産出倍率）
 
@@ -123,6 +124,54 @@ export function drawHarvest(rng) {
 //     子が育つ前に全滅していた
 export const Q_DIVISOR = 373;
 
+// ---------------------------------------------------------------------------
+// 狩り・漁の当たり（#17 §5-2）。★ **量ではなく当たり率で引く**（正典3-6g「狩りは博打」）
+// ---------------------------------------------------------------------------
+//
+// ★ **畑・水田・菜園・果樹園・繊維畑・牧草地は乱数を一切引かない ＝「畑は遅いが安定」。**
+//   森林・川・海湖の食料だけが博打になる。
+//
+// ★ 当たり率 p = clamp(0, 1, 実効値 / 746)。**ステそのもの。下駄を履かせない。**
+//   分母746 の根拠（正典8963）：手ぶらで帰る月の割合 ＝ 1 − clamp(0,1, 実効値/746)。
+//   実効値746（名人）→ 0% ／ 373（働き手の平均）→ 50% ／ 150（下手）→ 80%。
+//   ★ **clamp を外してはいけない。**からだ50・あたま25 は才能(≤100)＋努力値(上限なし)なので
+//     170前後まで伸びる。clamp が無いと p=1.6 のとき熊の帯が u<1 の外へ出て消え、
+//     **名人ほど獲れなくなる**（E[z] が 1.241 → 0.561）。
+//   ★ 下駄（p = 0.30 + 0.35q）は採らない。実効値0の猟師が平均の38%を獲ってしまい、
+//     ステの効きが 0〜1.43倍 から 0.38〜1.27倍 へ潰れる。
+export const HIT_DIVISOR = 746;
+export const hitP = (eff) => (eff < 0 ? 0 : eff > HIT_DIVISOR ? 1 : eff / HIT_DIVISOR);
+
+// 猟の帯（正典8954）。u ~ U[0,1)
+export const GAME_SMALL = 0.55, GAME_MID = 2.00, GAME_BIG = 9.00;
+export const BAND_SMALL = 0.62, BAND_MID = 0.98;      // u < 0.62p 兎鳥 ／ 0.98p まで鹿猪 ／ p まで熊
+// ★ 開く段は「組の実働人月」で決まる。開いていない段は1つ下へ落ちる
+export const C_ALL = 0.62 * GAME_SMALL + 0.36 * GAME_MID + 0.02 * GAME_BIG;   // 1.241
+export const C_MID = 0.62 * GAME_SMALL + 0.38 * GAME_MID;                      // 1.101
+export const C_SMALL = 1.00 * GAME_SMALL;                                      // 0.550
+export const CREW_ALL = 4, CREW_MID = 2;              // 実働 ≥4人月で全段 ／ ≥2で中物まで
+// 熊の出た月、その組の各人に 負傷段2 3.0%（うち0.5%を即死へ）／鹿猪の組に 段1 1.0%
+export const BEAR_HURT = 0.030, BEAR_DEAD = 0.005, MID_HURT = 0.010;
+
+/**
+ * 猟の取れ高 z（#17 §5-2）。★ **E[2z/c] ＝ 2p ＝ q。どの組でも、どの実効値でも厳密に q。**
+ *   つまり §5-1 の q_i を「2z/c」に差し替えただけ。**1.764×q ／ 産出135.8 は1文字も動かない。
+ *   変わるのは分散だけ。**
+ * @returns {{z, c, band}} band 0=手ぶら 1=兎鳥 2=鹿猪 3=熊
+ */
+export function hunt(u, p, crew) {
+  const c = crew >= CREW_ALL ? C_ALL : crew >= CREW_MID ? C_MID : C_SMALL;
+  if (u >= p) return { z: 0, c, band: 0 };
+  if (crew < CREW_MID) return { z: GAME_SMALL, c, band: 1 };           // 全部が兎鳥へ落ちる
+  if (crew < CREW_ALL) {
+    return u < BAND_SMALL * p ? { z: GAME_SMALL, c, band: 1 }
+                              : { z: GAME_MID, c, band: 2 };           // 熊が鹿猪へ落ちる
+  }
+  if (u < BAND_SMALL * p) return { z: GAME_SMALL, c, band: 1 };
+  if (u < BAND_MID * p) return { z: GAME_MID, c, band: 2 };
+  return { z: GAME_BIG, c, band: 3 };
+}
+
 const ID_HUNGER_RESIST = S.needId('飢えへの強さ');
 
 export const VILLAGE_SPEC = {
@@ -205,7 +254,11 @@ export function assignWork(P, V, tick) {
  * 創世から RATION_YEARS 年のあいだは配給が足りない分を埋める（A-10）。
  * @returns 村ごとの明細
  */
-export function produceAndEat(P, V, tick, land = null, harvest = 1.0) {
+/**
+ * @param rngHunt 狩りのストリーム（#17 §5-2）。★ 森で働く者ひとりにつき必ず1回引く。
+ *   無ければ 0.5 固定（＝乱数を引かない旧来の挙動。検査の対照に使える）
+ */
+export function produceAndEat(P, V, tick, land = null, harvest = 1.0, rngHunt = null, onBear = null, onMid = null) {
   const A = P.a, VA = V.a;
   const nv = V.len;
   const winter = C.isWinter(tick);
@@ -240,7 +293,15 @@ export function produceAndEat(P, V, tick, land = null, harvest = 1.0) {
       if (job === AREA_FIELD) {
         if (!winter) prodF[v] += FARM_YIELD * q * harvest;   // 冬は作物ができない。★収穫係数は畑だけ
       } else {
-        prodW[v] += HUNT_YIELD * q * (winter ? WINTER_HUNT : 1);
+        // ★ 狩りは博打（#17 §5-2）。q を**当たり率 p へ移し**、末尾に 2z/c を掛ける。
+        //   E[2z/c] ＝ 2p ＝ q なので**期待値は1文字も変わらない。変わるのは分散だけ。**
+        //   → 「森に何人出すか」が、期待値ではなく**賭け方を選ぶ判断**になる
+        const eff = P.effectiveOf(i, AREA_YIELD_STATS[job]);
+        const pHit = hitP(eff) * moraleOf(P, i);
+        const r = hunt(rngHunt ? rngHunt.next() : 0.5, pHit, forestMen[v]);
+        prodW[v] += HUNT_YIELD * (2 * r.z / r.c) * (winter ? WINTER_HUNT : 1);
+        if (r.band === 3 && onBear) onBear(i, forestMen[v]);   // 熊の出た月
+        else if (r.band === 2 && onMid) onMid(i);
       }
     }
   }
@@ -251,7 +312,14 @@ export function produceAndEat(P, V, tick, land = null, harvest = 1.0) {
     if (fieldMen[v] > 0)  crowdF[v] = Math.min(1, (land.fieldCap[v]  ?? 0) / fieldMen[v]);
     if (forestMen[v] > 0) crowdW[v] = Math.min(1, (land.forestCap[v] ?? 0) / forestMen[v]);
   }
-  for (let v = 0; v < nv; v++) produced[v] = prodF[v] * crowdF[v] + prodW[v] * crowdW[v];
+  // ★ 地力（#17 §5-1）。**人工の耕地にだけ掛ける。**森（狩り）には掛けない ──
+  //   正典5-1「年の収穫係数は人工の耕地にだけ掛ける。森林・川・海湖・鉱脈・山・荒地・平野には掛けない」
+  //   と同じ扱い。地力8 の村では厳密に 1.000 なので 135.8／分岐点 は動かない
+  const fert = new Float64Array(nv).fill(1);
+  if (land && land.fert) {
+    for (let v = 0; v < nv; v++) fert[v] = fertMul(land.fert[v] ?? FERT_BASE);
+  }
+  for (let v = 0; v < nv; v++) produced[v] = prodF[v] * crowdF[v] * fert[v] + prodW[v] * crowdW[v];
 
   const out = [];
   for (let v = 0; v < nv; v++) {

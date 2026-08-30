@@ -25,6 +25,7 @@ import {
   Villages, WHERE_FRONTIER, HOUSES_PER_VILLAGE,
   assignWork, produceAndEat, syncHouses, AREA_HOME, AREA_FIELD, EAT_ADULT,
   drawHarvest, STORE_PER_HOUSE, HARVEST_HARSH, HARVEST_POOR,
+  BEAR_HURT, BEAR_DEAD, MID_HURT,          // 熊と鹿猪の負傷（#17 §5-2）
 } from './village.js';
 import { growMonth, seedEffortForAge } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
@@ -115,6 +116,7 @@ export class World {
       factions: 0, biggestFaction: 0, foodSent: 0, villagesFed: 0,
       // ---- 具申（#14）----
       plansRan: 0, plansSilent: 0, plansOverflow: 0, distortSum: 0,
+      bears: 0, bearDead: 0,                // 熊（#17 §5-2）
       warByStat: 0, warByLuck: 0, ennobled: 0,
       zealots: 0, resigned: 0, apostates: 0,
     };
@@ -346,7 +348,22 @@ export class World {
       this.counters.foodSent += tr.sent; this.counters.villagesFed += tr.moved;
     }
 
-    const food = produceAndEat(P, V, t, this.land, this.harvest);
+    // ★ 狩りの当たりは狩りのストリーム（7番）。畑は乱数を一切引かない（「畑は遅いが安定」）
+    const food = produceAndEat(P, V, t, this.land, this.harvest, this.R[STREAM.HUNT],
+      (i, crew) => {
+        // 熊の出た月、その組の各人に 負傷段2 3.0%（うち0.5%を即死へ）
+        const r = this.R[STREAM.HUNT].next();
+        if (r < BEAR_DEAD) { P.kill(i, t, 3); this.counters.byCause[3]++; this.counters.bearDead++; }
+        else if (r < BEAR_HURT && !P.a.hurtStage[i]) {
+          P.a.hurtStage[i] = 2; P.a.hurtPart[i] = 2; P.a.hurtHeal[i] = COND.healMonths(P, i, 2);
+        }
+        this.counters.bears++;
+      },
+      (i) => {
+        if (this.R[STREAM.HUNT].next() < MID_HURT && !P.a.hurtStage[i]) {
+          P.a.hurtStage[i] = 1; P.a.hurtPart[i] = 2; P.a.hurtHeal[i] = COND.healMonths(P, i, 1);
+        }
+      });
     for (const r of food) {
       if (r && r.shortage > 0 && this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');
     }

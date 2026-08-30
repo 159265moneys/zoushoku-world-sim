@@ -6,6 +6,11 @@
 import { W, N } from './mapgen.js';
 import { PW, R } from './parcel.js';
 import { CLAIM, N21, PPL, MIN_GAP } from './settle.js';
+
+// ★ 地力の基準（#17 §5-1）。ここで倍率が厳密に 1.000 になる
+export const FERT_BASE = 8, FERT_POW = 0.6;
+/** 地力の倍率 `(地力/8)^0.6`。★ 人工の耕地にだけ掛ける（森・川・海湖・鉱脈には掛けない） */
+export const fertMul = (f) => Math.pow(Math.max(0, f) / FERT_BASE, FERT_POW);
 import * as F from './fog.js';
 
 // §2-1 の定員（1区画が何人月を吸えるか）
@@ -49,6 +54,20 @@ export class Land {
     }
     this.fieldCap[v] = field * CAP_FIELD;
     this.forestCap[v] = forest * CAP_FOREST;
+
+    // ★ 地力（#17 §5-1 の `(地力/8)^0.6`。**人工の耕地にだけ掛かる**）。
+    //   その村が持つ「畑にできる区画」の地力の平均。基準は 8 ＝ そこで倍率が厳密に 1.000。
+    //   正典5-1「基準の村（地力8・crowd 1.00・F[具] 0.50・収穫1.00・道具1.00）では
+    //   5項とも厳密に 1.000。だから 135.8／117.3／分岐点 が動かない」
+    let fs = 0, fn = 0;
+    for (const p of this.cells[v]) {
+      const role = this.L.b0[p] & 15;
+      if (role !== R.PLAIN && role !== R.WASTE && role !== R.WOOD) continue;
+      const jx = ((p % PW) / PPL) | 0, jy = ((p / PW) | 0) / PPL | 0;
+      fs += this.g.fert[jy * (PW / PPL) + jx]; fn++;
+    }
+    this.fert = this.fert || [];
+    this.fert[v] = fn ? fs / fn : FERT_BASE;
   }
 
   /** 分村できる場所を探す（11-B ＋ #17 §6-5 の 4a/4c/4d） */
