@@ -41,6 +41,7 @@ import * as SECT from './sect.js';       // 宗派（正典3-6・#6-C・#8）
 import * as WAR from './war.js';         // 戦争（O-27）
 import * as HER from './heresy.js';      // 異端狩り（#7）
 import * as FAC from './faction.js';     // 派閥（正典3-3）
+import * as NEAR from './near.js';       // 近い順3村（#11-D・#11-F）
 // ★ 地図（#17）。opts.map が真のときだけ生きる。偽なら今までどおり土地を見ない
 import { generate as genMap } from './mapgen.js';
 import { pickSeat, guarantee, enrich } from './seat.js';
@@ -68,6 +69,8 @@ export class World {
     this.script = new DIS9.Script();                // 確定イベント（9-B）の進行
     this.inq = new HER.Inquisition();               // 異端審問会（#7）
     this.foreignSect = 0;                           // 異国の宗派（捕虜が入る日に1つだけ作る）
+    this.near = null;                               // 近い順3村（分村のたびに数え直す）
+    this.marryPressure = 0;                         // 婚姻圧カード（民生局・既定0）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -216,6 +219,12 @@ export class World {
   stepMonth() {
     const t = this.tick, P = this.people, H = this.houses, V = this.villages;
 
+    // ★ 近い順3村（#11-D・#11-F・#11-G の土台）。村は動かないので、
+    //   村数が変わったときだけ数え直す。結婚も疫病の伝播もここを読む
+    if (!this.near || this.near.n !== V.a.len) {
+      this.near = { ...NEAR.nearest(V, this.land), n: V.a.len };
+    }
+
     const d = agingAndDeath(P, t, this.R[STREAM.DEATH]);
     this.counters.died += d.died;
     // 喪（一時12）。★ 乱数を1つも引かない。死んだ者の近親をなめるだけ
@@ -226,8 +235,29 @@ export class World {
     // ---- 厄災（#9・正典3-7）。★ ①の直後・②の前。厄災の死者も「喪」の入力になる ----
     //   嵐は**年の収穫係数に一切触れない**（#9-A）。殴るのは蔵と家であって、流れではない
     this.cal.grow(V.a.len);
+    // ---- #11-F 疫病の村間伝播。★ 距離を締める（exp(−d/1.5)）----
+    //   線の数 ＝ その2村のあいだの**村をまたぐ婚姻の本数**（生きている夫婦のみ）。
+    //   ★ 線の数が0の村へは飛ばない ── 「広く薄く散らばった国は届きにくい／
+    //     密集して婚姻の線が濃い国は速い」が距離で初めて分かれる
+    const sickV = new Int32Array(V.a.len);
+    for (let i = 0; i < P.a.len; i++) {
+      if (P.a.alive[i] && P.a.sickStage[i] >= DIS9.PLAGUE_STAGE) {
+        const vv = P.a.village[i];
+        if (vv < V.a.len) sickV[vv]++;
+      }
+    }
+    const cross = this._crossLines(P, V);
     const dz = DIS9.disasterMonth(P, V, H, t, this.R[STREAM.DISASTER],
-      (i, X, set) => this.shock(i, X, set));
+      (i, X, set) => this.shock(i, X, set),
+      (v) => {
+        let p = 0;
+        for (let k = 0; k < NEAR.NEAR; k++) {
+          const a = this.near.near[v * NEAR.NEAR + k];
+          if (a < 0 || !sickV[a]) continue;
+          p += NEAR.spreadP(this.near.dist[v * NEAR.NEAR + k], cross[v * NEAR.NEAR + k]);
+        }
+        return p;
+      });
     if (dz.dead > 0) {
       this.counters.died += dz.dead;
       this.counters.byCause[DIS9.DEATH_ACCIDENT] += dz.dead;
@@ -515,7 +545,8 @@ export class World {
 
     growMonth(P, V, t);
 
-    const m = marryMonth(P, H, V, t, this.R[STREAM.MARRY]);
+    const nearOf = (v, k) => this.near.near[v * NEAR.NEAR + k];
+    const m = marryMonth(P, H, V, t, this.R[STREAM.MARRY], nearOf, this.ties, this.marryPressure);
     for (const c of m.couples ?? []) {
       DIS.relieveSelf(P, c[0], DIS.SELF_RELIEF.結婚);           // 不満④ −15（#5 §4）
       DIS.relieveSelf(P, c[1], DIS.SELF_RELIEF.結婚);
@@ -632,6 +663,27 @@ export class World {
     DIS.allocate(P, i, X, set, 0, DIS.GATE_ON, out);
     for (let d = 0; d < DIS.DIR_COUNT; d++) if (out[d] > 0) DIS.addDiscontent(P, i, d, out[d]);
     this.counters.shock += X;
+  }
+
+  /**
+   * 村をまたぐ婚姻の本数（#11-F の「線の数」）。★ 近い順3村ぶんだけ持てばよい ──
+   * 11-D により村外婚は必ず「近い順3村」の相手なので、3枠で漏れなく数え切れる。
+   */
+  _crossLines(P, V) {
+    const nv = V.a.len, out = new Int32Array(nv * NEAR.NEAR);
+    if (!this.near) return out;
+    const A = P.a;
+    for (let i = 0; i < A.len; i++) {
+      const sp = A.spouse[i];
+      if (!A.alive[i] || sp < 0 || i > sp || !A.alive[sp]) continue;
+      const a = A.village[i], b = A.village[sp];
+      if (a === b || a >= nv || b >= nv) continue;
+      for (let k = 0; k < NEAR.NEAR; k++) {
+        if (this.near.near[a * NEAR.NEAR + k] === b) out[a * NEAR.NEAR + k]++;
+        if (this.near.near[b * NEAR.NEAR + k] === a) out[b * NEAR.NEAR + k]++;
+      }
+    }
+    return out;
   }
 
   once(key) { if (this.firsts.has(key)) return false; this.firsts.add(key); return true; }

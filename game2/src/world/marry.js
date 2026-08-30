@@ -13,6 +13,11 @@
 //   B-12  食料の天井で人口を自己調整させる（マルサス）
 
 import * as S from '../core/stats.js';
+import * as NEAR from './near.js';        // 近い順3村と h(i,j)（#11-D）
+import { affinity } from './ties.js';     // 相性（h の第3項）
+
+const ID_SOCIAL = S.needId('社交');
+const ID_CURIO = S.needId('好奇心');
 import { breedLook } from './looks.js';
 import * as C from '../core/calendar.js';
 import {
@@ -84,7 +89,12 @@ export function widow(P) {
  * 30軒が埋まっている村では結べない（＝溢れ。分村の合図）。
  * @returns {{married:number, blocked:number}}
  */
-export function marryMonth(P, houses, V, tick, rng) {
+/**
+ * @param nearOf (v, k) → k番目に近い村（無ければ −1）。#11-D の「近い順3村」
+ * @param ties   相性を引くため（h(i,j) の第3項）
+ * @param pressure 婚姻圧カード（民生局・既定0）
+ */
+export function marryMonth(P, houses, V, tick, rng, nearOf = null, ties = null, pressure = 0) {
   const A = P.a;
   const nv = V.len;
   const men = [], women = [];
@@ -109,26 +119,45 @@ export function marryMonth(P, houses, V, tick, rng) {
     if (taken[w]) continue;
     if (!rng.bool(MARRY_CHANCE)) continue;
     const v = A.village[w];
-    // 同じ村の中でランダム（A-12）。血が近すぎる相手だけ避ける
-    const pool = [];
-    for (const m of men) {
-      if (taken[m] || A.village[m] !== v) continue;
-      if (tooClose(P, w, m)) continue;
-      pool.push(m);
+    // ---- #11-D 結婚の範囲。★ 半径ではなく**村数**で切る ----
+    //   半径で切ると、村が疎らな国では相手が0人になり血のプールが村1つに閉じる。
+    //   村数で切れば 97.2%の村が12里以内に3村を持つので、上位3村は常に埋まる。
+    const social = P.effective(w, ID_SOCIAL), curio = P.effective(w, ID_CURIO);
+    const N = nearOf ? NEAR.rangeN(social, curio, pressure) : 0;
+    const w0 = NEAR.outWeight(social, curio, pressure);
+    // 候補の村と、その村の重み（自村 1.00 ／ k番目に近い村 w0 × 0.5^(k−1)）
+    const pool = [], wt = [];
+    for (let k = 0; k <= N; k++) {
+      const vv = k === 0 ? v : nearOf(v, k - 1);
+      if (vv < 0 || vv >= nv) continue;
+      const base = k === 0 ? 1.0 : w0 * NEAR.NEAR_DECAY ** (k - 1);
+      for (const m of men) {
+        if (taken[m] || A.village[m] !== vv) continue;
+        if (tooClose(P, w, m)) continue;         // 血が近すぎる相手だけ避ける（そのまま通す）
+        // ★ h(i,j)：身分・富・相性。**0 にしない ── 身分違いの婚姻を禁じない**
+        const aff = ties ? affinity(P, w, m) : 37;
+        const h = NEAR.matchH(A.rank[w], A.rank[m], A.commonTier[w], A.commonTier[m], aff, pressure);
+        pool.push(m); wt.push(base * h);
+      }
     }
     if (!pool.length) continue;
-    const m = pool[rng.int(pool.length)];
+    // 重み付き抽選。★ 掟：候補が何人でも引くのは1回
+    let total = 0; for (const x of wt) total += x;
+    let r = rng.next() * total, m = pool[pool.length - 1];
+    for (let k = 0; k < pool.length; k++) { r -= wt[k]; if (r <= 0) { m = pool[k]; break; } }
 
     // 家が要る。30軒が埋まっていたら結べない（村が溢れている）
-    if (V.isFull(v)) { blocked++; continue; }
+    const hv = A.village[m];
+    if (V.isFull(hv)) { blocked++; continue; }
 
     A.spouse[w] = m; A.spouse[m] = w;
     taken[w] = 1; taken[m] = 1;
+    if (A.village[m] !== v) A.village[w] = A.village[m];   // 村外婚：移った側が夫の村へ
     couples.push([w, m]);
     const line = lineOf(P, houses, m);
     const gen = genOf(P, houses, m) + 1;
-    const h = houses.found(P, v, m, w, tick, line, gen);
-    V.a.houses[v]++;
+    const h = houses.found(P, hv, m, w, tick, line, gen);
+    V.a.houses[hv]++;
     married++;
   }
   return { married, blocked, couples };

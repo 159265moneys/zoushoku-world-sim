@@ -91,9 +91,10 @@ const ID_CLEAN = S.needId('潔癖');
  * 厄災の月次。★ 引く乱数の回数を分岐で変えない（掟）。
  *   村ごとに**必ず4回**引く（嵐・疫病・火災・獣害）。当たらなくても引いて捨てる。
  * @param onX (i, X, S) → その人に X の圧を S の向きで積む。配分は #4 の allocate が持つ
+ * @param importP (v) → その村へ**隣の村から飛んでくる**月率（#11-F）。無ければ0
  * @returns {{storms, plagues, fires, beasts, dead, deadList}}
  */
-export function disasterMonth(P, V, H, tick, rng, onX) {
+export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
   const A = P.a, VA = V.a, nv = VA.len;
   const old12 = (i) => (A.ageMonths[i] / 12 | 0) >= X_AGE;   // ★「村の12歳以上」
   const month = C.monthOf(tick) % C.MONTHS_PER_YEAR;
@@ -150,7 +151,9 @@ export function disasterMonth(P, V, H, tick, rng, onX) {
     }
 
     // ---- 疫病 ----。人口密度 ×（100 − 潔癖の平均）÷100 × 基準
-    const pPlague = (n / 100) * ((100 - cleanAvg) / 100) * PLAGUE_BASE / 12;
+    //   ＋ #11-F：隣の村で流行っていれば、そこから飛んでくる
+    const pPlague = (n / 100) * ((100 - cleanAvg) / 100) * PLAGUE_BASE / 12
+                  + (importP ? importP(v) : 0);
     if (rPlague < pPlague) {
       plagues++;
       for (let i = 0; i < A.len; i++) {
