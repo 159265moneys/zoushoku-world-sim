@@ -18,7 +18,7 @@ import * as C from '../core/calendar.js';
 import { makeStreams, STREAM, saveStreams, loadStreams } from '../core/rng.js';
 import {
   People, SEX_MALE, SEX_FEMALE, RANK_COMMON, ST_PREGNANT, agingAndDeath, lifespanOf,
-  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep, KIN_NAMES, SECT_NONE,
+  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep, KIN_NAMES, SECT_NONE, KIN_WAR,
 } from './people.js';
 import { Houses } from './house.js';
 import {
@@ -66,6 +66,7 @@ export class World {
     this.sects = new SECT.Sects(16);                // 宗派の台帳（正典3-6・#6-C）
     this.script = new DIS9.Script();                // 確定イベント（9-B）の進行
     this.inq = new HER.Inquisition();               // 異端審問会（#7）
+    this.foreignSect = 0;                           // 異国の宗派（捕虜が入る日に1つだけ作る）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -94,6 +95,7 @@ export class World {
       wars: 0, warDead: 0, warKills: 0, warFled: 0, warWon: 0,
       // ---- 異端狩り（#7）----
       warned: 0, exiled: 0, burned: 0, misfired: 0,
+      captives: 0, refused: 0,
       warByStat: 0, warByLuck: 0, ennobled: 0,
       zealots: 0, resigned: 0, apostates: 0,
     };
@@ -284,6 +286,44 @@ export class World {
       // ★ 数えるのは**戦死した者だけ**。生きている全員を数えると村の台帳が壊れる
       for (const i of wr.deadList) if (P.a.village[i] !== 0xFFFF) this.cal.count(P.a.village[i], 8);
       this.counters.mourned += COND.mourn(P, wr.deadList);   // 戦死も「喪」の入力になる
+
+      // ---- 捕虜（正典 4-5・4-6）。★ 勝ったときだけ。負ければこちらが取られる ----
+      //   **外から血は入らない。入るのは捕虜だけ。**
+      if (wr.won) {
+        if (!this.foreignSect) {
+          // 異国の宗派を1つだけ作る（自国に存在しない宗派は全部これ1つに畳む・#8 §9）
+          const d = new Float64Array(SECT.AXES.length).fill(50);
+          this.foreignSect = this.sects.create(KIN_WAR, 0, -1, t, d);
+        }
+        // 置き先は国境の村（辺境）。無ければ人口が最小の村
+        const frontier = [];
+        let small = -1, smallN = Infinity;
+        for (let v = 0; v < V.a.len; v++) {
+          if (!V.a.alive[v]) continue;
+          if (V.a.where[v] === WHERE_FRONTIER) frontier.push(v);
+          if (V.a.pop[v] < smallN) { smallN = V.a.pop[v]; small = v; }
+        }
+        let fi = 0;
+        const cp = WAR.takeCaptives(
+          P, Math.floor(wr.kills * WAR.CAPTIVE_SHARE), t, this.R[STREAM.BATTLE],
+          () => P.spawn(t),
+          () => (frontier.length ? frontier[fi++ % frontier.length] : small),
+          (v) => {
+            // その村で信者が最も多い宗派の排他性
+            const cnt = new Map();
+            for (let i = 0; i < P.a.len; i++) {
+              if (!P.a.alive[i] || P.a.village[i] !== v || !P.a.sect[i]) continue;
+              cnt.set(P.a.sect[i], (cnt.get(P.a.sect[i]) ?? 0) + 1);
+            }
+            let bs = 0, bn = 0;
+            for (const [sx, nn] of cnt) if (nn > bn) { bn = nn; bs = sx; }
+            return bs ? this.sects.ax(bs, '排他性') : 0;
+          },
+          this.inq.alive, this.foreignSect);
+        this.counters.captives += cp.taken;
+        this.counters.refused += cp.refused;
+        if (cp.taken && this.once('captive')) this.note('最初のよそ者', '血。混ざる');
+      }
       if (this.once('war')) this.note('最初の戦', `団結が折れる。戦死は戻らない（${wr.won ? '勝ち' : '負け'}・戦死${wr.dead}）`);
     }
 

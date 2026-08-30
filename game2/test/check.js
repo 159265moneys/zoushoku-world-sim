@@ -37,6 +37,7 @@ import * as GG from '../src/core/gifts.gen.js';
 import * as DZ from '../src/world/disaster.js';   // 厄災（#9）
 import * as SECT from '../src/world/sect.js';    // 宗派（#8・正典3-6・#6-C）
 import * as HER from '../src/world/heresy.js';   // 異端狩り（#7）
+import * as WAR from '../src/world/war.js';      // 戦争と捕虜（O-27）
 
 // ★ 検査が「N年生き延びた世界」を要るとき、種を直書きしない。
 //   世界は層を足すたびに厳しくなるので、直書きの種はそのたびに絶滅世界に変わり、
@@ -2169,6 +2170,133 @@ check('★ 宗派が実際に起きて、信者が付き、消滅の規則が在
   // ★ **信者が根付くかは別問題。**いまは根付かない（台帳の未達項目）。
   //   ここで「200年後に信者がいること」を求めると、正典が保証していない結果を
   //   検査が要求することになる。**機構が在ることだけを見る。**
+  return true;
+});
+
+// ===========================================================================
+section('戦争と捕虜（world/war.js・O-27）');
+// ===========================================================================
+
+// ★ 旧 sim/battle.js（正典391 が「設計の看板」と名指し）の数字をそのまま移してある
+check('戦の定数が旧実装のまま（1つも作っていない）', () => {
+  if (WAR.LUCK_SHARE !== 0.10) return `流れ矢が ${WAR.LUCK_SHARE}`;
+  if (WAR.WOUND_SHARE !== 0.40) return `傷病が ${WAR.WOUND_SHARE}`;
+  if (WAR.MAX_ROUNDS !== 40) return `ラウンド上限が ${WAR.MAX_ROUNDS}`;
+  if (WAR.FORCE_MIN !== 12 || WAR.FORCE_MAX !== 40) return '部隊の規模が旧実装と違う';
+  if (WAR.REP_WIN !== 15 || WAR.REP_FLED !== -20) return '戦の評判が正典3-2 の表と違う';
+  return true;
+});
+
+// ★★ 「ただの総合力勝負」になっていないことを、実際に戦わせて確かめる
+check('★★ 戦は個体のステで解かれている（総合力の突き合わせではない）', () => {
+  // ★ 1つの種に人質を取られない。生きている世界のうち**いちばん大きいもの**で戦わせる
+  const ws = pooledWorlds(200, 6);
+  const w = ws.reduce((a, b) => (b.population() > a.population() ? b : a));
+  const P = w.people, A = P.a;
+  const pool = [...P.living()].filter((i) => { const y = A.ageMonths[i] / 12 | 0; return y >= 16 && y <= 50; });
+  if (pool.length < 24) return `働き盛りが ${pool.length}人しかいない（${ws.length}世界の最大）`;
+  const rng = w.R[10];
+  const rec = new Map();
+  const mk = (ids, ss, key) => {
+    const units = ids.map((id, k) => ({ id, side: key, stats: ss[k], hp: ss[k].hp, maxHp: ss[k].hp,
+      dead: false, fled: false, wounded: false, kills: 0, byLuck: false }));
+    let c = 0; for (const u of units) c += u.stats.bond;
+    const c0 = Math.max(0.5, c / Math.max(1, units.length) * units.length * 0.5);
+    return { key, units, start: units.length, cohesion: c0, c0, deadThis: 0, fledThis: 0, exposure: 1 };
+  };
+  for (let b = 0; b < 120; b++) {
+    const sh = pool.slice();
+    for (let k = sh.length - 1; k > 0; k--) { const j = Math.floor(rng.next() * (k + 1)); const t = sh[k]; sh[k] = sh[j]; sh[j] = t; }
+    const force = sh.slice(0, 20);
+    const stats = force.map((i) => WAR.combatOf(P, i));
+    const home = mk(force, stats, 'home');
+    WAR.runBattle(home, WAR.makeGhost(stats, 20, rng), rng);
+    for (const u of home.units) {
+      const r = rec.get(u.id) ?? { k: 0, d: 0, n: 0 };
+      r.n++; r.k += u.kills; if (u.dead) r.d++;
+      rec.set(u.id, r);
+    }
+  }
+  const rows = [...rec].filter(([, r]) => r.n >= 10).map(([i, r]) => {
+    const c = WAR.combatOf(P, i);
+    return { atk: c.atk, def: c.def, kills: r.k / r.n, dead: r.d / r.n };
+  });
+  if (rows.length < 10) return `標本が ${rows.length}人しかない`;
+  const corr = (a, b) => {
+    const n = a.length, ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n;
+    let sab = 0, sa = 0, sb = 0;
+    for (let k = 0; k < n; k++) { const x = a[k] - ma, y = b[k] - mb; sab += x * y; sa += x * x; sb += y * y; }
+    return sa > 0 && sb > 0 ? sab / Math.sqrt(sa * sb) : 0;
+  };
+  const cAtk = corr(rows.map((r) => r.atk), rows.map((r) => r.kills));
+  const cDef = corr(rows.map((r) => r.def), rows.map((r) => r.dead));
+  if (cAtk < 0.5) return `攻撃力と討ち取り数の相関が ${cAtk.toFixed(2)}（ステが効いていない）`;
+  if (cDef > -0.5) return `守りと戦死率の相関が ${cDef.toFixed(2)}（ステが効いていない）`;
+  return true;
+});
+
+check('★ 流れ矢がある（ステが最強でも運で死ぬ余地）', () => {
+  const src = readFileSync(join(GAME2, 'src/world/war.js'), 'utf8');
+  if (!/b\.deaths\[luck \? 'luck' : 'stat'\]\+\+/.test(src)) return '戦死の内訳（ステ由来／流れ矢）を数えていない';
+  if (!/LUCK_SHARE \/ \(1 - LUCK_SHARE\)/.test(src)) return '流れ矢の抽選が 10/(1−10) になっていない';
+  if (!/戦功が付かない/.test(src)) return '逃走の社会的コスト（戦功が付かない）が無い';
+  return true;
+});
+
+// ★ 人口20から国力マッチングの戦争を来させると、400年の人口が 1,724→38 に潰れた。
+//   戦は16〜50歳＝産む側と作る側だけを抜くので、指数成長の初期の複利が消える
+check('★ 戦が来るのは「国」から（フェーズ3の入口＝人口100）', () => {
+  if (WAR.WAR_MIN_POP !== 100) return `戦の下限人口が ${WAR.WAR_MIN_POP}`;
+  return true;
+});
+
+check('**帰化の拒否率が正典 #8 §9 の表4行と一致する**', () => {
+  for (const [ex, a, b] of [[50, 0, 0], [60, 18, 27], [75, 45, 68], [82, 58, 87]]) {
+    const x = WAR.refuseP(ex, false) * 100, y = WAR.refuseP(ex, true) * 100;
+    if (Math.abs(x - a) > 1) return `排他性${ex}・審問会なし ${x.toFixed(0)}%（正典 ${a}%）`;
+    if (Math.abs(y - b) > 1) return `排他性${ex}・審問会あり ${y.toFixed(0)}%（正典 ${b}%）`;
+  }
+  // ★ 疫病から起きた宗教は排他性 +15。疫病を経験した国ほど外の血を入れない
+  if (!(WAR.refuseP(75, false) > WAR.refuseP(60, false))) return '排他性が拒否を増やしていない';
+  return true;
+});
+
+// ★ 正典「外から血は入らない。入るのは捕虜だけ」「世界に共存する血統は戦争でしか増えない」
+check('★★ 捕虜で外の血が入り、混ざる', () => {
+  // ★ 捕虜が入るには「勝った戦」が要る。1つの世界では起きない年があるので束ねる
+  let wars = 0, taken = 0, mixed = 0, worlds = 0;
+  for (const w of pooledWorlds(300, 6)) {
+    worlds++;
+    const A = w.people.a;
+    wars += w.counters.wars;
+    const captives = new Set();
+    for (let i = 10; i < A.len; i++) {
+      if (A.mother[i] < 0 && A.father[i] < 0 && A.birthTick[i] >= 0) captives.add(i);
+    }
+    taken += captives.size;
+    if (!captives.size) continue;
+    // ★ 捕虜は農奴にしない。平民から始める（正典1852）
+    for (const i of captives) {
+      if (A.rank[i] !== P.RANK_COMMON) return `捕虜が ${P.RANK_NAMES[A.rank[i]]} で始まっている（平民のはず）`;
+    }
+    if (!w.foreignSect) return '異国の宗派が作られていない';
+    // 血が混ざったか（子孫を辿る）
+    const desc = new Set(captives);
+    for (let pass = 0; pass < 40; pass++) {
+      let added = false;
+      for (let i = 0; i < A.len; i++) {
+        if (desc.has(i)) continue;
+        if (desc.has(A.mother[i]) || desc.has(A.father[i])) { desc.add(i); added = true; }
+      }
+      if (!added) break;
+    }
+    for (const i of w.people.living()) if (desc.has(i)) { mixed++; break; }
+  }
+  if (!wars) return `${worlds}世界・300年で戦が1度も起きない`;
+  if (!taken) return `戦 ${wars}回あったのに捕虜が1人も入らない`;
+  // ★ 正典「外から血は入らない。入るのは捕虜だけ」
+  //   全世界で混ざらないのは異常。1つでも混ざっていれば経路は通っている
+  if (!mixed) return `捕虜 ${taken}人が入ったが、${worlds}世界のどれでも血を引く生存者が0人`;
   return true;
 });
 

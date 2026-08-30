@@ -20,6 +20,8 @@ import * as S from '../core/stats.js';
 import { DEATH_WAR, NO_VILLAGE } from './people.js';
 import { PART_ARM, PART_LEG, healMonths } from './condition.js';
 import * as REP from './reputation.js';
+import { foundGenome } from './genetics.js';
+import { MODE_LAY, RANK_COMMON } from './people.js';
 
 // ---- 旧 battle.js の定数（1つも作っていない）--------------------------------
 export const LUCK_SHARE = 0.10;    // 戦死のうち完全ランダム（流れ矢）の割合
@@ -302,4 +304,87 @@ export function warMonth(P, pop, tick, rng, onFamilyDeath) {
   }
   return { fought: 1, dead: deadList.length, deadList, kills, fled, won: won ? 1 : 0,
            byStat: b.deaths.stat, byLuck: b.deaths.luck };
+}
+
+// ---------------------------------------------------------------------------
+// 捕虜（正典 4-5・4-6・#8 §9・#7）
+// ---------------------------------------------------------------------------
+//
+// ★ **外から血は入らない。入るのは捕虜だけ**（正典658）。
+//   「世界に共存する血統は**戦争でしか増えない**（開拓も移住も血を増やさない）」（正典1405）。
+//   だから敵国は**自国の分布から作ってはいけない** ── それでは血が増えない。
+//   旧 battle.js の makeGhost が「国ごとに遺伝子の狙いを振る＝国の性格」と書いているとおり、
+//   **戦ごとに別の狙い（targets）を引いて、そこから捕虜の遺伝子を作る。**
+//
+// ★ **戦利品は捕虜と物。土地は動かない**（正典519）。終戦の処理は「捕虜にするか誅殺するか」。
+//   **送還は無い。**国境で選別するのは無料、帰化させてから殺すと粛清（正典 4-5）。
+//
+// ★ 捕虜は**農奴にしない。**rank=1（平民）から始める（正典1852）。
+//   評判 R ← 0（正典4-4「②③④はゼロから始まる」）。つながりの網に繋がっていない。
+//
+// ★ 「**入れた世代は異物、その子は自国民**」が構造から出る ──
+//   本人は異国の宗派（d=40 固定・#7 の最優先の異端候補）のまま同化しないが、
+//   子は7歳の継承規則で自国の宗派に入りうる。
+
+export const CAPTIVE_SHARE = 0.5;      // 敗走した側の生き残りのうち捕虜にできる割合
+export const CAPTIVE_FAITH = 40;       // 帰化した月の faith（段2）
+export const FOREIGN_SPREAD = 0.22;    // 敵国の遺伝のばらつき（自国の創世と同じ桁）
+export const FOREIGN_TARGET_LO = 0.20, FOREIGN_TARGET_HI = 0.80;   // 国ごとの狙いの幅
+
+// 帰化の拒否（正典3-6「信仰で安定を買うと、血が腐る」の数値化）
+export const REFUSE_BASE = 50, REFUSE_DIV = 55, REFUSE_CAP = 0.9;
+export const REFUSE_INQ_MUL = 1.5;     // 異端審問会が在れば
+
+/** 帰化の拒否率。★ 疫病から起きた宗教は排他性 +15 なので、疫病を経験した国ほど外の血を入れない */
+export function refuseP(exclusive, hasInquisition) {
+  const v = (exclusive - REFUSE_BASE) / REFUSE_DIV * (hasInquisition ? REFUSE_INQ_MUL : 1);
+  return v < 0 ? 0 : v > REFUSE_CAP ? REFUSE_CAP : v;
+}
+
+/** 敵国の遺伝の狙いを1つ引く。★ 国ごとに性格が違う（同じ相手ばかりにならない） */
+export function foreignTargets(rng, S_, SCALE = 100) {
+  const t = new Float32Array(S_.COUNT);
+  for (let s = 0; s < S_.COUNT; s++) {
+    t[s] = (FOREIGN_TARGET_LO + (FOREIGN_TARGET_HI - FOREIGN_TARGET_LO) * rng.next()) * SCALE;
+  }
+  return t;
+}
+
+/**
+ * 捕虜を取る（正典 4-5・4-6）。★ 乱数は戦闘のストリーム（10番）だけ。
+ *
+ * ★ **選べるのは「取る」か「殺す」の二択。送還は無い。**
+ *   戦争終了時に実施するので国民への通達はなく、感情は動かない（正典 4-5）。
+ *   一度国に入れたあとに殺すのは**粛清**で、いつも通りの恨みが返る。
+ *
+ * @param spawn (P) → 新しい添字を1つ確保して返す関数（世界側が持っている）
+ * @param villageOf () → 置き先の村（国境の村）。無ければ −1
+ * @param exclusiveOf (v) → その村で信者が最も多い宗派の排他性。信者がいなければ 0
+ * @param hasInq  異端審問会が在るか
+ * @returns {{taken, refused}}
+ */
+export function takeCaptives(P, n, tick, rng, spawn, villageOf, exclusiveOf, hasInq, foreignSect) {
+  const A = P.a;
+  let taken = 0, refused = 0;
+  // ★ 戦ごとに敵国の遺伝の狙いを1つ引く（国ごとに性格が違う）
+  const targets = foreignTargets(rng, S, 100);
+  for (let k = 0; k < n; k++) {
+    const v = villageOf();
+    // ★ 掟：分岐で回数を変えない。拒否の抽選は必ず引く
+    const r = rng.next();
+    if (v < 0) { refused++; continue; }
+    // 帰化の拒否（受け入れ先の村で信者が最も多い宗派の排他性で決まる）
+    if (r < refuseP(exclusiveOf(v), hasInq)) { refused++; continue; }   // 拒めば「殺す」しかない
+
+    const i = spawn();
+    if (i < 0) { refused++; continue; }
+    foundGenome(P, i, rng, targets, FOREIGN_SPREAD * 100);
+    A.village[i] = v;
+    A.rank[i] = RANK_COMMON;          // ★ 捕虜は農奴にしない（正典1852）
+    A.rep[i] = 0;                     // ★ ②③④はゼロから始まる（正典4-4）
+    A.sect[i] = foreignSect;          // 異国の宗派（自国に無い宗派は全部これ1つに畳む）
+    A.faith[i] = CAPTIVE_FAITH; A.mode[i] = MODE_LAY; A.sectMon[i] = 0;
+    taken++;
+  }
+  return { taken, refused };
 }
