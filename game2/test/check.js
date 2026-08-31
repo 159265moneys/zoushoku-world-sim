@@ -2245,9 +2245,14 @@ check('★★ 狩りの保存則 E[2z/c] ＝ 2p ＝ q が厳密に成り立つ',
 
 check('**当たり率が正典8963 の3点と一致する（下駄を履かせない）**', () => {
   // 実効値746（名人）→ 手ぶら0% ／ 373（働き手の平均）→ 50% ／ 150（下手）→ 80%
-  for (const [eff, want] of [[746, 0], [373, 50], [150, 80]]) {
+  // ★★ 2026-08-31：**3点は分母に追随する。**正典8963 の 746/373/150 は
+  //   `Q_DIVISOR = 373` のときの値で、正典自身が「旧2,100。分母を 1,050→373 に直したので、
+  //   **その2倍として引き直した**」と書いている ＝ 3点は分母の 2.00倍／1.00倍／0.402倍。
+  //   `Q_DIVISOR` が 225 になったので 450／225／90.5 で見る。**比は1つも変えていない。**
+  const Q = V.Q_DIVISOR;
+  for (const [eff, want] of [[2.00 * Q, 0], [1.00 * Q, 50], [0.402 * Q, 80]]) {
     const miss = (1 - V.hitP(eff)) * 100;
-    if (Math.abs(miss - want) > 0.5) return `実効値${eff} で手ぶら ${miss.toFixed(0)}%（正典 ${want}%）`;
+    if (Math.abs(miss - want) > 0.5) return `実効値${eff.toFixed(0)} で手ぶら ${miss.toFixed(0)}%（正典 ${want}%）`;
   }
   // ★ clamp を外してはいけない。実効値は170前後まで伸びるので、
   //   clamp が無いと p>1 で熊の帯が u<1 の外へ出て「名人ほど獲れなくなる」
@@ -3541,6 +3546,23 @@ check('index.html のスクリプトが構文として通る（頁が黙って�
 //   だが `node --check` は構文しか見ないので `process.env.FOO` は通り、**228/228 緑のまま**だった。
 //   check.js 全体に jsdom も new Function も無く、**モジュールを評価する検査が1本も無かった。**
 //   → 静的（Node 専用の識別子を src に書かない）と 動的（process を消して入口を評価する）の2本を置く。
+// ★★ 2026-08-31：**保存則の脚が検査されていなかった。**★★
+//   正典 §5-2 は「E[2z/c] ＝ 2p ＝ q。**どの組でも、どの実効値でも、厳密に q。**
+//   だから 1.764×q ／ 産出135.8 ／ 季節係数は1文字も動かない」と書く。
+//   この `2p = q` は **HIT_DIVISOR ＝ 2 × Q_DIVISOR** でしか成り立たない
+//   （正典8963「旧2,100。分母を 1,050→373 に直したので、**その2倍として引き直した**」）。
+//   Q_DIVISOR を 373→225 にしたとき746 を残したまま緑だったので、明文の検査を置く。
+check('★ 保存則 E[2z/c] ＝ 2p ＝ q（HIT_DIVISOR は Q_DIVISOR の2倍）', () => {
+  if (V.HIT_DIVISOR !== 2 * V.Q_DIVISOR)
+    return `HIT_DIVISOR ${V.HIT_DIVISOR} ≠ 2 × Q_DIVISOR ${2 * V.Q_DIVISOR}`;
+  // 数のうえでも見る：実効値 e の猟師は q = e/Q、2p = 2e/HIT。両者が一致すること
+  for (const e of [100, 225, 373, 450, 900]) {
+    const q = e / V.Q_DIVISOR, twoP = 2 * V.hitP(e);
+    if (e <= V.HIT_DIVISOR && Math.abs(q - twoP) > 1e-9) return `実効値${e}: q=${q} ≠ 2p=${twoP}`;
+  }
+  return true;
+});
+
 check('★ src が Node の顔をしていない（process/require/__dirname を書かない）', () => {
   const bad = [];
   const walk = (dir) => {
