@@ -26,6 +26,9 @@ export const AREA_HOME = 0, AREA_FIELD = 1, AREA_FOREST = 2, AREA_TRAIN = 3, ARE
 // ★ 工事（#17 §4-3）。**工事に付けた月は畑にも森にも出ない**ので、産出が直接落ちる。
 //   produceAndEat は AREA_FIELD/AREA_FOREST しか見ないので、ここに移すだけで産出から抜ける
 export const AREA_BUILD = 5;
+// ★ 漁（#17 §5-2「漁（川・海湖）: u < p → z=0.55 ／ 以外 0。**負傷なし**」）。
+//   狩りと同じ 7番のストリームを使う（正典8297「7 狩り・漁の当たり」）
+export const AREA_FISH = 6;
 export const AREA_COUNT = 5;
 export const AREA_NAMES = ['住居', '畑', '森', '訓練場', '辺境'];
 
@@ -43,6 +46,11 @@ const AREA_TRAIN_NAMES = [
   [['最大筋力', 1], ['打たれ強さ', 1], ['反射', 0.9], ['瞬発力', 0.8], ['体で覚える力', 0.7]],
   // 辺境（開拓）
   [['持久力', 1], ['寒さへの強さ', 0.8], ['道と方角の覚え', 0.7], ['最大筋力', 0.7], ['痛覚の鈍さ', 0.4]],
+  // 工事（開墾・築造）── 畑と同じ体力仕事
+  [['持久力', 1], ['体幹', 0.9], ['最大筋力', 0.7], ['段取り', 0.6], ['観察', 0.5]],
+  // 漁 ── ★ 正典は「狩り・漁」を通して1つの機構として書いている（§5-2・ストリーム7）ので、
+  //        森と同じ並びを使う。**新しいステの重みを作らない**
+  [['走力', 1], ['敏捷', 0.9], ['視力', 0.8], ['観察', 0.8], ['集中', 0.6], ['獣を御する力', 0.5]],
 ];
 
 // 名前 → ステ番号に一度だけ直す（実行時に名前で引かない）
@@ -69,6 +77,18 @@ export function moraleOf(P, i) {
   const m = 1 - MORALE_RULE * v3 / 100 - MORALE_SELF * v4 / 100;
   return m < MORALE_FLOOR ? MORALE_FLOOR : m > 1 ? 1 : m;
 }
+// ---- 漁（#17 §9-4「魚：川区画・食料1.6／人月（定員3）」・§5-3 の季節）------------
+// ★ 実効の1人月（年平均）で並べると 畑 2.6×0.75 ＝ 1.95 ／ **漁 1.6×1.00 ＝ 1.60** ／
+//   狩り 1.4×0.95 ＝ 1.33。**畑より下・狩りより上。**
+//   そのうえ 当たりは z=0.55 の**一段だけ**（狩りの熊のような大当たりが無い ＝ 荒れない）で、
+//   定員が 川3／海湖6 と小さいので**量が取れない**。
+export const FISH_YIELD = 1.6;
+// §5-3 の表：川の漁 春1.6（遡上）／夏1.0／秋1.2／冬0.2（結氷）── 年平均 1.00
+//            海の漁 春1.2／夏1.3／秋1.1／冬0.6（時化）      ── 年平均 1.05
+export const FISH_SEASON_RIVER = [1.6, 1.0, 1.2, 0.2];
+export const FISH_SEASON_SEA   = [1.2, 1.3, 1.1, 0.6];
+// ★ 漁の帯は1段だけなので c ＝ 1.00 × 0.55 ＝ 0.550（§5-2 の「小物のみ」と同じ）
+export const C_FISH = 0.550;
 export const HUNT_YIELD = 1.4;             // 森1人・1ヶ月あたり
 export const WINTER_HUNT = 0.8;            // 冬の狩りの落ち
 export const EAT_ADULT = 1.0;              // 12歳以上が1ヶ月に食べる量
@@ -241,16 +261,17 @@ export class Villages {
  * 働ける年になった者にエリアを振る。一度振ったら変えない（転職は A-8 の別の話）。
  * 畑と森の比を FIELD_SHARE に保つ。乱数を使わないので同じ種で同じ配置になる。
  */
-export function assignWork(P, V, tick) {
+export function assignWork(P, V, tick, land = null) {
   const A = P.a;
   const nv = V.len;
-  const field = new Uint16Array(nv), forest = new Uint16Array(nv);
+  const field = new Uint16Array(nv), forest = new Uint16Array(nv), fish = new Uint16Array(nv);
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i]) continue;
     const v = A.village[i];
     if (v === NO_VILLAGE || v >= nv) continue;
     if (A.job[i] === AREA_FIELD) field[v]++;
     else if (A.job[i] === AREA_FOREST) forest[v]++;
+    else if (A.job[i] === AREA_FISH) fish[v]++;
   }
   let assigned = 0;
   for (let i = 0; i < A.len; i++) {
@@ -260,8 +281,16 @@ export function assignWork(P, V, tick) {
     const y = (A.ageMonths[i] / C.MONTHS_PER_YEAR) | 0;
     if (y < WORK_START_AGE[A.rank[i]]) { A.job[i] = AREA_HOME; continue; }
     if (A.job[i] !== AREA_HOME) continue;             // もう振ってある
-    const n = field[v] + forest[v];
+    // ★★ 漁は**森を押しのける。畑は押しのけない。**★★
+    //   年平均の実効の1人月で並べると 畑 2.6×0.75 ＝ **1.95** ／
+    //   川の漁 1.6×1.00 ＝ **1.60** ／ 狩り 1.4×0.95 ＝ **1.33**。
+    //   だから FIELD_SHARE 0.7 は1文字も動かさず、**残りの0.3の中で漁を先に埋める。**
+    //   （定員は硬い**天井**であって目標ではない ── 先に埋めると、
+    //     川3区画＝定員9 の村で10人中9人が漁師になり畑が空になる）
+    const fcap = land ? ((land.riverCap?.[v] ?? 0) + (land.seaCap?.[v] ?? 0)) : 0;
+    const n = field[v] + forest[v] + fish[v];
     if (n === 0 || field[v] / n < FIELD_SHARE) { A.job[i] = AREA_FIELD; field[v]++; }
+    else if (fish[v] < fcap) { A.job[i] = AREA_FISH; fish[v]++; }
     else { A.job[i] = AREA_FOREST; forest[v]++; }
     assigned++;
   }
@@ -284,13 +313,15 @@ export function produceAndEat(P, V, tick, land = null, harvest = 1.0, rngHunt = 
   const winter = C.isWinter(tick);
   const rationOn = tick < RATION_YEARS * C.DAYS_PER_YEAR;
 
-  const prodF = new Float64Array(nv), prodW = new Float64Array(nv);
+  const prodF = new Float64Array(nv), prodW = new Float64Array(nv), prodH = new Float64Array(nv);
+  const season = C.season(tick);
   const produced = new Float64Array(nv);
   const demand = new Float64Array(nv);
   const pop = new Uint16Array(nv), workers = new Uint16Array(nv);
   // ★ 土地の定員（#17 §2-2）。畑と森に何人月まで入るかは区画の数で決まる。
   //   定員は**硬い天井**で逓減させない（§2-1：柱6の単一の判定式を守るため）
   const fieldMen = new Float64Array(nv), forestMen = new Float64Array(nv);
+  const fishMen = new Float64Array(nv);
 
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i]) continue;
@@ -301,6 +332,23 @@ export function produceAndEat(P, V, tick, land = null, harvest = 1.0, rngHunt = 
     demand[v] += y >= 12 ? EAT_ADULT : EAT_CHILD;
 
     const job = A.job[i];
+    // ★ 漁（#17 §5-2）。**帯は1段だけ**（u<p で z=0.55、外れは0）。負傷なし。
+    //   季節は川と海で違う（§5-3）。定員は land が持つ（川3／海湖6）
+    if (job === AREA_FISH) {
+      workers[v]++;
+      if (A.state[i] & ST_PREGNANT) continue;
+      fishMen[v]++;
+      const rc = land ? (land.riverCap?.[v] ?? 0) : 0, sc = land ? (land.seaCap?.[v] ?? 0) : 0;
+      // 川と海の両方を持つ村は、定員の比で季節係数を混ぜる（区画ごとに人を割らない）
+      const sea = (rc + sc) > 0 ? sc / (rc + sc) : 0;
+      const seas = FISH_SEASON_RIVER[season] * (1 - sea) + FISH_SEASON_SEA[season] * sea;
+      const eff = P.effectiveOf(i, AREA_YIELD_STATS[AREA_FISH]);
+      const pHit = hitP(eff) * moraleOf(P, i);
+      const u = rngHunt ? rngHunt.next() : 0.5;
+      const z = u < pHit ? 0.55 : 0;
+      prodH[v] += FISH_YIELD * seas * (2 * z / C_FISH);
+      continue;
+    }
     if (job === AREA_FIELD || job === AREA_FOREST) {
       workers[v]++;
       // 身重の女は畑にも森にも出ない（家事へ回る）
@@ -339,7 +387,14 @@ export function produceAndEat(P, V, tick, land = null, harvest = 1.0, rngHunt = 
   if (land && land.fert) {
     for (let v = 0; v < nv; v++) fert[v] = fertMul(land.fert[v] ?? FERT_BASE);
   }
-  for (let v = 0; v < nv; v++) produced[v] = prodF[v] * crowdF[v] * fert[v] + prodW[v] * crowdW[v];
+  // ★ 漁の crowd。定員（川3／海湖6）は硬い天井（§2-1）。地力は掛けない（人工の耕地だけ）
+  const crowdH = new Float64Array(nv).fill(1);
+  if (land) for (let v = 0; v < nv; v++) {
+    if (fishMen[v] > 0)
+      crowdH[v] = Math.min(1, ((land.riverCap?.[v] ?? 0) + (land.seaCap?.[v] ?? 0)) / fishMen[v]);
+  }
+  for (let v = 0; v < nv; v++)
+    produced[v] = prodF[v] * crowdF[v] * fert[v] + prodW[v] * crowdW[v] + prodH[v] * crowdH[v];
 
   const out = [];
   for (let v = 0; v < nv; v++) {

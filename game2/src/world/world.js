@@ -205,7 +205,7 @@ export class World {
       P.a.pregCount[w] = 1;
     }
 
-    assignWork(P, V, this.tick);
+    assignWork(P, V, this.tick, this.land);
     this.note('創世', `十匹が立った。家が${H.count}軒` +
       (this.land ? `。席は (${this.map.seatX},${this.map.seatY})・畑の定員${this.land.fieldCap[0]}人月` : ''));
     return this;
@@ -313,7 +313,7 @@ export class World {
       OFF.inherit(P, heir, from, t);   // 身分の世襲（#10-F）。役職は世襲しない
     }
     syncHouses(V, H);
-    assignWork(P, V, t);
+    assignWork(P, V, t, this.land);
 
     // ---- 具申（#14）。★ 役職者が予定を立て、猶予を過ぎたら**勝手に実行される** ----
     //   ヘッドレスでは誰も止めないので全部通る。それでも

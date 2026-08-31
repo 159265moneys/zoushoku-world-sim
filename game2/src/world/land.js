@@ -16,6 +16,8 @@ import * as F from './fog.js';
 // §2-1 の定員（1区画が何人月を吸えるか）
 export const CAP_FIELD = 7;     // 畑（三圃）
 export const CAP_FOREST = 6;    // 森林
+export const CAP_RIVER = 3;     // 川（§2-1「区画を横切る川の長さぶん」）
+export const CAP_SEA = 6;       // 海・湖（§2-1「沿岸漁と製塩を分け合う」。製塩はまだ無いので全部が漁）
 
 /** 村ごとの土地。村ID → { px, py, cells[13], fieldCap, forestCap } */
 export class Land {
@@ -55,14 +57,21 @@ export class Land {
    */
   recap(v) {
     let field = 0, forest = 0;
+    let river = 0, sea = 0;
     for (const p of this.cells[v]) {
       const role = this.L.b0[p] & 15;
       // 人工の耕地6種だけが畑の定員を持つ（拠点地・工事中・自然は持たない）
       if (role >= R.FIELD && role <= R.PADDY) field++;
       else if (role === R.WOOD) forest++;
+      else if (role === R.RIVER) river++;
+      else if (role === R.WATER) sea++;
     }
     this.fieldCap[v] = field * CAP_FIELD;
     this.forestCap[v] = forest * CAP_FOREST;
+    // ★ 漁の定員（#17 §2-1）。川と海湖で季節が違う（§5-3）ので別に持つ
+    this.riverCap = this.riverCap || []; this.seaCap = this.seaCap || [];
+    this.riverCap[v] = river * CAP_RIVER;
+    this.seaCap[v] = sea * CAP_SEA;
 
     // ★ 地力（#17 §5-1 の `(地力/8)^0.6`。**人工の耕地にだけ掛かる**）。
     //   その村が持つ「畑にできる区画」の地力の平均。基準は 8 ＝ そこで倍率が厳密に 1.000。
