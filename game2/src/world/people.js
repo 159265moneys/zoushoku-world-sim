@@ -503,7 +503,10 @@ export function lifespanOf(P, i) {
   if (gift > 0) return gift;
   const base = baseLifespanOf(P, i);
   const v = Math.round(base * loadLifeMul(P.a.vitality[i]));
-  return v < 20 ? 20 : v > 255 ? 255 : v;
+  // ★ 2026-08-31（別セッションの精査で発見）：**下限を 20 にしていたので、荷重の重い
+  //   血統が 30 まで落ちて確定事項 A-6「寿命は 40〜70歳」を割っていた**（実測 最小30）。
+  //   正典1310 の例も「血を固めた世代6は **40歳**で死ぬ」で、**40が床**。
+  return v < LIFESPAN_MIN ? LIFESPAN_MIN : v > LIFESPAN_MAX ? LIFESPAN_MAX : v;
 }
 
 // ★★ 荷重が寿命に効く倍率。**母集団の中央で 1.00 になるよう錨を打つ**（2026-08-31・M-52）★★
