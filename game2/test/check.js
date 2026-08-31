@@ -2710,8 +2710,11 @@ check('★★ 捕虜で外の血が入り、混ざる', () => {
     taken += captives.size;
     if (!captives.size) continue;
     // ★ 捕虜は農奴にしない。平民から始める（正典1852）
+    //   ★ 2026-08-31：**「平民から始める」を「一生 平民」と読んでいた。**
+    //     正典3719「平民でも武功で入れる（戦功3回で rank1）」を入れたので、
+    //     捕虜も討ち取れば騎士になる ── それは正典どおり。見るのは**農奴に落ちていないこと**
     for (const i of captives) {
-      if (A.rank[i] !== P.RANK_COMMON) return `捕虜が ${P.RANK_NAMES[A.rank[i]]} で始まっている（平民のはず）`;
+      if (A.rank[i] < P.RANK_COMMON) return `捕虜が ${P.RANK_NAMES[A.rank[i]]} になっている（農奴にはしない）`;
     }
     if (!w.foreignSect) return '異国の宗派が作られていない';
     // 血が混ざったか（子孫を辿る）
