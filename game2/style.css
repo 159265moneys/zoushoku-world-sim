@@ -258,3 +258,13 @@ details.all summary:hover { color: var(--ink); }
   #side { flex-basis: 260px; }
   #bar { gap: 12px; }
 }
+
+/* 方針カード（#18 §1）。★ 2026-08-31：オーナーがつまみを動かす手段が無かった */
+#cardbox .card { border-top: 1px solid var(--line, #2a2f36); padding: 6px 0; }
+#cardbox .ck { font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+#cardbox .ck small { opacity: .55; font-weight: 400; }
+#cardbox .cv { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+#cardbox .cv b { min-width: 2.2em; text-align: center; font-variant-numeric: tabular-nums; }
+#cardbox .cv u { text-decoration: none; opacity: .75; font-variant-numeric: tabular-nums; }
+#cardbox .cv button { min-width: 2em; padding: 1px 6px; }
+#cardbox .cn { opacity: .5; font-size: 11px; line-height: 1.35; }

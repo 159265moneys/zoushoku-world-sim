@@ -60,6 +60,14 @@
       </div>
     </section>
 
+    <!-- ★ 2026-08-31：方針カード（#18 §1）を触る手段が無かった。
+         `cards.set()` を呼ぶのが検査の1行だけで、src/flow・src/ui に `cards` の
+         識別子が一度も現れていなかった（＝11枚あるのに全部が既定のまま） -->
+    <section id="cardbox">
+      <h3>方針カード<small>#18 §1。段は −2〜+2。既定と同じ段なら1バイトも使わない</small></h3>
+      <div id="cardlist"></div>
+    </section>
+
     <section id="chron">
       <h3>年代記<small>初めて起きたことだけが載る</small></h3>
       <ul id="chronlist"></ul>

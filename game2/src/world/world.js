@@ -405,7 +405,8 @@ export class World {
         if (this.R[STREAM.HUNT].next() < MID_HURT && !P.a.hurtStage[i]) {
           P.a.hurtStage[i] = 1; P.a.hurtPart[i] = 2; P.a.hurtHeal[i] = COND.healMonths(P, i, 1);
         }
-      });
+      },
+      this.cards.value('蔵の上限'));   // ★ 二重定義をやめ、カードの実値を渡す（#18 §1）
     for (const r of food) {
       if (r && r.shortage > 0 && this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');
     }

@@ -261,7 +261,10 @@ export class Villages {
   /** その村はもう家が入らないか（A-19b：30軒が埋まったら） */
   isFull(v) { return this.a.houses[v] >= HOUSES_PER_VILLAGE; }
   freeSlots(v) { return Math.max(0, HOUSES_PER_VILLAGE - this.a.houses[v]); }
-  storeCap(v) { return Math.max(1, this.a.houses[v]) * STORE_PER_HOUSE; }
+  // ★ 2026-08-31：**「蔵の上限」は #18 §1 のカード（農業局・既定240）なのに、ここで
+  //   定数を焼き込んでいたので二重定義になっていた**（別セッションの精査の指摘）。
+  //   カードの実値は世界が持っているので、`perHouse` で受け取る。既定は従来どおり240
+  storeCap(v, perHouse = STORE_PER_HOUSE) { return Math.max(1, this.a.houses[v]) * perHouse; }
 }
 
 // ---- 仕事の割り当て -------------------------------------------------------
@@ -323,7 +326,8 @@ export function assignWork(P, V, tick, land = null) {
  * @param rngHunt 狩りのストリーム（#17 §5-2）。★ 森で働く者ひとりにつき必ず1回引く。
  *   無ければ 0.5 固定（＝乱数を引かない旧来の挙動。検査の対照に使える）
  */
-export function produceAndEat(P, V, tick, land = null, harvest = 1.0, rngHunt = null, onBear = null, onMid = null) {
+export function produceAndEat(P, V, tick, land = null, harvest = 1.0, rngHunt = null, onBear = null, onMid = null,
+                              storePerHouse = STORE_PER_HOUSE) {
   const A = P.a, VA = V.a;
   const nv = V.len;
   const winter = C.isWinter(tick);
@@ -433,7 +437,7 @@ export function produceAndEat(P, V, tick, land = null, harvest = 1.0, rngHunt = 
     VA.eaten[v] = eaten;
 
     // 蔵の天井。溢れた分は腐る（B-12：食料の天井で人口を自己調整させる）
-    const cap = V.storeCap(v);
+    const cap = V.storeCap(v, storePerHouse);
     if (food > cap) food = cap;
     VA.food[v] = food;
 

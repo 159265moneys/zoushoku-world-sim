@@ -16,6 +16,7 @@
 //     requestAnimationFrame も持たない（旧版は戦闘だけ rAF で、裏タブで止まった）。
 
 import * as C from '../core/calendar.js';
+import * as CARD from '../world/cards.js';   // 方針カード（#18 §1）
 import * as S from '../core/stats.js';
 import { World, converge as convergeOf } from '../world/world.js';
 import {
@@ -245,6 +246,27 @@ export class Run {
 
   /** その速さでの「1ヶ月＝何実秒か」。★ UI が式を持ち直すと A-11 の破棄済みの式が復活する */
   secondsPerMonthAt(speed) { return C.realSecondsPerMonth(speed); }
+
+  // ---- 方針カード（#18 §1）。★ オーナーが触る唯一の口 ----------------------
+  /** 国のつまみの一覧。段・実数・注記を UI が読める形にして返す */
+  nationCards() {
+    return CARD.NATION_CARDS.map((c) => ({
+      key: c.key, bureau: c.bureau, note: c.note,
+      step: this.world.cards.step(c.key),
+      value: this.world.cards.value(c.key),
+      onOff: c.lo === -2 && c.hi === 2 && c.s === 1 && c.base === 1,
+      lo: c.lo, hi: c.hi,
+    }));
+  }
+  /** 段を1つ動かす。★ −2〜+2 で止める（Cards 側も clamp するが、UI に返す値も揃える） */
+  stepCard(key, delta) {
+    const cur = this.world.cards.step(key);
+    let next = cur + delta;
+    if (next < CARD.STEP_MIN) next = CARD.STEP_MIN;
+    if (next > CARD.STEP_MAX) next = CARD.STEP_MAX;
+    this.world.cards.set('nation', 0, key, next);
+    return next;
+  }
   msPerTick() { return C.msPerTick(this.speed); }
 
   /**

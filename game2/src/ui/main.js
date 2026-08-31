@@ -72,6 +72,35 @@ function markSpeeds() {
   $('playbtn').classList.toggle('on', run.playing);
 }
 
+// ---- 方針カード（#18 §1）------------------------------------------------
+// ★ 2026-08-31：**オーナーがつまみを動かす手段が無かった。**
+//   `cards.set()` を呼ぶのは検査の1行だけで、11枚が全部 既定のまま眠っていた。
+//   ここは「意味はプリセット、量は数値」（正典6-2）どおり、段と実数の両方を出す。
+const ROT_NAMES = ['連作', '二圃', '三圃', '四圃'];
+function drawCards() {
+  const box = $('cardlist');
+  if (!box) return;
+  const cards = run.nationCards();
+  box.innerHTML = cards.map((c) => {
+    const label = c.key === '輪作' ? ROT_NAMES[Math.round(c.value)] ?? String(c.value)
+      : (c.onOff ? (c.step >= 1 ? 'オン' : 'オフ') : fixCard(c.value));
+    return `<div class="card" data-key="${c.key}">
+      <div class="ck">${c.key}<small>${c.bureau}</small></div>
+      <div class="cv"><button class="ghost cm">−</button>
+        <b>${c.step > 0 ? '+' : ''}${c.step}</b>
+        <button class="ghost cp">＋</button>
+        <u>${label}</u></div>
+      <div class="cn">${c.note}</div>
+    </div>`;
+  }).join('');
+  for (const el of box.querySelectorAll('.card')) {
+    const key = el.dataset.key;
+    el.querySelector('.cm').onclick = () => { run.stepCard(key, -1); drawCards(); drawBar(true); };
+    el.querySelector('.cp').onclick = () => { run.stepCard(key, +1); drawCards(); drawBar(true); };
+  }
+}
+const fixCard = (v) => (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(2));
+
 let lastBarTick = -1;
 function drawBar(force = false) {
   const v = run.view();
@@ -451,6 +480,7 @@ buildSpeeds();
 map.resize();
 map.fit(run.snapshot().villages.length);
 drawBar(true);
+drawCards();   // ★ 方針カード（#18 §1）を最初に描く
 drawDetail();
 markSpeeds();
 for (const n of run.notices) addNotice(n);
