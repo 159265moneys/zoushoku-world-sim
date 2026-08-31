@@ -43,14 +43,23 @@ export class Land {
     return cells.length;
   }
 
-  /** 定員を数え直す。**畑と森の定員が crowd の分母になる**（#17 §2-2） */
+  /** 定員を数え直す。**畑と森の定員が crowd の分母になる**（#17 §2-2）
+   *
+   * ★★ 2026-08-31：**「畑にできる区画」ではなく「実際の耕地」を数えるように直した。**★★
+   *   旧実装は 平野・荒地・森林を畑の定員に足していたので、13区画そろった村は
+   *   定員 13×7 ＝ **91人月**を持っていた。正典9857 は
+   *   「段2の標準村は **畑6（定員42）**が38.5を、**森林3（定員18）**が16.5を全部飲む」
+   *   と書いており、**正典の2.2倍**だった。これが「300年走らせても crowdF が
+   *   一度も1.000を割らない ＝ 土地が一度も効かない」の正体（M-48）。
+   *   耕地は #17 §4-2 の**開墾で作る**もので、最初から在るものではない。
+   */
   recap(v) {
     let field = 0, forest = 0;
     for (const p of this.cells[v]) {
       const role = this.L.b0[p] & 15;
-      // 畑にできる区画（平野・荒地・森林）は、いずれ畑になる ＝ 畑の定員に数える
-      if (role === R.PLAIN || role === R.WASTE) field++;
-      else if (role === R.WOOD) { forest++; field++; }   // 森林は森の定員でもあり、伐れば畑
+      // 人工の耕地6種だけが畑の定員を持つ（拠点地・工事中・自然は持たない）
+      if (role >= R.FIELD && role <= R.PADDY) field++;
+      else if (role === R.WOOD) forest++;
     }
     this.fieldCap[v] = field * CAP_FIELD;
     this.forestCap[v] = forest * CAP_FOREST;
@@ -59,15 +68,42 @@ export class Land {
     //   その村が持つ「畑にできる区画」の地力の平均。基準は 8 ＝ そこで倍率が厳密に 1.000。
     //   正典5-1「基準の村（地力8・crowd 1.00・F[具] 0.50・収穫1.00・道具1.00）では
     //   5項とも厳密に 1.000。だから 135.8／117.3／分岐点 が動かない」
+    //   ★ 2026-08-31：**区画が持つ地力（byte0 bit4-7）を読む。**旧実装は里マスの
+    //     肥沃度を読んでいたので、開墾で地力を持ち越しても（§9-3 抜け道1の塞ぎ）
+    //     効かなかった。荒地から開いた畑は地力0 で、正典どおり産出0になる。
     let fs = 0, fn = 0;
     for (const p of this.cells[v]) {
       const role = this.L.b0[p] & 15;
-      if (role !== R.PLAIN && role !== R.WASTE && role !== R.WOOD) continue;
-      const jx = ((p % PW) / PPL) | 0, jy = ((p / PW) | 0) / PPL | 0;
-      fs += this.g.fert[jy * (PW / PPL) + jx]; fn++;
+      if (role < R.FIELD || role > R.PADDY) continue;
+      fs += this.L.b0[p] >> 4; fn++;
     }
     this.fert = this.fert || [];
     this.fert[v] = fn ? fs / fn : FERT_BASE;
+  }
+
+  /**
+   * 村を立ち上げるときに書き込む区画（工事キューを**通さない**）。
+   *   分村 … 拠点地1枚だけ（正典8810「分村が作る最初の拠点地区画だけは 11-B が直接書き込む。
+   *          これが無いと、新村は自分の拠点地を建てられず、分村そのものが成立しない」）
+   *   創世 … それに加えて **畑6枚**（正典9857「段2の標準村は畑6（定員42）」・
+   *          正典8202「創世の村の畑区画の初期地力は8」）
+   * ★ 分村に畑を渡さないのは正典どおり。**娘村は開墾で畑を作る。**
+   */
+  seedParcels(v, fields = 0) {
+    const cells = this.cells[v] ?? [];
+    let home = 0, made = 0;
+    for (const p of cells) {
+      const role = this.L.b0[p] & 15;
+      if (!home && (role === R.PLAIN || role === R.WASTE)) {       // 拠点地は1枚
+        this.L.b0[p] = R.HOME; this.L.b1[p] |= 2; home = 1; continue;
+      }
+      if (made >= fields) continue;
+      if (role !== R.PLAIN) continue;                              // 畑は平野からだけ開く
+      const fert = this.L.b0[p] >> 4;                              // 平野の状態値＝里マスの肥沃度
+      this.L.b0[p] = R.FIELD | (fert << 4); this.L.b1[p] |= 2; made++;
+    }
+    this.recap(v);
+    return { home, fields: made };
   }
 
   /** 分村できる場所を探す（11-B ＋ #17 §6-5 の 4a/4c/4d） */

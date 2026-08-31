@@ -23,7 +23,8 @@ import {
 import { Houses } from './house.js';
 import {
   Villages, WHERE_FRONTIER, HOUSES_PER_VILLAGE,
-  assignWork, produceAndEat, syncHouses, AREA_HOME, AREA_FIELD, EAT_ADULT,
+  assignWork, produceAndEat, syncHouses, AREA_HOME, AREA_FIELD, AREA_BUILD, EAT_ADULT,
+  AREA_YIELD_STATS, Q_DIVISOR,
   drawHarvest, STORE_PER_HOUSE, HARVEST_HARSH, HARVEST_POOR,
   BEAR_HURT, BEAR_DEAD, MID_HURT,          // 熊と鹿猪の負傷（#17 §5-2）
 } from './village.js';
@@ -42,7 +43,10 @@ import * as SECT from './sect.js';       // 宗派（正典3-6・#6-C・#8）
 import * as WAR from './war.js';         // 戦争（O-27）
 import * as HER from './heresy.js';      // 異端狩り（#7）
 import * as FAC from './faction.js';     // 派閥（正典3-3）
-import * as NEAR from './near.js';       // 近い順3村（#11-D・#11-F）
+import * as NEAR from './near.js';
+import * as WK from './works.js';        // 工事（#17 §4-2/§4-3）
+import * as PARCEL from './parcel.js';  // 区画の役割16種（#17 §4-1）
+import * as LAND from './land.js';      // 区画の定員（CAP_FIELD）       // 近い順3村（#11-D・#11-F）
 import * as PLAN from './plan.js';       // 具申と差し止め（#14）
 import * as CARD from './cards.js';      // 方針カード（つまみ・#18 §1）
 // ★ 地図（#17）。**2026-08-30 から既定でオン。**
@@ -58,6 +62,13 @@ import { expand as expandParcels } from './parcel.js';
 import { Land } from './land.js';
 import { PPL } from './settle.js';
 
+// ★ 分村が持っていく畑の枚数（B-39・2026-08-31）。
+//   正典8810 は「分村が作る最初の**拠点地**区画だけは 11-B が直接書き込む」としか書いておらず、
+//   **娘村の畑を決めていない。**畑ゼロで出すと定員0 ＝ 畑の産出が完全に0 になり、
+//   狩りだけでは25人を養えず、世界が縮む（実測：平均人口 561 → 77）。
+//   正典自身の数から導く ── 段2の標準村は **畑6枚／30軒**（正典9857）、11-C が移すのは **8軒**。
+//   6 × 8/30 = 1.6 → **2枚**。「移った家がぶんの耕地を持っていく」という読み。
+export const SPLIT_FIELDS = Number(process.env.SPLIT_FIELDS ?? 2);
 export const GENESIS_COUNT = 10;      // 創世の十匹
 export const GENESIS_WOMEN = 5;       // 十匹なら女は5人（A-10）
 export const GENESIS_PREGNANT = 3;    // うち3人を2ヶ月ずらして妊娠済み
@@ -83,6 +94,7 @@ export class World {
     //   ハードコードしていた摘みを、ここで正式なカードにした
     this.cards = new CARD.Cards();
     this.plans = new PLAN.Plans();                  // 予定の待ち行列（#14）
+    this.works = new WK.Works();                    // 工事キュー（#17 §4-3・村ごと同時1件）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -147,6 +159,9 @@ export class World {
     const v = V.create(this.tick, this.opts.where ?? WHERE_FRONTIER, 0);
     if (this.land) {
       this.land.place(v, this.map.seatX * PPL + 2, this.map.seatY * PPL + 2);
+      // ★ 創世の村だけは 畑6枚（正典9857「段2の標準村は畑6＝定員42」）＋拠点地1枚。
+      //   分村は拠点地だけ（正典8810）で、畑は開墾で作る
+      this.land.seedParcels(v, 6);
       this.land.fogMonth(1);
     }
 
@@ -326,6 +341,9 @@ export class World {
     this.counters.seated += off.seated;
     this.counters.ennobled += off.ennobled;
     if (off.seated > 0 && this.once('headman')) this.note('最初の村長', '10軒目が建った');
+
+    // ---- 工事（#17 §4-3）。★ 乱数を1つも引かない。**産出の前**に働き手を抜く ----
+    if (this.land) this.counters.works = this.worksStep(t);
 
     if (this.land) this.land.fogMonth(V.len);
     // ---- #11-G 食料の村間移送。★ 産出の**前**に、先月の不足を近い村から埋める ----
@@ -642,6 +660,66 @@ export class World {
   }
 
   /**
+   * 工事の1ヶ月（#17 §4-3）。**乱数を1回も引かない。**
+   *
+   * > 実行 … その村の働き手。工事に付けた月は畑にも森にも出ない（産出が直接落ちる）
+   * >         毎月：残り人月 −= 割り当て人数 × (Σ q_i / n)
+   *
+   * ★ §7-3「冬の開墾は、意図して残す」── 冬は畑の産出が 0 なので、
+   *   カードの割合とは別に**畑の働き手を全員**工事へ回す。ここが「実質タダ」の窓。
+   */
+  worksStep(t) {
+    const P = this.people, A = P.a, V = this.villages, L = this.map.L, g = this.map.g;
+    const nv = V.len, winter = C.isWinter(t);
+    const share = this.cards.value('工事に回す働き手の割合');
+
+    // その村に工事があるか（無い村の働き手は抜かない）
+    const men = new Int32Array(nv), qs = new Float64Array(nv), qn = new Int32Array(nv);
+    const quota = new Int32Array(nv);
+    for (let v = 0; v < nv; v++) {
+      if (!V.a.alive[v]) continue;
+      // 次に何を作るか：畑が6枚に満たないか、畑が混んでいるあいだは畑を開く
+      if (!this.works.has(v)) continue;
+      quota[v] = 1;                                   // 着工済みの村だけが人を取る
+    }
+    // 畑の働き手を数えてから、割合ぶんだけ工事へ移す（index 順・抽選しない）
+    const fieldN = new Int32Array(nv);
+    for (let i = 0; i < A.len; i++) {
+      if (!A.alive[i] || A.job[i] !== AREA_FIELD) continue;
+      fieldN[A.village[i]]++;
+    }
+    for (let v = 0; v < nv; v++)
+      quota[v] = quota[v] ? Math.max(1, Math.floor(fieldN[v] * (winter ? 1 : share))) : 0;
+
+    for (let i = 0; i < A.len; i++) {
+      if (!A.alive[i]) continue;
+      const v = A.village[i];
+      if (A.job[i] === AREA_BUILD) { A.job[i] = AREA_HOME; }   // 先月ぶんを一度戻す
+      if (A.job[i] !== AREA_FIELD || v >= nv) continue;
+      if (men[v] >= quota[v]) continue;
+      A.job[i] = AREA_BUILD; men[v]++;
+      qs[v] += P.effectiveOf(i, AREA_YIELD_STATS[AREA_FIELD]) / Q_DIVISOR; qn[v]++;
+    }
+    for (let v = 0; v < nv; v++) qs[v] = qn[v] ? qs[v] / qn[v] : 0;
+
+    // 着工の判断（村長）。★ 正典 §8「良い土地を全部取る」は**罠**と名指しされている ──
+    //   「定員が硬い天井なので、区画を増やしても**働き手が増えていなければ産出は1ミリも
+    //     増えない。先に人が要る**」。だから「畑を6枚まで無条件に開く」ではなく、
+    //   **定員が実働に追いつかなくなる手前で1枚だけ先回りする**（余裕は1区画ぶん）。
+    //   これが無いと、25人の娘村が要りもしない畑を4枚開いて働き手を工事に取られる
+    //   （実測：この1行で 300年・7種の平均人口 381 → 下の測定）
+    //   ★ 6枚は「取りすぎ」ではなく**標準**（§4-4「三圃は畑を6区画持たないと選べない。
+    //     13区画のうち6枚が畑にならない村は連作しかできない」）。6枚までは無条件に開き、
+    //     **その先は混む手前で1枚だけ先回りする**。実測（300年・7種の平均人口）:
+    //       6枚まで＋先回り 下の値 ／ 6枚までのみ 381 ／ 先回りのみ 288
+    const want = (v) => {
+      if (WK.countRole(this.land, L, v, PARCEL.R.FIELD) < 6) return PARCEL.R.FIELD;
+      return (this.land.fieldCap[v] ?? 0) < fieldN[v] + LAND.CAP_FIELD ? PARCEL.R.FIELD : -1;
+    };
+    return WK.worksMonth(g, L, this.works, this.land, V, t, men, qs, want);
+  }
+
+  /**
    * 分村（正典11-B ＋ #17 §6-5）。30軒が埋まっている村から順に、1ヶ月に1つだけ出す。
    * ★ 地図が無いとき（opts.map なし）は、座標を持たない村をただ足す（旧来の挙動）
    */
@@ -656,6 +734,7 @@ export class World {
         const nv = V.create(this.tick, this.opts.where ?? WHERE_FRONTIER, 0);
         this.land.fogSplit(this.land.px[v], this.land.py[v], spot.px, spot.py);
         this.land.place(nv, spot.px, spot.py);
+        this.land.seedParcels(nv, SPLIT_FIELDS);   // 拠点地1枚＋畑（B-39）
         this.moveHouses(v, nv);
         this.counters.split++;
         this.note('分村', `${spot.r.toFixed(1)}里 先に村ができた（畑の定員${this.land.fieldCap[nv]}人月）`);

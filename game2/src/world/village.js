@@ -23,6 +23,9 @@ import * as DIS from './discontent.js';   // 不満6本（#4-(h) の産出倍率
 
 // ---- エリア ---------------------------------------------------------------
 export const AREA_HOME = 0, AREA_FIELD = 1, AREA_FOREST = 2, AREA_TRAIN = 3, AREA_FRONTIER = 4;
+// ★ 工事（#17 §4-3）。**工事に付けた月は畑にも森にも出ない**ので、産出が直接落ちる。
+//   produceAndEat は AREA_FIELD/AREA_FOREST しか見ないので、ここに移すだけで産出から抜ける
+export const AREA_BUILD = 5;
 export const AREA_COUNT = 5;
 export const AREA_NAMES = ['住居', '畑', '森', '訓練場', '辺境'];
 
