@@ -44,6 +44,7 @@ import * as HER from './heresy.js';      // 異端狩り（#7）
 import * as FAC from './faction.js';     // 派閥（正典3-3）
 import * as NEAR from './near.js';
 import * as WK from './works.js';        // 工事（#17 §4-2/§4-3）
+import * as SCOUT from './scout.js';     // 斥候（#17 §6-8・正典9540）
 import * as PARCEL from './parcel.js';  // 区画の役割16種（#17 §4-1）
 import * as LAND from './land.js';      // 区画の定員（CAP_FIELD）       // 近い順3村（#11-D・#11-F）
 import * as PLAN from './plan.js';       // 具申と差し止め（#14）
@@ -97,6 +98,7 @@ export class World {
     this.cards = new CARD.Cards();
     this.plans = new PLAN.Plans();                  // 予定の待ち行列（#14）
     this.works = new WK.Works();                    // 工事キュー（#17 §4-3・村ごと同時1件）
+    this.scouts = new SCOUT.Scouts();               // 斥候（#17 §6-8）
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -118,6 +120,7 @@ export class World {
       pressure: 0,                          // 日常の基底圧の合計（#3 の ΣX）
       // ---- 厄災（#9）----
       storms: 0, plagues: 0, fires: 0, beasts: 0, floods: 0, fertRuined: 0,
+      scoutsLost: 0, scoutsOut: 0, scoutTiles: 0,
       shock: 0,                             // 厄災の X の合計（⑤の溜め池の入口）
       // ---- 宗派（#8）----
       sectsFounded: 0, sectsDissolved: 0, converted: 0,
@@ -370,6 +373,38 @@ export class World {
     if (this.land) this.counters.works = this.worksStep(t);
 
     if (this.land) this.land.fogMonth(V.len);
+    // ---- 斥候（#17 §6-8・正典9540）。★ 霧が晴れる4本のうちの1本目 ----
+    //   これが無いと、分村先が「未知」で弾かれて開拓が村の可視半径ぶんずつしか進まない
+    //   （実測：候補地が落ちる理由の15.1%が霧）
+    if (this.land) {
+      const sc = SCOUT.scoutMonth(
+        this.scouts, this.land.fog, this.R[STREAM.SPARE],
+        Math.round(this.cards.value('斥候の数')),
+        (() => { let bp = 0; for (let v = 0; v < V.a.len; v++) if (V.a.alive[v] && V.a.workers[v] > bp) bp = V.a.workers[v]; return bp; })(),
+        () => {   // 出せる働き手：畑の働き手のうち、いちばん大きい村の者
+          let best = -1, bestPop = -1;
+          for (let i = 0; i < P.a.len; i++) {
+            if (!P.a.alive[i] || P.a.job[i] !== AREA_FIELD) continue;
+            if (this.scouts.who.includes(i)) continue;
+            const v = P.a.village[i];
+            if (v >= V.a.len || V.a.pop[v] <= bestPop) continue;
+            best = i; bestPop = V.a.pop[v];
+          }
+          if (best >= 0) P.a.job[best] = AREA_HOME;   // ★ 産出に出ない（正典9540）
+          return best;
+        },
+        () => {   // 出発点：いちばん人口の多い村（＝豊かな村しか探索できない）
+          let bv = -1, bp = -1;
+          for (let v = 0; v < V.a.len; v++) if (V.a.alive[v] && V.a.pop[v] > bp) { bp = V.a.pop[v]; bv = v; }
+          if (bv < 0 || this.land.px[bv] === undefined) return null;
+          return [(this.land.px[bv] / PPL) | 0, (this.land.py[bv] / PPL) | 0];
+        },
+        (i) => P.a.alive[i],
+        (i) => { P.kill(i, t, SCOUT.DEATH_ACCIDENT); this.counters.died++;
+                 this.counters.byCause[SCOUT.DEATH_ACCIDENT]++; this.counters.scoutsLost++; });
+      this.counters.scoutTiles = this.scouts.tiles;
+      this.counters.scoutsOut = sc.out;
+    }
     // ---- #11-G 食料の村間移送。★ 産出の**前**に、先月の不足を近い村から埋める ----
     //   正典7217：RATION_YEARS は「創世から10年の時限措置」であって、
     //   村をまたいで蔵を送る機構ではない。ここが本体。
