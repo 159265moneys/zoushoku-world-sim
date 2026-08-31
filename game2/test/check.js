@@ -3535,6 +3535,43 @@ check('index.html のスクリプトが構文として通る（頁が黙って�
   return true;
 });
 
+// ★★ 2026-08-31：**構文検査だけでは足りなかった。**★★
+//   `world.js` に `process.env.SPLIT_FIELDS` が入り、`process` は Node にしか無いので
+//   **ブラウザではモジュール評価の時点で落ちて画面が真っ黒**になっていた。
+//   だが `node --check` は構文しか見ないので `process.env.FOO` は通り、**228/228 緑のまま**だった。
+//   check.js 全体に jsdom も new Function も無く、**モジュールを評価する検査が1本も無かった。**
+//   → 静的（Node 専用の識別子を src に書かない）と 動的（process を消して入口を評価する）の2本を置く。
+check('★ src が Node の顔をしていない（process/require/__dirname を書かない）', () => {
+  const bad = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const f = join(dir, e.name);
+      if (e.isDirectory()) { walk(f); continue; }
+      if (!e.name.endsWith('.js')) continue;
+      const src = readFileSync(f, 'utf8');
+      // コメントと typeof ガードは許す（`typeof process !== 'undefined'` は安全な書き方）
+      for (const line of src.split('\n')) {
+        const t = line.trim();
+        if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) continue;
+        if (/typeof\s+process\s*!==\s*['"]undefined['"]/.test(line)) continue;
+        if (/\bprocess\s*\.|\brequire\s*\(|\b__dirname\b|\b__filename\b/.test(line))
+          bad.push(`${f.slice(f.indexOf('src/'))}: ${t.slice(0, 60)}`);
+      }
+    }
+  };
+  walk(join(GAME2, 'src'));
+  return bad.length ? bad.slice(0, 3).join(' / ') : true;
+});
+
+check('★ 入口が process 無しで評価できる（ブラウザで頁が黙って落ちない）', () => {
+  const entry = join(GAME2, 'src/flow/run.js').replace(/\\/g, '/');
+  const code = `delete globalThis.process; await import('file://${entry}');`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+  if (r.status !== 0)
+    return 'process を消すと落ちる：' + (r.stderr || '').split('\n').filter(Boolean).slice(0, 2).join(' / ');
+  return true;
+});
+
 check('index.html から辿れるファイルが全部実在して、world まで届く', () => {
   if (!PAGE_SCRIPT) return 'スクリプトが無い';
   const seeds = [...PAGE_SCRIPT.matchAll(/['"](\.\/[^'"]+\.js)['"]/g)].map(m => m[1]);

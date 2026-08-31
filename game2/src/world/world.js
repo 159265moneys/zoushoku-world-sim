@@ -68,7 +68,10 @@ import { PPL } from './settle.js';
 //   狩りだけでは25人を養えず、世界が縮む（実測：平均人口 561 → 77）。
 //   正典自身の数から導く ── 段2の標準村は **畑6枚／30軒**（正典9857）、11-C が移すのは **8軒**。
 //   6 × 8/30 = 1.6 → **2枚**。「移った家がぶんの耕地を持っていく」という読み。
-export const SPLIT_FIELDS = Number(process.env.SPLIT_FIELDS ?? 2);
+//   ★ 2026-08-31：`process.env` で読んでいた（掃引の名残）。**`process` は Node にしか無いので
+//     ブラウザではモジュール評価の時点で落ち、画面が真っ黒になっていた。**掃引は終わって
+//     2枚に決まっているので、ただの定数にする。**src に `process` を書かない。**
+export const SPLIT_FIELDS = 2;
 export const GENESIS_COUNT = 10;      // 創世の十匹
 export const GENESIS_WOMEN = 5;       // 十匹なら女は5人（A-10）
 export const GENESIS_PREGNANT = 3;    // うち3人を2ヶ月ずらして妊娠済み

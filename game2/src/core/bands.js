@@ -27,7 +27,11 @@ export const SCALE = 100;
 //   婚姻の相性・狩りの当たり・戦闘・評判 などが残っている。**専用の1回で全部やる。**
 //   ★ オフのときは `bandNorm(s,v) = v/100`・`BAND_MID = 50`・`ARM_BUDGET_OF = 100` になり、
 //     帯を入れる前と**1ビットも変わらない**（貼り直した読み手も元の式に戻る）。
-export const BAND_ON = process.env.BAND === '1';
+//   ★ **`process` を直に書かない**（Node にしか無いのでブラウザではモジュール評価で落ちる。
+//     2026-08-31 に world.js の SPLIT_FIELDS で実際に画面が真っ黒になった）。
+//     切替えは globalThis 経由で読む ── ブラウザなら `globalThis.BAND = 1` でも入る
+const ENV = (typeof process !== 'undefined' && process && process.env) ? process.env : {};
+export const BAND_ON = ENV.BAND === '1' || globalThis.BAND === 1;
 export const BAND_IN = 0.85, BAND_TAU = 30.4;
 export const RARITY_BAND = {
   N: [50, 82], F: [44, 77], E: [38, 72], D: [31, 66], C: [24, 60], B: [15, 53], A: [1, 45],
