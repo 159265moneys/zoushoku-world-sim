@@ -296,6 +296,14 @@ export function assignWork(P, V, tick, land = null) {
     const n = field[v] + forest[v] + fish[v];
     if (n === 0 || field[v] / n < FIELD_SHARE) { A.job[i] = AREA_FIELD; field[v]++; }
     else if (fish[v] < fcap) { A.job[i] = AREA_FISH; fish[v]++; }
+    // ★★ **森の定員を超えて森へ送らない**（2026-08-31・別セッションの精査で発見）★★
+    //   crowd は硬い**天井**（§2-1「超えて人を入れても総量は1ミリも増えない」）なので、
+    //   定員を超えたぶんは**まるごと0産出**になる。森を全部畑にした村では
+    //   3割の働き手が何も作っていなかった（種37の村0は130年で森0枚・13人が0産出）。
+    //   漁の定員で踏んだのと同じ罠 ── **溢れたら畑へ回す。**
+    //   ★ これが正しい塞ぎで、「森林を3枚残す」という開墾側の禁止は**逆効果**だった
+    //     （実測：120年40種の絶滅率 8% → 38%。畑が足りなくなるため）
+    else if (land && forest[v] >= (land.forestCap?.[v] ?? Infinity)) { A.job[i] = AREA_FIELD; field[v]++; }
     else { A.job[i] = AREA_FOREST; forest[v]++; }
     assigned++;
   }

@@ -6,6 +6,7 @@
 import { W, N } from './mapgen.js';
 import { PW, R } from './parcel.js';
 import { CLAIM, N21, PPL, MIN_GAP } from './settle.js';
+import { MIN_FOREST } from './works.js';   // §2-2 の標準村が要る森林の枚数
 
 // ★ 地力の基準（#17 §5-1）。ここで倍率が厳密に 1.000 になる
 export const FERT_BASE = 8, FERT_POW = 0.6;
@@ -104,15 +105,42 @@ export class Land {
   seedParcels(v, fields = 0) {
     const cells = this.cells[v] ?? [];
     let home = 0, made = 0;
-    for (const p of cells) {
-      const role = this.L.b0[p] & 15;
-      if (!home && (role === R.PLAIN || role === R.WASTE)) {       // 拠点地は1枚
-        this.L.b0[p] = R.HOME; this.L.b1[p] |= 2; home = 1; continue;
+    // ★★ **平野が足りない村でも畑を揃える**（2026-08-31・別セッションの精査で発見）★★
+    //   旧実装は `role !== R.PLAIN` で弾いていたので、平野の少ない席では
+    //   **創世の村が正典どおり「畑6枚＝定員42」で始まるのは 27% だけ**（中央4枚）、
+    //   **畑0枚が 1.5%**（配給が切れる11年目に飢えて12年で全滅）だった。
+    //   → 平野を先に使い、足りなければ荒地・森林からも開く。ただし
+    //     **森林は §2-2 の標準村の3枚を割らない**（割ると狩りが死ぬ）。
+    //   ★ 地力は §9-3 抜け道2 の塞ぎどおり：平野・荒地は持ち越し、森林は樹齢なので
+    //     里マスの肥沃度を1度だけ写す（＝ここでは平野の肥沃度と同じ扱いにできないので
+    //     `works.finish` と同じく里マスから引く）
+    let woods = 0;
+    for (const p of cells) if ((this.L.b0[p] & 15) === R.WOOD) woods++;
+    const openAs = (p, role) => {
+      let st;
+      if (role === R.WOOD) {
+        const jx = ((p % PW) / PPL) | 0, jy = (((p / PW) | 0) / PPL) | 0;
+        st = this.g.fert[jy * (PW / PPL) + jx] | 0;
+        woods--;
+      } else st = this.L.b0[p] >> 4;                               // 平野＝肥沃度／荒地＝0
+      if (st > 15) st = 15; if (st < 0) st = 0;
+      this.L.b0[p] = R.FIELD | (st << 4); this.L.b1[p] |= 2; made++;
+    };
+    //   ★ **荒地からは開かない。**荒地の地力は0（§9-3 抜け道1の塞ぎ）なので、
+    //     開くと**地力0の畑**ができ、recap が平均するので村の産出が恒久的に落ちる
+    //     ── 拠点地を潰していたのとまったく同じ罠（実測：絶滅率 8% → 38%）。
+    //     荒地は開墾（荒地→畑 360人月）で、地力を牧草地などで治してから使うもの
+    for (const pass of [R.PLAIN, R.WOOD]) {
+      for (const p of cells) {
+        const role = this.L.b0[p] & 15;
+        if (!home && pass === R.PLAIN && (role === R.PLAIN || role === R.WASTE)) {
+          this.L.b0[p] = R.HOME; this.L.b1[p] |= 2; home = 1; continue;   // 拠点地は1枚
+        }
+        if (made >= fields || role !== pass) continue;
+        if (pass === R.WOOD && woods <= MIN_FOREST) break;          // 森林3枚は残す
+        openAs(p, role);
       }
-      if (made >= fields) continue;
-      if (role !== R.PLAIN) continue;                              // 畑は平野からだけ開く
-      const fert = this.L.b0[p] >> 4;                              // 平野の状態値＝里マスの肥沃度
-      this.L.b0[p] = R.FIELD | (fert << 4); this.L.b1[p] |= 2; made++;
+      if (made >= fields) break;
     }
     this.recap(v);
     return { home, fields: made };

@@ -28,6 +28,8 @@ import * as S from '../src/core/stats.js';
 import * as P from '../src/world/people.js';
 import * as G from '../src/world/genetics.js';
 import * as V from '../src/world/village.js';
+import * as WK from '../src/world/works.js';       // 工事・輪作・地力（#17 §4）
+import * as PARCEL from '../src/world/parcel.js';   // 区画の役割16種
 import * as grow from '../src/world/grow.js';
 import * as M from '../src/world/marry.js';
 import * as W from '../src/world/world.js';
@@ -3552,6 +3554,40 @@ check('index.html のスクリプトが構文として通る（頁が黙って�
 //   この `2p = q` は **HIT_DIVISOR ＝ 2 × Q_DIVISOR** でしか成り立たない
 //   （正典8963「旧2,100。分母を 1,050→373 に直したので、**その2倍として引き直した**」）。
 //   Q_DIVISOR を 373→225 にしたとき746 を残したまま緑だったので、明文の検査を置く。
+// ★★ 2026-08-31：**地力が一方通行にならないこと。**★★
+//   洪水（−4）を入れたとき §4-5 の年次回復を入れていなかったので、既定の三圃（fert:0）では
+//   地力が下がる一方になり、300年・4種すべてが絶滅した（M-56）。
+//   別セッションの精査でも `WK.fertYear` 単独が犯人と切り分けられている（絶滅率 65%→5%）。
+//   **「傷んだ土地は治る道がある」を明文の検査にする。**
+check('★ 傷んだ土地は治る（地力が一方通行にならない）', () => {
+  const w = new W.World(3).genesis();
+  const L = w.map.L, land = w.land, V = w.villages;
+  // 畑を8枚にして、地力を4まで落とす（洪水1回ぶん）
+  // ★ これは fertYear／rotationOf の単体検査なので、区画は素性を問わず作り替える
+  //   （地図の当たり外れで検査が揺れないように）
+  const cells = land.cells[0] ?? [];
+  let made = 0;
+  for (const p of cells) {
+    if (made >= 8) break;
+    L.b0[p] = PARCEL.R.FIELD | (4 << 4);   // 地力4 ＝ 洪水を1回もらった畑
+    made++;
+  }
+  if (made < 8) return `区画が8枚に足りない（${made}枚）`;
+  land.recap(0);
+  const before = land.fert[0];
+  // 村長は「地力が基準を割っていて畑8枚」なら四圃を選ぶ（＝ +0.5/年）
+  const rot = WK.rotationOf(land, L, 0, WK.ROT_THREE);
+  if (rot !== WK.ROT_FOUR) return `傷んだ土地＋畑8枚なのに ${WK.ROTATION[rot].key} を選んだ`;
+  for (let y = 0; y < 10; y++) WK.fertYear(L, land, V, () => rot);
+  const after = land.fert[0];
+  if (!(after > before)) return `10年たっても地力が戻らない（${before} → ${after}）`;
+  // 既定の三圃は「永久に回る」＝ 減りも増えもしない
+  const keep = land.fert[0];
+  for (let y = 0; y < 10; y++) WK.fertYear(L, land, V, () => WK.ROT_THREE);
+  if (Math.abs(land.fert[0] - keep) > 1e-6) return `三圃なのに地力が動いた（${keep} → ${land.fert[0]}）`;
+  return true;
+});
+
 check('★ 保存則 E[2z/c] ＝ 2p ＝ q（HIT_DIVISOR は Q_DIVISOR の2倍）', () => {
   if (V.HIT_DIVISOR !== 2 * V.Q_DIVISOR)
     return `HIT_DIVISOR ${V.HIT_DIVISOR} ≠ 2 × Q_DIVISOR ${2 * V.Q_DIVISOR}`;

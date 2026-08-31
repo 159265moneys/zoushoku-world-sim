@@ -737,7 +737,13 @@ export class World {
     for (let i = 0; i < A.len; i++) {
       if (!A.alive[i]) continue;
       const v = A.village[i];
-      if (A.job[i] === AREA_BUILD) { A.job[i] = AREA_HOME; }   // 先月ぶんを一度戻す
+      // ★★ **先月の工事人を畑へ戻す**（2026-08-31・別セッションの精査で発見）★★
+      //   `AREA_HOME` に戻すと、この直後の `!== AREA_FIELD` で弾かれて
+      //   **その月は工事にも畑にも出ず、まるごと遊んでいた**（実測 遊休/工事 ＝ 0.98〜1.00）。
+      //   `assignWork` は既にこの月ぶんを配り終えているので、翌月まで拾われない。
+      //   工事班は畑の働き手からしか取らないので、**畑へ戻すのが元の姿**。
+      //   直すと12種の合計人口 +21.4%・工事の完了 153→197
+      if (A.job[i] === AREA_BUILD) A.job[i] = AREA_FIELD;
       if (A.job[i] !== AREA_FIELD || v >= nv) continue;
       if (men[v] >= quota[v]) continue;
       A.job[i] = AREA_BUILD; men[v]++;
@@ -805,17 +811,36 @@ export class World {
 
   /** 正典11-C：8軒を移す。いまは「新しい家から」だけを見る（点数の全式は未実装） */
   moveHouses(from, to, n = 8) {
-    const H = this.houses, P = this.people, HA = H.a;
+    const H = this.houses, P = this.people, V = this.villages, HA = H.a;
     const ids = [];
     for (let h = 0; h < HA.len; h++) if (HA.alive[h] && HA.village[h] === from) ids.push(h);
     ids.sort((a, b) => b - a);                  // 家IDの大きい順＝新しい家から
+    const before = Math.max(1, ids.length);
     let moved = 0;
     for (const h of ids) {
       if (moved >= n) break;
       HA.village[h] = to;
       for (let i = 0; i < P.a.len; i++)
-        if (P.a.alive[i] && P.a.house[i] === h) P.a.village[i] = to;
+        if (P.a.alive[i] && P.a.house[i] === h) {
+          P.a.village[i] = to;
+          // ★★ **職を持ったまま運ばない**（2026-08-31・精査で発見）★★
+          //   親村で漁師だった者が、川の無い娘村へ漁師のまま移り、
+          //   `assignWork` は「もう振ってある」ので拾わず、**永久に0産出**になっていた
+          //   （村の人月の15.9%）。AREA_HOME に戻せば新しい村で配り直される
+          P.a.job[i] = AREA_HOME;
+        }
       moved++;
+    }
+    // ★★ **蔵を軒数の比で分ける**（同・精査で発見）★★
+    //   8軒移すと親村の `storeCap` が 7200→5280 に縮むが中身は移らないので、
+    //   翌月の `if (food > cap) food = cap` で**上限を超えた分が蒸発**していた
+    //   （15種200年・56回の分村で計48,535）。正典は分村時の蔵の扱いを書いていないが、
+    //   **移った軒のぶんを持っていく**のが「家ごと移る」の素直な読み（B-40）
+    if (moved > 0) {
+      const share = moved / before;
+      const take = V.a.food[from] * share;
+      V.a.food[from] -= take;
+      V.a.food[to] += take;
     }
     syncHouses(this.villages, H);
     return moved;
