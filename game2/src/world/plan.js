@@ -27,6 +27,10 @@ const ID = {};
 for (const n of ['従順', '野心', '誇り', '保身', '恩義']) ID[n] = S.needId(n);
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 const cur = (P, i, n) => P.a.gene[ID[n]][i] + P.a.ev[ID[n]][i];
+/** 外から歪みを引く口（#14 の distortion に要る4ステをまとめて渡す） */
+export function distortionOf(P, i, loyalty) {
+  return distortion(cur(P, i, '誇り'), cur(P, i, '野心'), cur(P, i, '従順'), cur(P, i, '保身'), loyalty);
+}
 
 /**
  * 猶予の倍率 m_i（#14）。★ 中心は 50/50/50。**歪み式の中心（60/48/66/66）を流用しない。**

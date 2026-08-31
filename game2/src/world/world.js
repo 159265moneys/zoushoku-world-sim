@@ -18,8 +18,7 @@ import * as C from '../core/calendar.js';
 import { makeStreams, STREAM, saveStreams, loadStreams } from '../core/rng.js';
 import {
   People, SEX_MALE, SEX_FEMALE, RANK_COMMON, ST_PREGNANT, agingAndDeath, lifespanOf,
-  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep, KIN_NAMES, SECT_NONE, KIN_WAR,
-} from './people.js';
+  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep, KIN_NAMES, SECT_NONE, KIN_WAR, BUREAUS} from './people.js';
 import { Houses } from './house.js';
 import {
   Villages, WHERE_FRONTIER, HOUSES_PER_VILLAGE,
@@ -717,7 +716,27 @@ export class World {
   worksStep(t) {
     const P = this.people, A = P.a, V = this.villages, L = this.map.L, g = this.map.g;
     const nv = V.len, winter = C.isWinter(t);
-    const share = this.cards.value('工事に回す働き手の割合');
+    let share = this.cards.value('工事に回す働き手の割合');
+
+    // ---- 席が実体を持つ（正典4140・#14）----
+    // > 席を埋めない ⇒ **その席の担当事象が何も起きない**（#14）。
+    // > **農業局が空なら開墾も備蓄も止まる。**④の出口が閉じたまま
+    // ★ 局が1つも生えていないあいだ（フェーズ1・2）は村長が回すので、これは効かない。
+    //   **局が生えた国で農業局だけが空のとき**だけ止まる。
+    // ★ そして柱5「命令も報告も人の性格で歪む」── 農業局長が居るなら、
+    //   カードの割合はその局長の**歪み**を通って実行される（#14 の distortion）。
+    const AGRI = BUREAUS.indexOf('農業局') + 1;
+    let anyChief = 0, agriChief = -1;
+    for (let i = 0; i < A.len; i++) {
+      if (!A.alive[i] || A.post[i] !== OFF.POST_CHIEF || !A.bureau[i]) continue;
+      anyChief++;
+      if (A.bureau[i] === AGRI) agriChief = i;
+    }
+    if (anyChief > 0 && agriChief < 0) return { progressed: 0, finished: 0, stalled: 1 };
+    if (agriChief >= 0) {
+      const d = PLAN.distortionOf(P, agriChief, A.loyalty[agriChief] || PLAN.baselineL(P, agriChief));
+      share = Math.max(0, Math.min(0.40, share * (1 + d / 100)));
+    }
 
     // その村に工事があるか（無い村の働き手は抜かない）
     const men = new Int32Array(nv), qs = new Float64Array(nv), qn = new Int32Array(nv);
