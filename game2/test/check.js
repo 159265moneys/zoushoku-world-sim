@@ -2354,11 +2354,17 @@ check('★ 既定オンのカードは既定の段が0ではない（#11-G 備�
 });
 
 check('★ カードが世界に効く（備蓄の融通をオフにすると移送が止まる）', () => {
-  const on = new W.World(3).genesis(); on.runYears(150);
-  const off = new W.World(3).genesis();
+  // ★ 移送は「産出 < 消費 の村がある月」にしか起きないので、**1つの種に賭けない**
+  //   （2026-08-31：乱数の消費順が動いたら種3で移送が0になり、緑のまま意味を失っていた）
+  let on = null, seed = 0;
+  for (const sd of LIVING_SEEDS) {
+    const w = new W.World(sd).genesis(); w.runYears(150);
+    if (w.counters.foodSent > 0) { on = w; seed = sd; break; }
+  }
+  if (!on) return '移送が起きる世界が1つも無い（融通の機構が死んでいる）';
+  const off = new W.World(seed).genesis();
   off.cards.set('nation', 0, '備蓄の融通', -2);
   off.runYears(150);
-  if (!(on.counters.foodSent > 0)) return '既定オンなのに移送が起きない';
   if (off.counters.foodSent !== 0) return `オフにしたのに ${off.counters.foodSent.toFixed(0)} 送っている`;
   if (on.cards.bytes !== 0) return '既定のままの世界が容量を食っている';
   return true;

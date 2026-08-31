@@ -504,7 +504,7 @@ export class World {
     if (bl.zealots && this.once('zealot')) this.note('最初の狂信者', '⑤は③へ返らず①へ向かう');
     if (bl.apostates && this.once('apostate')) this.note('最初の棄教', '⑤の4割が恨み③へ移った');
     // 継承（#8 §5）。★ 7歳の誕生月に1回だけ。信仰は血ではなく育ちで伝わる
-    SECT.inheritMonth(P, this.R[STREAM.RELIGION]);
+    SECT.inheritMonth(P, this.R[STREAM.RELIGION], this.sects);
 
     // ---- 異端狩り（#7）。★ 信仰が確定した直後。乱数は犯罪のストリーム（9番）----
     //   祭祀局と刑務局が両方座り、正統宗派の信仰性≥75・硬さ≥50 が24ヶ月続いて初めて生える
@@ -526,7 +526,9 @@ export class World {
       if (job === AREA_HOME) return COND.LOAD_IDLE;    // 非番
       if (job === AREA_FIELD && harvest) return COND.LOAD_HARVEST;
       return COND.LOAD_NORMAL;                         // 平時の畑・森・辺境・訓練
-    }, this.R[STREAM.DISASTER]);
+      // ★ 2026-08-31：**予備（11番）へ移した。**負傷の治癒が厄災（6番）に相乗りし、
+      //   しかも分岐で引いていたので、負傷者が1人いるだけで6番の消費が動いていた
+    }, this.R[STREAM.SPARE]);
     this.counters.scarred += cm.scarred;
     this.counters.stunted += cm.stunted;
     if (cm.stunted > 0 && this.once('stunt')) this.note('育ちきらない子', '飢えが16歳までに18ヶ月を超えた');

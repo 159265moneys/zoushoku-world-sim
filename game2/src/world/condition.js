@@ -485,13 +485,22 @@ export function lackStage(P, i) {
  * ★ 掟：当たらなくても同じ回数だけ引く
  */
 export const HURT_TO_SCAR = 0.60, SICK_TO_SCAR = 0.20, HARD_BIRTH_TO_SCAR = 0.25;
-export function healMonth(P, i, rng) {
+/**
+ * ★★ 掟：**分岐で呼び出し回数を変えない。**★★
+ *   2026-08-31（別セッションの精査で発見）：旧実装は「治った人のときだけ」引いていたので、
+ *   **負傷者が1人いるだけで厄災ストリーム（6番）の消費が 7→8 に動いていた**
+ *   （同じファイルの `rollDefect`／`afterHardBirth` は守っているのに、ここだけ抜けていた）。
+ *   → 乱数は呼ぶ側が**生きている全員から必ず1回**引き、その値をここへ渡す。
+ *   → ストリームも **予備（11番）** へ移した。これで 6番は村ぶんだけになり、
+ *     「厄災は村ごとに必ず5回引く」が世界の人数と無関係に保たれる。
+ * @param r 呼ぶ側が引いた乱数（0..1）。**当たらなくても必ず引かれている**
+ */
+export function healMonth(P, i, r) {
   const A = P.a;
   if (!A.hurtStage[i]) return 0;
   if (A.hurtHeal[i] > 0) A.hurtHeal[i]--;
   if (A.hurtHeal[i] > 0) return 0;
   const w = A.hurtStage[i], part = A.hurtPart[i] || PART_ARM;
-  const r = rng.next();
   A.hurtStage[i] = 0; A.hurtPart[i] = 0;
   if (w >= 3 && r < HURT_TO_SCAR) { addScar(P, i, part, Math.max(1, w - 1)); return 1; }
   return 0;
@@ -502,7 +511,8 @@ export function healMonth(P, i, rng) {
  * @param loadOf (i) → 疲労の負荷。0非番／1.0平時／1.3収穫期・普請／1.5従軍／1.8突貫。
  *               ★ どの職がどの負荷かは村と暦が知っていることなので、呼ぶ側が決める
  *                  （condition.js が village.js を読むと循環する）
- * @param rng    負傷が古傷に変わるときだけ引く。ストリームは 厄災（6番）
+ * @param rng    ★ **生きている全員から必ず1回引く**（掟：分岐で回数を変えない）。
+ *               ストリームは **予備（11番）**。6番（厄災）は村ぶんだけに保つ
  */
 export function conditionMonth(P, tick, loadOf, rng) {
   const A = P.a;
@@ -510,6 +520,7 @@ export function conditionMonth(P, tick, loadOf, rng) {
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i]) continue;
     const y = (A.ageMonths[i] / 12) | 0;
+    const rHeal = rng.next();          // ★ 掟：当たらなくても必ず1回。分岐の外で引く
     // 病臥は非番と同じ（負荷0）
     // 病の治癒（B-26）。★ 乱数を引かない。段が下がるのではなく、治ったら消える
     if (A.sickStage[i] > 0) {
@@ -521,7 +532,7 @@ export function conditionMonth(P, tick, loadOf, rng) {
     stuntMonth(P, i, y, lackStage(P, i));
     if (A.stunt[i] > before) stunted++;
     griefDecay(P, i);
-    scarred += healMonth(P, i, rng);
+    scarred += healMonth(P, i, rHeal);
   }
   return { scarred, stunted, healed };
 }

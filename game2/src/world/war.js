@@ -17,7 +17,7 @@
 //   だから「逃げる」は常に得ではない ── 叙爵の道が閉じる。
 
 import * as S from '../core/stats.js';
-import { DEATH_WAR, NO_VILLAGE } from './people.js';
+import { DEATH_WAR, NO_VILLAGE, SEX_FEMALE, SEX_MALE, lifespanOf} from './people.js';
 import { PART_ARM, PART_LEG, healMonths } from './condition.js';
 import * as REP from './reputation.js';
 import { foundGenome } from './genetics.js';
@@ -363,6 +363,7 @@ export function foreignTargets(rng, S_, SCALE = 100) {
  * @param hasInq  異端審問会が在るか
  * @returns {{taken, refused}}
  */
+export const CAPTIVE_AGE_MIN = 16, CAPTIVE_AGE_MAX = 40;   // 連れて来られる帯（産める・働ける）
 export function takeCaptives(P, n, tick, rng, spawn, villageOf, exclusiveOf, hasInq, foreignSect) {
   const A = P.a;
   let taken = 0, refused = 0;
@@ -372,6 +373,12 @@ export function takeCaptives(P, n, tick, rng, spawn, villageOf, exclusiveOf, has
     const v = villageOf();
     // ★ 掟：分岐で回数を変えない。拒否の抽選は必ず引く
     const r = rng.next();
+    // ★★ 2026-08-31（別セッションの精査で発見）：**捕虜が全員「生後0ヶ月の男児」だった**
+    //   （男23／女0）。`sex`／`ageMonths`／`lifespan`／`blood` をどこにも書いていなかったので、
+    //   spawn の既定値（0）のままだった。柱3「他の遊び手が新しい血の供給元」は
+    //   **産める大人**が入って初めて成立する（M-35：捕虜が入ると劣性ホモ15.6%→11.8%）。
+    //   ★ 掟どおり**当たらなくても必ず引く**ので、拒否の判定より前に置く
+    const rSex = rng.next(), rAge = rng.next();
     if (v < 0) { refused++; continue; }
     // 帰化の拒否（受け入れ先の村で信者が最も多い宗派の排他性で決まる）
     if (r < refuseP(exclusiveOf(v), hasInq)) { refused++; continue; }   // 拒めば「殺す」しかない
@@ -380,6 +387,16 @@ export function takeCaptives(P, n, tick, rng, spawn, villageOf, exclusiveOf, has
     if (i < 0) { refused++; continue; }
     foundGenome(P, i, rng, targets, FOREIGN_SPREAD * 100);
     A.village[i] = v;
+    // ★ 男女は半々、年齢は 16〜40（産める・働ける帯）。連れて来られるのは戦のあとの村人なので
+    //   兵の帯（16〜50の男）ではなく**男女の大人**。血の旗は「外から来た」を1本立てる
+    A.sex[i] = rSex < 0.5 ? SEX_FEMALE : SEX_MALE;
+    A.ageMonths[i] = Math.round((CAPTIVE_AGE_MIN + rAge * (CAPTIVE_AGE_MAX - CAPTIVE_AGE_MIN)) * 12);
+    // ★ 生年も実年齢に合わせる。ここを書かないと `birthTick` が「連れて来られた日」の
+    //   ままになり、子の年齢計算が壊れる（検査「出産は18〜40歳のあいだだけ」が
+    //   2.75歳で産んだと出た）
+    A.birthTick[i] = tick - A.ageMonths[i] * 30;
+    A.lifespan[i] = lifespanOf(P, i);
+    A.blood[i] = 0;                   // 創世の十匹の血は1本も持たない＝外から来た者の印
     A.rank[i] = RANK_COMMON;          // ★ 捕虜は農奴にしない（正典1852）
     A.rep[i] = 0;                     // ★ ②③④はゼロから始まる（正典4-4）
     A.sect[i] = foreignSect;          // 異国の宗派（自国に無い宗派は全部これ1つに畳む）

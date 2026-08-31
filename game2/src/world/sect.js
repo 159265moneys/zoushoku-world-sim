@@ -433,14 +433,25 @@ export const INHERIT_BOTH = 0.75, INHERIT_ONE = 0.40;
 export const INHERIT_BASE = 20, INHERIT_SHARE = 0.3;
 
 /** 7歳の誕生月に1回だけ。★ その月の7歳ちょうどの子について、必ず1回引く */
-export function inheritMonth(P, rng) {
+/**
+ * ★ `sects` を受け取るようになった（2026-08-31・別セッションの精査で発見）。
+ *   旧実装は `SA.alive[]` を見ずに親の `sect` を子へ写していたので、
+ *   **消えた宗派が血統を下って永久に増殖**していた（種3・400年で
+ *   死んだ宗派の信者60人 vs 生きている宗派24人。8種400年で8種すべてに発生）。
+ *   彼らは faith も凍り、一生 改宗・棄教・狂信の判定に入らない。
+ */
+export function inheritMonth(P, rng, sects = null) {
   const A = P.a;
+  const SA = sects ? sects.a : null;
+  const live = (sid) => sid && (!SA || (sid < SA.len && SA.alive[sid]));
   let moved = 0;
   for (let i = 0; i < A.len; i++) {
     if (!A.alive[i] || A.ageMonths[i] !== INHERIT_AGE * 12) continue;
     const m = A.mother[i], f = A.father[i];
-    const ms = m >= 0 && m < A.len && A.alive[m] ? A.sect[m] : SECT_NONE;
-    const fs = f >= 0 && f < A.len && A.alive[f] ? A.sect[f] : SECT_NONE;
+    let ms = m >= 0 && m < A.len && A.alive[m] ? A.sect[m] : SECT_NONE;
+    let fs = f >= 0 && f < A.len && A.alive[f] ? A.sect[f] : SECT_NONE;
+    if (!live(ms)) ms = SECT_NONE;      // ★ 消えた宗派は継がせない
+    if (!live(fs)) fs = SECT_NONE;
     const r = rng.next();                       // ★ 親が無信仰でも必ず引く
     if (ms && fs && ms === fs) {
       if (r < INHERIT_BOTH) {

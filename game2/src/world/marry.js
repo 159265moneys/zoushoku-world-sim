@@ -141,10 +141,14 @@ export function marryMonth(P, houses, V, tick, rng, nearOf = null, ties = null, 
         pool.push(m); wt.push(base * h);
       }
     }
-    if (!pool.length) continue;
-    // 重み付き抽選。★ 掟：候補が何人でも引くのは1回
+    // ★★ 掟：**候補が何人でも引くのは1回。0人でも引く。**★★
+    //   2026-08-31（別セッションの精査で発見）：`if (!pool.length) continue;` を
+    //   抽選の**前**に置いていたので、**門を通った女の約34%が乱数を1回も引かずに抜けて**いた
+    //   ＝ 分岐で消費が変わる。引いてから捨てる。
     let total = 0; for (const x of wt) total += x;
-    let r = rng.next() * total, m = pool[pool.length - 1];
+    const rPick = rng.next();
+    if (!pool.length) continue;
+    let r = rPick * total, m = pool[pool.length - 1];
     for (let k = 0; k < pool.length; k++) { r -= wt[k]; if (r <= 0) { m = pool[k]; break; } }
 
     // 家が要る。30軒が埋まっていたら結べない（村が溢れている）
@@ -213,8 +217,12 @@ export function conceiveMonth(P, V, tick, rng) {
     let count = 1;
     const tw = TWIN_P * (A.gene[ID_TWINS][i] / 50);
     const tr = TRIPLET_P * (A.gene[ID_TWINS][i] / 50);
-    if (rng.next() < tr) { count = 3; triplets++; }
-    else if (rng.next() < tw) { count = 2; twins++; }
+    // ★ 掟：**分岐で回数を変えない。**2026-08-31（精査で発見）：`if/else if` だと
+    //   三つ子の月だけ消費が1回少なかった（同じファイルの `birthDay` はわざわざ守っている）。
+    //   2回とも先に引いてから決める
+    const r3 = rng.next(), r2 = rng.next();
+    if (r3 < tr) { count = 3; triplets++; }
+    else if (r2 < tw) { count = 2; twins++; }
 
     A.state[i] |= ST_PREGNANT;
     A.pregDue[i] = tick + PREGNANCY_DAYS;

@@ -70,8 +70,12 @@ export const LOOK_COUNT = 3;
 export const LOOK_MAX = [8, 5, 5];
 
 // 潜性の対立遺伝子。2本揃って初めて出る
-export const REC_STAR = 0, REC_HEART = 1;
-export const REC_COUNT = 2;
+// ★ 星・ハート（潜性）は **2026-08-26 のオーナー裁定で削除**（統合ver 1441
+//   「面倒なら消してよい」の保留を『消す』で確定）。2026-08-31 に実際に外した
+//   ── それまで人口の19%に残っていた（種2・200年で220人中 星3・ハート39）。
+//   ★ 列そのものを消すと保存の形が変わるので、**枠は残して常に0**にする…のではなく、
+//     使う側を全部落として `rec` 列ごと消す（1人2バイトの節約にもなる）。
+export const REC_COUNT = 0;
 
 export const SPECIAL_NONE = 0, SPECIAL_STAR = 1, SPECIAL_HEART = 2;
 
@@ -87,7 +91,6 @@ const MUT = 0.004;                    // 見た目の突然変異率。何百年
 export const LOOK_SPEC = {
   bloodMix: `f32*${FOUNDER_COUNT}`,   // 十匹それぞれの血の割合。合計1。子は親の平均
   look: `f32*${LOOK_COUNT}`,          // 角の数・縦の線数・横の線数
-  rec: `u8*${REC_COUNT * 2}`,         // 潜性の対立遺伝子。2本ずつ
 };
 
 const clamp = (v, hi) => (v < 0 ? 0 : v > hi ? hi : v);
@@ -105,10 +108,6 @@ export function foundLook(P, i, k, rng, race = DEFAULT_RACE) {
   A.look[LK_STRIPE_H][i] = clamp(race.stripeH + wob(), LOOK_MAX[LK_STRIPE_H]);
 
   // 潜性は最初から潜らせておく。**出るのは何代もあと**
-  for (let r = 0; r < REC_COUNT; r++) {
-    A.rec[r * 2][i]     = rng.next() < 0.16 ? 1 : 0;
-    A.rec[r * 2 + 1][i] = rng.next() < 0.16 ? 1 : 0;
-  }
 }
 
 /** 子。血は割合を平均し、形と模様は中間遺伝、星とハートは片方ずつ受け取る */
@@ -128,10 +127,6 @@ export function breedLook(P, c, dad, mom, rng) {
   }
 
   // 潜性：親それぞれから1本ずつ
-  for (let r = 0; r < REC_COUNT; r++) {
-    A.rec[r * 2][c]     = A.rec[r * 2 + rng.int(2)][dad];
-    A.rec[r * 2 + 1][c] = A.rec[r * 2 + rng.int(2)][mom];
-  }
 }
 
 /** 見た目を読む。**丸めるのはここ1か所だけ**（描く側でばらばらに丸めない） */
@@ -140,13 +135,11 @@ export function lookOf(P, i) {
   const raw = A.look[LK_CORNERS][i];
   const corners = raw < 2.5 ? 0 : Math.min(8, Math.round(raw));
   // 星が優先。両方揃っていたら星（尖りのほうが読める）
-  const star = A.rec[REC_STAR * 2][i] === 1 && A.rec[REC_STAR * 2 + 1][i] === 1;
-  const heart = A.rec[REC_HEART * 2][i] === 1 && A.rec[REC_HEART * 2 + 1][i] === 1;
   return {
     corners,
     stripeV: Math.round(A.look[LK_STRIPE_V][i]),
     stripeH: Math.round(A.look[LK_STRIPE_H][i]),
-    special: star ? SPECIAL_STAR : heart ? SPECIAL_HEART : SPECIAL_NONE,
+    special: SPECIAL_NONE,   // ★ 星・ハートは削除済み（統合ver 1441）
   };
 }
 

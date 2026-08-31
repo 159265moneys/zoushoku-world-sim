@@ -146,13 +146,30 @@ export const ENNOBLE_REP_MIN = 20;
 export const ENNOBLE_KILLS_MIN = 1;   // 1人でも討ち取っていれば功績
 export const ENNOBLE_MIN_POST = POST_HEADMAN;   // 席に就いている者だけ（治める土地が要る）
 
+// ★★ **武功の道（正典3719「平民でも武功で入れる（戦功3回で rank1・#10-A）」）**★★
+//   2026-08-31（別セッションの精査で発見）：この経路が**コードに1行も無かった**。
+//   上の叙爵は「席に就いている者」だけを見るので、**席の無い平民は何回討ち取っても
+//   一生 平民**だった（実測：300年で平民以外 0.44%・子爵0・農奴0）。
+//   その先が全部詰まる ── 騎士が生えない → 街長・局長の候補が居ない →
+//   **局が300年で最大2** → 祭祀局長が居ない → **異端狩りが40種300年で0件**。
+//   ★ 席は要らない。**討ち取り3回で騎士（rank1）**。これが柱3「平民でも武功で入れる」。
+export const KNIGHT_KILLS = 3;
+
 /**
  * 席の生成と任命。★ 乱数を1回も引かない。
  * @returns {{seated:number, ennobled:number}}
  */
 export function officeMonth(P, V, H, tick) {
   const A = P.a, nv = V.a.len;
-  let seated = 0, ennobled = 0;
+  let seated = 0, ennobled = 0, knighted = 0;
+
+  // ---- 武功の道（正典3719）。★ 席を問わない。乱数を引かない ----
+  for (let i = 0; i < A.len; i++) {
+    if (!A.alive[i]) continue;
+    if (A.rank[i] >= RANK_KNIGHT) continue;
+    if (A.kills[i] < KNIGHT_KILLS) continue;
+    if (setRank(P, i, RANK_KNIGHT, tick) > 0) { knighted++; ennobled++; }
+  }
 
   // ---- 村ごとに、席が生えているか・埋まっているかを見る ----
   // ★ **1周で済ませる。**村ごとに全人口をなめると O(村数 × 人口) になり、
@@ -258,7 +275,7 @@ export function officeMonth(P, V, H, tick) {
     if (A.rank[i] >= want) continue;
     if (setRank(P, i, want, tick) > 0) ennobled++;
   }
-  return { seated, ennobled, towns, mayors, chiefs };
+  return { seated, ennobled, knighted, towns, mayors, chiefs };
 }
 
 // ---------------------------------------------------------------------------

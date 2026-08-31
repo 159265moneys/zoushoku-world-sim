@@ -16,6 +16,7 @@
 //   11番B腕が不満量を単独で支配する。
 
 import * as S from '../core/stats.js';
+import * as DIS from './discontent.js';   // 恨みが生きているか（憤怒の入力）
 import { ST_PREGNANT } from '../core/states.js';
 import { NO_ONE, NO_VILLAGE, titleStep } from './people.js';
 
@@ -284,8 +285,15 @@ export function desireMonth(P, V, tick, opts) {
     // ---- B群 ----
     // 立場 ＝ 爵位の段×10 ＋ 役職の段×15（#10-G）。2026-08-29 に繋いだ
     u[PRIDE] = unmetPride(titleStep(A.rank[i]), A.post[i], A.rep[i], isInnate(P, i, PRIDE));
-    // ★ 戦・私闘・処刑・狩りの仕留めは供給源がまだ無い。全員 U=1.000（正典の検算と同じ）
-    u[WRATH] = unmetWrath(0, 0, 0, 0, false);
+    // ★★ 2026-08-31（別セッションの精査で発見）：**ここが 0 のハードコードのままだった。**
+    //   187戦・討取590 が起きているのに `kills` も `battles` も渡しておらず、
+    //   憤怒の出力が恒久 0.0000。なのに**日常の基底圧の63%を占める**枠だった。
+    //   いま渡せるのは 戦に出た回数（T7）と 恨みが生きているか の2本。
+    //   ★ 私闘・処刑・**狩りの仕留め**は本人ごとの数え手がまだ無いので 0 のまま
+    //     （`kills` は戦果であって狩りではない。混ぜない）。
+    let liveGrudge = false;
+    for (let k = 0; k <= DIS.D_OUT; k++) if (A.grudge[k][i] > 0) { liveGrudge = true; break; }
+    u[WRATH] = unmetWrath(A.battles[i], 0, 0, 0, liveGrudge);
     const bore12 = A.lastBirth[i] >= 0 && tick - A.lastBirth[i] < 360;
     u[LUST] = unmetLust(A.spouse[i] !== NO_ONE, bore12 || (A.state[i] & ST_PREGNANT) !== 0);
     u[SLOTH] = unmetSloth(workDaysOf(i));
