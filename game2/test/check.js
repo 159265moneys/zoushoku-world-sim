@@ -976,17 +976,35 @@ check('疲労は負荷1.0 が中央値の均衡点（壊れるのは眠りの浅
 check('状態に供給源が繋がっている（器が空回りしていない）', () => {
   // ★ 供給源が「在るか」を見る検査なので、1つの世界の大きさに依存させない
   let defect = 0, fatigue = 0, mourned = 0, sick = 0, hurt = 0;
-  for (const w of pooledWorlds(60, 6)) {
+  // ★ 病と負傷も**のべで数える**（2026-08-31）。喪と同じ理由 ──
+  //   #9 の疫病・嵐・獣害は当たれば段が立つが、B-26 で**治る**ようになったので
+  //   ある月に生きている者を見ても 0 のことがある（実測：12世界×60年で
+  //   のべ 病16人年・負傷70人年 に対し、最終月の瞬間は 病0・負傷1）。
+  //   供給源が在るかを見たいのだから、瞬間ではなく積算で見る
+  let n = 0;
+  for (const seed of LIVING_SEEDS) {
+    if (n >= 6) break;
+    const w = new W.World(seed).genesis();
+    for (let y = 0; y < 60; y++) {
+      w.runYears(1);
+      const A = w.people.a;
+      for (let i = 0; i < A.len; i++) {
+        if (!A.alive[i]) continue;
+        if (A.sickStage[i] > 0) sick++;
+        if (A.hurtStage[i] > 0) hurt++;
+      }
+    }
+    if (w.population() < 3) continue;
+    n++;
     const A = w.people.a;
     for (let i = 0; i < A.len; i++) {
       if (A.defectType[i]) defect++;
       if (!A.alive[i]) continue;
       if (A.fatigue[i] > 0) fatigue++;
-      if (A.sickStage[i] > 0) sick++;
-      if (A.hurtStage[i] > 0) hurt++;
     }
     mourned += w.counters.mourned;
   }
+  if (!n) throw new Error('60年 生き延びる種が無い');
   if (!defect) return '先天障害が60年で1件も出ない（永続3の供給源が無い）';
   if (!fatigue) return '疲労が1人も溜まらない（一時9の供給源が無い）';
   const w = { counters: { mourned } };
@@ -995,7 +1013,7 @@ check('状態に供給源が繋がっている（器が空回りしていない�
   if (!w.counters.mourned) return '喪が1件も立たない（一時12の供給源が無い）';
   // ★ 病と負傷は #9 厄災で供給源が付いた（疫病→病の段3／嵐・獣害→負傷）。
   //   戦死だけがまだ器のまま（戦争が入る日に生きる）
-  if (!sick && !hurt) return '厄災が入ったのに病も負傷も1人も出ない';
+  if (!sick && !hurt) return `厄災が入ったのに病も負傷も1人も出ない（のべ 病${sick}／負傷${hurt}）`;
   return true;
 });
 
