@@ -1997,10 +1997,13 @@ check('★ 族は1月1族。同数なら族番号の小さいほう（#9-D）', 
 
 // ★ 掟：ストリーム内では、分岐で呼び出し回数を変えない。
 //   厄災は村ごとに**必ず4回**引く（嵐・疫病・火災・獣害）。当たらなくても引いて捨てる
-check('★ 厄災は村ごとに必ず4回引く（当たらなくても引いて捨てる）', () => {
+check('★ 厄災は村ごとに必ず5回引く（当たらなくても引いて捨てる）', () => {
+  // ★ 2026-08-31：洪水（正典9564）が入って 4回 → **5回**。
+  //   掟「ストリーム内では、分岐で呼び出し回数を変えない」を守っているかを見る検査なので、
+  //   数そのものではなく「まとめて引いてから生死を見ているか」が本体
   const src = readFileSync(join(GAME2, 'src/world/disaster.js'), 'utf8');
-  const m = src.match(/const rStorm = rng\.next\(\), rPlague = rng\.next\(\), rFire = rng\.next\(\), rBeast = rng\.next\(\);/);
-  if (!m) return '4回まとめて引いていない';
+  const m = src.match(/const rStorm = rng\.next\(\), rPlague = rng\.next\(\), rFire = rng\.next\(\), rBeast = rng\.next\(\),\s*\n\s*rFlood = rng\.next\(\);/);
+  if (!m) return '5回まとめて引いていない';
   // 引いたあとに「生きている村か」を見ていること（＝死んだ村でも引く）
   const after = src.slice(src.indexOf(m[0]) + m[0].length, src.indexOf(m[0]) + m[0].length + 120);
   if (!/if \(!VA\.alive\[v\]/.test(after)) return '生死の判定が抽選より前にある（分岐で回数が変わる）';

@@ -56,6 +56,18 @@ export const FIRE_STORE = 0.30;                       // 蔵も焼ける
 // 森で働く人数に比例。**10人で年1回、軽い負傷**
 export const BEAST_PER_WORKER_YEAR = 0.1;   // 「10人で年1回」＝ 1人あたり 0.1／年
 export const BEAST_X = 6;                             // S = {⑥}
+
+// ---- 洪水（正典9564・#17 §8「川沿いだけ取る」の塞ぎ）------------------------
+// > 川沿いは肥沃+4・粉挽き+12%・水運・漁で明らかに強い。
+// >   塞ぎ：**川に隣接する里マスは洪水が年4%**（他は0.4%）。
+// >   洪水で**その里マスの人工区画の地力 −4、蔵の30%が流れる。**強いが10年に1度殴られる
+// ★ 不満は正典2384「地震・洪水・旱魃 X=12 S={⑤} 村」。起源補正は既存の「天」をそのまま使う
+//   （正典6672 が嵐について「新しい補正行は作らない」と決めているのと同じ扱い）
+export const FLOOD_RIVER_YEAR = 0.04;   // 川区画を持つ村 ＝ 10年に1度殴られる
+export const FLOOD_BASE_YEAR  = 0.004;  // それ以外
+export const FLOOD_STORE = 0.30;        // 蔵の30%が流れる
+export const FLOOD_FERT  = 4;           // 人工区画の地力 −4
+export const FLOOD_X = 12;              // S = {⑤}
 // ★★ B-23：正典が自分と衝突している。**発明しないので 0 にしてある。**
 //   発生する条件の欄 …「10人で年1回、**軽い負傷**」
 //   何が起きるかの欄 …「**個人の死**」
@@ -97,12 +109,17 @@ const ID_CLEAN = S.needId('潔癖');
 /**
  * @param wildMul 村ID → §7-2 の未開率の倍率（**開墾の代償**）。無ければ 1.00 のまま
  */
-export function disasterMonth(P, V, H, tick, rng, onX, importP = null, wildMul = null) {
+/**
+ * @param riverOf  村ID → その村が川区画を持つか（洪水の頻度・正典9564）
+ * @param onFlood  村ID → 人工区画の地力を −4 する（地図は world 側が持つ）
+ */
+export function disasterMonth(P, V, H, tick, rng, onX, importP = null, wildMul = null,
+                              riverOf = null, onFlood = null) {
   const A = P.a, VA = V.a, nv = VA.len;
   const old12 = (i) => (A.ageMonths[i] / 12 | 0) >= X_AGE;   // ★「村の12歳以上」
   const month = C.monthOf(tick) % C.MONTHS_PER_YEAR;
   const stormSeason = month >= STORM_FROM && month <= STORM_TO;
-  let storms = 0, plagues = 0, fires = 0, beasts = 0;
+  let storms = 0, plagues = 0, fires = 0, beasts = 0, floods = 0;
   const deadList = [];
 
   // 村ごとの人・働き手を数える
@@ -123,8 +140,9 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null, wildMul =
   }
 
   for (let v = 0; v < nv; v++) {
-    // ★ 4回とも必ず引く。当たらなくても引いて捨てる
-    const rStorm = rng.next(), rPlague = rng.next(), rFire = rng.next(), rBeast = rng.next();
+    // ★ 5回とも必ず引く。当たらなくても引いて捨てる
+    const rStorm = rng.next(), rPlague = rng.next(), rFire = rng.next(), rBeast = rng.next(),
+          rFlood = rng.next();
     if (!VA.alive[v] || pop[v] === 0) continue;
     const n = pop[v], cleanAvg = clean[v] / n;
 
@@ -205,6 +223,17 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null, wildMul =
       }
     }
 
+    // ---- 洪水 ----。★ 川区画を持つ村だけが年4%（他は0.4%）。
+    //   正典9564「強いが10年に1度殴られる」── 漁・肥沃+4・水運の代金がこれ
+    const onRiver = riverOf ? riverOf(v) : false;
+    const pFlood = (onRiver ? FLOOD_RIVER_YEAR : FLOOD_BASE_YEAR) / 12;
+    if (rFlood < pFlood) {
+      floods++;
+      VA.food[v] *= (1 - FLOOD_STORE);
+      if (onFlood) onFlood(v);                       // 人工区画の地力 −4（地図は world 側が持つ）
+      for (const i of roster[v] ?? EMPTY) if (old12(i)) onX(i, FLOOD_X, S_GOD);   // X=12 S={⑤}
+    }
+
     // ---- 獣害 ----。森で働く人数に比例（10人で年1回）
     const pBeast = forest[v] * BEAST_PER_WORKER_YEAR / 12;
     if (forest[v] > 0 && rBeast < pBeast) {
@@ -229,7 +258,7 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null, wildMul =
       }
     }
   }
-  return { storms, plagues, fires, beasts, dead: deadList.length, deadList };
+  return { storms, plagues, fires, beasts, floods, dead: deadList.length, deadList };
 }
 
 // ---------------------------------------------------------------------------

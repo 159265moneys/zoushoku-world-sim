@@ -188,3 +188,96 @@ export function densityMul(f) {
   const m = 1 + 0.8 * (WILD_REF - f) / WILD_REF;
   return m < 0.6 ? 0.6 : m > 1.8 ? 1.8 : m;
 }
+
+// ---------------------------------------------------------------------------
+// §4-4 輪作 ／ §4-5 地力の年次　★ここが無いと土地は一度傷んだら二度と戻らない
+// ---------------------------------------------------------------------------
+/**
+ * §4-4 の表そのまま。**産出の1人あたり（FARM_YIELD 2.6）は輪作で変えない。**
+ * 変えるのは (a) 畑区画の定員 CAP[畑] と (b) 地力の年次変化 だけ
+ * → 正典 #3-(h) の 1.764×q が、どの輪作を選んでも1文字も動かない
+ */
+export const ROTATION = [
+  { key: '連作', cap: 10, fert: -2,   need: 4 },   // 土地を最も少なく使う。地力8から4年で0
+  { key: '二圃', cap:  5, fert: -0.5, need: 8 },   // 16年もつ。土地を倍要る
+  { key: '三圃', cap:  7, fert:  0,   need: 6 },   // ★既定。永久に回る（畑・豆・休）
+  { key: '四圃', cap:  5, fert: +0.5, need: 8 },   // 地力が上がる ＝ **土地を治す道具**
+];
+export const ROT_MONO = 0, ROT_TWO = 1, ROT_THREE = 2, ROT_FOUR = 3;
+
+/**
+ * その村が実際に回せる輪作。**正典8「三圃は畑を6区画持たないと選べない。
+ * 13区画のうち6枚が畑にならない村は連作しかできない」** ── 望みを区画数で切り下げる。
+ * ★ 地力が基準を割っている村は、8区画あれば**四圃へ寄せて土地を治す**（§4-4「土地を治す道具」）
+ */
+export function rotationOf(land, L, v, want = ROT_THREE) {
+  const fields = countRole(land, L, v, R.FIELD);
+  let s = 0, n = 0;
+  for (const p of land.cells[v] ?? []) {
+    const role = roleOf(L, p);
+    if (role < R.FIELD || role > R.PADDY) continue;
+    s += stateOf(L, p); n++;
+  }
+  const avg = n ? s / n : 8;
+  // ★★ **村長は連作を選ばない。**★★
+  //   正典8「三圃は畑を6区画持たないと選べない。13区画のうち6枚が畑にならない村は
+  //   連作しかできない」は**オーナーの選択肢の制約**であって、村長の既定ではない。
+  //   連作は「戦争の前の4年なら正しい」という賭け（§4-4 柱7）で、地力が −2/年 ＝ 4年で土地が死ぬ。
+  //   ★ 自動で落とすと、**畑2枚で始まる娘村（B-39）が全部4年で土地を殺す**
+  //     ── 実測：300年・4種すべてが絶滅（2026-08-31）。
+  //   三圃は畑が何枚でも回る（定員が枚数×7 になるだけ）ので、**これを床にする。**
+  //   地力が基準を割っていて、かつ8区画あるときだけ**四圃へ寄せて土地を治す**
+  if (avg < 8 && fields >= ROTATION[ROT_FOUR].need) return ROT_FOUR;
+  if (want === ROT_MONO) return ROT_MONO;             // オーナーが明示で選んだときだけ連作
+  return ROT_THREE;
+}
+
+/**
+ * §4-5　**毎年12月に更新（人工区画のみ）**
+ * ```
+ * 畑・水田 … 輪作カードの表 ／ 繊維畑 −3 ／ 菜園 +1 ／ 牧草地 +2 ／ 果樹園 0
+ * 森林 … 樹齢（§4-6：植えた月に0、毎月 +0.25）／ 荒地・平野 0
+ * ★ 地力が0になった人工区画は、翌年1月に 荒地 へ落ちる（元自然bitは保つ）
+ * ```
+ * @returns {{changed:number, ruined:number}} ruined ＝ 荒地へ落ちた区画
+ */
+export const FERT_YEAR = { [R.FIBER]: -3, [R.GARDEN]: +1, [R.PASTURE]: +2, [R.ORCHARD]: 0 };
+export function fertYear(L, land, V, rotOf) {
+  let changed = 0, ruined = 0;
+  for (let v = 0; v < V.len; v++) {
+    if (!V.a.alive[v]) continue;
+    let touched = 0;                                   // ★ 村ごとに数える（累積させない）
+    const rot = ROTATION[rotOf ? rotOf(v) : ROT_THREE];
+    for (const p of land.cells[v] ?? []) {
+      const role = roleOf(L, p);
+      if (role < R.FIELD || role > R.PADDY) continue;
+      const d = (role === R.FIELD || role === R.PADDY) ? rot.fert : (FERT_YEAR[role] ?? 0);
+      if (!d) continue;
+      let f = stateOf(L, p) + d;
+      if (f > 15) f = 15;
+      if (f <= 0) {                       // ★ 0 になった人工区画は荒地へ落ちる（元自然bitは保つ）
+        L.b0[p] = R.WASTE;                //   荒地の地力は0（§9-3 抜け道1）
+        ruined++;
+      } else {
+        L.b0[p] = role | (Math.round(f) << 4);
+      }
+      changed++; touched++;
+    }
+    if (touched) land.recap(v);
+  }
+  return { changed, ruined };
+}
+
+/** §4-6　植えた森が育つ（毎月 +0.25、60ヶ月で樹齢15）。★ 樹齢<8 は「未開」に数える */
+export function forestMonth(L, land, V) {
+  for (let v = 0; v < V.len; v++) {
+    if (!V.a.alive[v]) continue;
+    for (const p of land.cells[v] ?? []) {
+      if (roleOf(L, p) !== R.WOOD) continue;
+      const a = stateOf(L, p);
+      if (a >= 15) continue;
+      // 状態値は整数4bitなので、4ヶ月に1つ上げる（＝ +0.25/月）
+      if ((land.px[v] + p) % 4 === 0) L.b0[p] = R.WOOD | ((a + 1) << 4);
+    }
+  }
+}

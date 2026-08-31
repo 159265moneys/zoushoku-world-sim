@@ -66,7 +66,10 @@ export class Land {
       else if (role === R.RIVER) river++;
       else if (role === R.WATER) sea++;
     }
-    this.fieldCap[v] = field * CAP_FIELD;
+    // ★ 畑の定員は**輪作で変わる**（§4-4：連作10／二圃5／三圃7＝既定／四圃5）。
+    //   輪作そのものは works.js が決め、その月の値をここへ書く（循環 import を避ける）
+    this.capField = this.capField || [];
+    this.fieldCap[v] = field * (this.capField[v] ?? CAP_FIELD);
     this.forestCap[v] = forest * CAP_FOREST;
     // ★ 漁の定員（#17 §2-1）。川と海湖で季節が違う（§5-3）ので別に持つ
     this.riverCap = this.riverCap || []; this.seaCap = this.seaCap || [];

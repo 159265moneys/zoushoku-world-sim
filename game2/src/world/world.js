@@ -115,7 +115,7 @@ export class World {
       seated: 0,                            // 席に座った回数（#10）
       pressure: 0,                          // 日常の基底圧の合計（#3 の ΣX）
       // ---- 厄災（#9）----
-      storms: 0, plagues: 0, fires: 0, beasts: 0,
+      storms: 0, plagues: 0, fires: 0, beasts: 0, floods: 0, fertRuined: 0,
       shock: 0,                             // 厄災の X の合計（⑤の溜め池の入口）
       // ---- 宗派（#8）----
       sectsFounded: 0, sectsDissolved: 0, converted: 0,
@@ -291,13 +291,30 @@ export class World {
         return p;
       },
       // ★ #17 §7-2：開墾の代償。未開の区画が減るほど疫病と火災が増える
-      this.land ? (v) => WK.densityMul(WK.wildRatio(this.land, this.map.L, v)) : null);
+      this.land ? (v) => WK.densityMul(WK.wildRatio(this.land, this.map.L, v)) : null,
+      // ★ 洪水（正典9564）。川区画を持つ村だけが年4%（他は0.4%）。
+      //   「川に隣接する里マス」の読み：**川区画を実際に持っている村**とする ──
+      //   漁・肥沃+4・水運・粉挽きの利得を受け取るのがその村だけだから、代金もその村が払う
+      this.land ? (v) => (this.land.riverCap?.[v] ?? 0) > 0 : null,
+      // ★ 洪水の効果：その村の人工区画の地力 −4（正典9564）。蔵の30%は disaster 側
+      this.land ? (v) => {
+        const L = this.map.L;
+        for (const p of this.land.cells[v] ?? []) {
+          const role = L.b0[p] & 15;
+          if (role < PARCEL.R.FIELD || role > PARCEL.R.PADDY) continue;
+          const f = Math.max(0, (L.b0[p] >> 4) - DIS9.FLOOD_FERT);
+          L.b0[p] = role | (f << 4);
+        }
+        this.land.recap(v);
+      } : null);
     if (dz.dead > 0) {
       this.counters.died += dz.dead;
       this.counters.byCause[DIS9.DEATH_ACCIDENT] += dz.dead;
     }
     this.counters.storms += dz.storms; this.counters.plagues += dz.plagues;
     this.counters.fires += dz.fires;   this.counters.beasts += dz.beasts;
+    this.counters.floods += dz.floods;
+    if (dz.floods && this.once('flood')) this.note('洪水', '川が溢れ、蔵の3割と地力が流れた');
     if (dz.storms && this.once('storm')) this.note('嵐', '蔵が3割持っていかれた');
     if (dz.plagues && this.once('plague')) this.note('疫病', '村の4分の1が伏せた');
 
@@ -343,6 +360,9 @@ export class World {
     this.counters.seated += off.seated;
     this.counters.ennobled += off.ennobled;
     if (off.seated > 0 && this.once('headman')) this.note('最初の村長', '10軒目が建った');
+
+    // ---- 森が育つ（#17 §4-6：植えた月に0、毎月 +0.25、60ヶ月で樹齢15）----
+    if (this.land) WK.forestMonth(this.map.L, this.land, V);
 
     // ---- 工事（#17 §4-3）。★ 乱数を1つも引かない。**産出の前**に働き手を抜く ----
     if (this.land) this.counters.works = this.worksStep(t);
@@ -531,6 +551,22 @@ export class World {
     // ★ 毎年・**既に線がある相手だけ**（#8 §8 と同じ形）。全員に張ると O(n²) になる
     if (C.monthOf(t) % C.MONTHS_PER_YEAR === 0) {
       if (this.land) this.land.fogYear();      // 霧の経過年数を1つ進める（#17 §6-6）
+      // ---- #17 §4-4 輪作 ／ §4-5 地力の年次。★ 乱数を1つも引かない ----
+      //   > 毎年12月に更新（人工区画のみ）。畑・水田は輪作カードの表／繊維畑 −3／
+      //   > 菜園 +1／牧草地 +2／果樹園 0。**地力が0になった人工区画は荒地へ落ちる**
+      //   ここが無いと土地は一度傷んだら二度と戻らず、洪水で世界が死ぬ（2026-08-31 に実測）
+      if (this.land) {
+        const L = this.map.L;
+        this.land.capField = this.land.capField || [];
+        const rotOf = (v) => {
+          const r = WK.rotationOf(this.land, L, v, WK.ROT_THREE);
+          this.land.capField[v] = WK.ROTATION[r].cap;
+          return r;
+        };
+        const fy = WK.fertYear(L, this.land, V, rotOf);
+        this.counters.fertRuined += fy.ruined;
+        if (fy.ruined && this.once('ruined')) this.note('畑が死んだ', '地力が0になり荒地へ落ちた');
+      }
       // ★ その年の作柄を引く（正典3-7）。厄災のストリーム（6番）なので他の11本は動かない
       this.harvest = drawHarvest(this.R[STREAM.DISASTER]);
       // 等級 g と 平民の段（村内の財の五分位）。#10-B・#10-C。乱数を引かない
@@ -715,7 +751,14 @@ export class World {
     //     **その先は混む手前で1枚だけ先回りする**。実測（300年・7種の平均人口）:
     //       6枚まで＋先回り 下の値 ／ 6枚までのみ 381 ／ 先回りのみ 288
     const want = (v) => {
-      if (WK.countRole(this.land, L, v, PARCEL.R.FIELD) < 6) return PARCEL.R.FIELD;
+      const fields = WK.countRole(this.land, L, v, PARCEL.R.FIELD);
+      if (fields < 6) return PARCEL.R.FIELD;
+      // ★ 土地が傷んでいるなら、**四圃を回せる8枚まで開く**（§4-4「四圃は土地を治す道具」）。
+      //   四圃は +0.5/年 で、洪水の期待損 0.04×4 ＝ 0.16/年 を大きく上回る。
+      //   これが無いと、既定の三圃（0/年）では地力が一方通行で落ち続けて村が死ぬ
+      //   （実測：洪水を入れた直後は 300年・5種のうち3種が絶滅。2026-08-31）
+      if (fields < WK.ROTATION[WK.ROT_FOUR].need &&
+          (this.land.fert?.[v] ?? LAND.FERT_BASE) < LAND.FERT_BASE) return PARCEL.R.FIELD;
       return (this.land.fieldCap[v] ?? 0) < fieldN[v] + LAND.CAP_FIELD ? PARCEL.R.FIELD : -1;
     };
     return WK.worksMonth(g, L, this.works, this.land, V, t, men, qs, want);
