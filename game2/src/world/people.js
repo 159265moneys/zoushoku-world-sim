@@ -20,6 +20,7 @@ import * as C from '../core/calendar.js';
 import { make } from '../core/arrays.js';
 import { ST_PREGNANT, ST_HUNGRY, ST_SICK, ST_GRIEF, ST_NURSING, ST_BARREN } from '../core/states.js';
 import { frames, exception } from './condition.js';
+import { bandNorm, bandDev } from '../core/bands.js';   // レア度の帯（正典2-4）
 import { LOOK_SPEC, FOUNDER_COUNT } from './looks.js';
 import { lifespanOverride, deathless } from './gifts.js';
 
@@ -481,8 +482,13 @@ const ID_AGING = S.needId('老いの速さ');
  */
 export function baseLifespanOf(P, i) {
   const A = P.a;
-  const base = LIFESPAN_MIN + (LIFESPAN_MAX - LIFESPAN_MIN) * (A.gene[ID_LIFESPAN][i] / 100);
-  const fast = (A.gene[ID_AGING][i] - 50) / 50 * 5;   // 老いの速さが高いほど短い
+  // ★★ 錨を**帯**へ移した（2026-08-31・帯の実装にあわせて）★★
+  //   寿命はレア度A（帯 1〜45・平均25.3）、老いの速さはレア度B（帯 15〜53・平均34）。
+  //   旧式 `40 + 30×(才能/100)` は才能が0〜100の一様分布である前提だったので、
+  //   帯を入れると平均寿命が 55 → **47.6** に落ち、確定事項A-6「40〜70歳・平均55」を割る。
+  //   **帯の下端→40／中心→55／上端→70** に貼り直す。A の帯 1〜45 が 40〜70 に丸ごと乗る
+  const base = LIFESPAN_MIN + (LIFESPAN_MAX - LIFESPAN_MIN) * bandNorm(ID_LIFESPAN, A.gene[ID_LIFESPAN][i]);
+  const fast = bandDev(ID_AGING, A.gene[ID_AGING][i]) * 5;   // 老いの速さが高いほど短い
   const v = Math.round(base - fast);
   return v < LIFESPAN_MIN ? LIFESPAN_MIN : v > LIFESPAN_MAX ? LIFESPAN_MAX : v;
 }

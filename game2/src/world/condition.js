@@ -21,6 +21,7 @@
 //   実効値は読まない（循環するため）。
 
 import * as S from '../core/stats.js';
+import { bandNorm } from '../core/bands.js';   // レア度の帯（正典2-4）
 import {
   ST_PREGNANT, ST_HUNGRY, ST_SICK, ST_GRIEF, ST_NURSING, ST_BARREN,
 } from '../core/states.js';
@@ -182,7 +183,14 @@ const ID_STRENGTH = S.needId('最大筋力');
 const _age = [0, 0, 0];
 export function frames(P, i, out, permOnly = false) {
   const A = P.a;
-  const raw = (s) => A.gene[s][i] + A.ev[s][i];      // 素の値。実効値は読まない（循環する）
+  // ★★ 錨を**帯**へ（2026-08-31・レア度の帯の実装にあわせて）★★
+  //   この関数の中の係数（老いの速さ／飢えへの強さ／病への強さ／疲労／必要睡眠）は
+  //   すべて「才能50が中央」で校正されている。帯を入れると 106ステのうち **77個（D/C/B/A）
+  //   の帯が50より下**に来るので、そのままだと全員が虚弱になる（実測：病死 21.8%→31.5%）。
+  //   `bandNorm×100` は **帯の中心をちょうど50に写す**ので、校正済みの係数が1つも動かない。
+  //   ★ 逆に、正典が**帯に紐づけて決めた閾値は写さない**（例：宗教の発起 T_f=60 は
+  //     「帯F 44〜77 の上位半分」と正典が明記しているので、生の値のまま読む）
+  const raw = (s) => bandNorm(s, A.gene[s][i] + A.ev[s][i]) * 100;
 
   // ---- 永続5個 ----
   aging(A.ageMonths[i] / 12, A.lifespan[i], raw(ID.老いの速さ), _age);
@@ -347,12 +355,12 @@ export function exception(P, i, s) {
  *   ★ これが無いと、疫病にかかった者は**一生 からだ×0.52 のまま**になる（治る道が無い）。
  */
 export function sickMonths(P, i, stage) {
-  const r = P.a.gene[ID.病への強さ][i] + P.a.ev[ID.病への強さ][i];
+  const r = bandNorm(ID.病への強さ, P.a.gene[ID.病への強さ][i] + P.a.ev[ID.病への強さ][i]) * 100;   // ★ 帯へ
   return Math.max(1, Math.ceil((1 + 2 * stage) * (1 - r / 200)));
 }
 
 export function healMonths(P, i, w) {
-  const r = P.a.gene[ID.傷の治り][i] + P.a.ev[ID.傷の治り][i];
+  const r = bandNorm(ID.傷の治り, P.a.gene[ID.傷の治り][i] + P.a.ev[ID.傷の治り][i]) * 100;   // ★ 帯へ
   return Math.max(1, Math.ceil((1 + 2 * w) * (1 - r / 200)));
 }
 
@@ -422,7 +430,7 @@ export function rollDefect(P, i, rng) {
  */
 export function fatigueMonth(P, i, load) {
   const A = P.a;
-  const raw = (s) => A.gene[s][i] + A.ev[s][i];
+  const raw = (s) => bandNorm(s, A.gene[s][i] + A.ev[s][i]) * 100;   // ★ 帯へ（上と同じ理由）
   let pt = A.fatigue[i] + FATIGUE_GAIN * load;
   pt -= FATIGUE_DRAIN
       * (0.5 + raw(ID.疲労の抜けやすさ) / 100)

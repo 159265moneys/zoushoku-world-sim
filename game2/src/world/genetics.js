@@ -43,6 +43,11 @@ export const LOAD_FLOOR = 0.35;       // どれだけ腐っても死にはしな
 
 // 旧版は8番（感受性・他責）を対抗アームではない独立座位として予算から外していた。
 // 104ステでは14本すべてが A腕/B腕 の両方を持っている（52対52）ので、除外は空。
+// レア度の帯は core/bands.js が持つ（循環参照を避けるため）。ここからは通しで出す
+export { BAND_ON, BAND_IN, BAND_TAU, RARITY_BAND, BAND_LO, BAND_HI, BAND_MID,
+         bandNorm, bandDev, drawBand } from '../core/bands.js';
+import { BAND_MID, bandNorm, bandDev, drawBand, BAND_ON } from '../core/bands.js';
+
 export const ARM_EXEMPT = new Set();
 
 // ---- 染色体ごとの並び ------------------------------------------------------
@@ -52,6 +57,11 @@ export const CH_LIST = [];
 for (let c = 1; c <= S.CHROMOSOME_COUNT; c++) CH_LIST.push(c);
 
 export const LOCUS_ORDER = [];   // LOCUS_ORDER[ch] = Int32Array
+// ★ 正典1251「**平均A腕 ＋ 平均B腕 ＝（A腕のステの帯の中心の平均）＋（B腕のステの帯の中心の平均）**。
+//   腕ごとにステの数が違うので、染色体単位の平均×2では合わない」
+//   ── 旧実装の `ARM_BUDGET = 100`（全部の帯が50中心という仮置き）を、帯から染色体ごとに引く。
+//   これが無いと、正規化が帯を打ち消して全部の平均が50へ戻る（帯を入れた意味が消える）
+export const ARM_BUDGET_OF = [];
 export const ARM_A_OF = [];      // ARM_A_OF[ch] = Int32Array
 export const ARM_B_OF = [];
 for (let c = 0; c <= S.CHROMOSOME_COUNT; c++) {
@@ -59,6 +69,9 @@ for (let c = 0; c <= S.CHROMOSOME_COUNT; c++) {
   ARM_A_OF[c] = Int32Array.from(a);
   ARM_B_OF[c] = Int32Array.from(b);
   LOCUS_ORDER[c] = Int32Array.from([...a, ...b]);
+  // 帯の中心の平均を腕ごとに取り、足したものがその染色体の予算
+  const mid = (list) => (list.length ? list.reduce((t, i) => t + BAND_MID[i], 0) / list.length : 0);
+  ARM_BUDGET_OF[c] = mid(a) + mid(b);
 }
 
 const clampV = (x) => (x < 0 ? 0 : x > SCALE ? SCALE : x);
@@ -93,21 +106,23 @@ export function normalizeArms(v, ch) {
   const A = ARM_A_OF[ch], B = ARM_B_OF[ch];
   if (!A.length || !B.length) {
     // 対抗アームがない染色体。予算がないので中央へ弱く引くだけ
-    for (let k = 0; k < A.length; k++) v[A[k]] = clampV(v[A[k]] * (1 - DRIFT_PULL) + (SCALE / 2) * DRIFT_PULL);
-    for (let k = 0; k < B.length; k++) v[B[k]] = clampV(v[B[k]] * (1 - DRIFT_PULL) + (SCALE / 2) * DRIFT_PULL);
+    // ★ 引き先は 50 ではなく**そのステの帯の中心**（帯を入れたので）
+    for (let k = 0; k < A.length; k++) v[A[k]] = clampV(v[A[k]] * (1 - DRIFT_PULL) + BAND_MID[A[k]] * DRIFT_PULL);
+    for (let k = 0; k < B.length; k++) v[B[k]] = clampV(v[B[k]] * (1 - DRIFT_PULL) + BAND_MID[B[k]] * DRIFT_PULL);
     return v;
   }
+  const budget = ARM_BUDGET_OF[ch] ?? ARM_BUDGET;   // ★ 染色体ごと（正典1251）
   let ma = 0, mb = 0;
   for (let k = 0; k < A.length; k++) ma += v[A[k]];
   for (let k = 0; k < B.length; k++) mb += v[B[k]];
   ma /= A.length; mb /= B.length;
   const s = ma + mb;
   if (s <= 1e-6) {
-    for (let k = 0; k < A.length; k++) v[A[k]] = ARM_BUDGET / 2;
-    for (let k = 0; k < B.length; k++) v[B[k]] = ARM_BUDGET / 2;
+    for (let k = 0; k < A.length; k++) v[A[k]] = BAND_MID[A[k]];
+    for (let k = 0; k < B.length; k++) v[B[k]] = BAND_MID[B[k]];
     return v;
   }
-  const kk = ARM_BUDGET / s;
+  const kk = budget / s;
   for (let k = 0; k < A.length; k++) v[A[k]] = clampV(v[A[k]] * kk);
   for (let k = 0; k < B.length; k++) v[B[k]] = clampV(v[B[k]] * kk);
   return v;
@@ -400,19 +415,23 @@ export function foundGenome(P, i, rng, targets = null, spread = FOUND_SPREAD, lo
   for (let h = 0; h < 2; h++) {
     const g = h === 0 ? GF : GM;
     for (let s = 0; s < S.COUNT; s++) {
-      const t = targets ? targets[s] : SCALE / 2;
+      // ★ 才能は**レア度の帯から引く**（正典2-4）。台本（centroid）で名指しされたステだけは
+      //   その値を中心に引く ── A-10 の台本が「創世の十匹だけは体重35〜55」等を指定するため
+      const t = targets ? targets[s] : NaN;
+      const named = Number.isFinite(t) || !BAND_ON;      // 帯オフなら従来どおり 50 を中心に引く
+      const tt = Number.isFinite(t) ? t : SCALE / 2;
       if (isDominantMode(s)) {
         const dominant = rng.next() >= RECESSIVE_P;
         // 劣性は極端な値を引きやすくしておく。これが数世代後の「突然発現」の弾になる
         const v = dominant
-          ? clampV(t + rng.normal(0, sp))
+          ? (named ? clampV(tt + rng.normal(0, sp)) : drawBand(rng, s))
           : (rng.bool() ? rng.range(0.72 * SCALE, SCALE) : rng.range(0, 0.28 * SCALE));
         g.v[s] = v;
         g.d[s] = dominant ? 1 : 0;
         // 劣性の半分は欠陥（荷重）も一緒に運ぶ。顕性が隠している間は無害
         g.l[s] = dominant ? 0 : (rng.next() < loadP ? rng.range(0.20, 0.95) : 0);
       } else {
-        g.v[s] = clampV(t + rng.normal(0, BODY_FOUND_SPREAD));
+        g.v[s] = named ? clampV(tt + rng.normal(0, BODY_FOUND_SPREAD)) : drawBand(rng, s);
         g.d[s] = 1; g.l[s] = 0;
       }
     }
@@ -427,7 +446,8 @@ export function foundGenome(P, i, rng, targets = null, spread = FOUND_SPREAD, lo
 
 /** 診断の重心（名前→0〜1）を targets（Float32Array・0〜100）に直す */
 export function targetsFrom(centroid) {
-  const t = new Float32Array(S.COUNT).fill(SCALE / 2);
+  // ★ 名指しされていないステは NaN ＝「帯から引く」。50 で埋めると帯が効かない
+  const t = new Float32Array(S.COUNT).fill(NaN);
   if (!centroid) return t;
   for (const name of Object.keys(centroid)) {
     const id = S.idOf(name);

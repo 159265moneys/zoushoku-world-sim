@@ -25,6 +25,7 @@ import {
   ST_PREGNANT, ST_NURSING, ST_HUNGRY, ST_BARREN, DEATH_BIRTH, DEATH_INFANT, lifespanOf,
 } from './people.js';
 import { breed } from './genetics.js';
+import { bandNorm } from '../core/bands.js';   // レア度の帯（正典2-4）
 import { rollDefect, afterHardBirth } from './condition.js';
 import { deathless } from './gifts.js';
 
@@ -200,7 +201,10 @@ export function conceiveMonth(P, V, tick, rng) {
     if (A.state[i] & ST_BARREN) continue;                    // 繁殖不能（第7部 §1 永続4）。受胎確率0
 
     // 繁殖力（ステ）と生存力（遺伝的荷重）で前後する
-    let p = CONCEIVE_CHANCE * (A.gene[ID_FERTILITY][i] / 50) * A.vitality[i];
+    // ★ 錨を帯へ（2026-08-31）。繁殖力はレア度B（帯 15〜53・中心34）なので、
+    //   `才能/50` のままだと帯を入れた瞬間に受胎率が **32%** 落ちる。
+    //   `bandNorm×2` は帯の中心で 1.00 ＝ 旧式の「才能50で1.00」と同じ意味になる
+    let p = CONCEIVE_CHANCE * (bandNorm(ID_FERTILITY, A.gene[ID_FERTILITY][i]) * 2) * A.vitality[i];
     // 40に近づくほど落ちる
     const late = (y - 30) / (BIRTH_MAX_AGE - 30);
     if (late > 0) p *= (1 - 0.7 * late);
