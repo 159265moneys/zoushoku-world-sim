@@ -559,7 +559,9 @@ export class World {
         const L = this.map.L;
         this.land.capField = this.land.capField || [];
         const rotOf = (v) => {
-          const r = WK.rotationOf(this.land, L, v, WK.ROT_THREE);
+          // ★ オーナーのカード（#18 §1）。既定は三圃。村ごとの上書きも継承で効く
+          const want = Math.round(this.cards.value('輪作', v)) | 0;
+          const r = WK.rotationOf(this.land, L, v, want);
           this.land.capField[v] = WK.ROTATION[r].cap;
           return r;
         };

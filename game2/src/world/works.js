@@ -227,8 +227,12 @@ export function rotationOf(land, L, v, want = ROT_THREE) {
   //     ── 実測：300年・4種すべてが絶滅（2026-08-31）。
   //   三圃は畑が何枚でも回る（定員が枚数×7 になるだけ）ので、**これを床にする。**
   //   地力が基準を割っていて、かつ8区画あるときだけ**四圃へ寄せて土地を治す**
+  // ★ 柱1：**オーナーが既定から動かしたカードは、村長が上書きしない。**
+  //   連作は「戦争の前の4年なら正しい」賭けなので、勝手に四圃へ寄せたら判断を消すことになる。
+  //   区画が足りない輪作だけは回せないので、回せる中でいちばん近いものへ落とす
+  if (want !== ROT_THREE) return fields >= ROTATION[want].need ? want : ROT_THREE;
+  // 既定（三圃）のままなら、傷んだ土地は村長の判断で四圃へ寄せて治す
   if (avg < 8 && fields >= ROTATION[ROT_FOUR].need) return ROT_FOUR;
-  if (want === ROT_MONO) return ROT_MONO;             // オーナーが明示で選んだときだけ連作
   return ROT_THREE;
 }
 
