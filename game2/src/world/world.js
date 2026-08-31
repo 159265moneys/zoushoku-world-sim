@@ -423,7 +423,8 @@ export class World {
       for (const k of [m, f, sp]) {
         if (k >= 0 && k < P.a.len && P.a.alive[k]) this.shock(k, 25, DIS9.S_GOD_RULE);
       }
-    });
+    }, this.cards.value('徴兵率'));   // ★ 徴兵率のカードを渡す（#18 §1・軍務局）
+
     if (wr.fought) {
       this.counters.wars++; this.counters.warDead += wr.dead;
       this.counters.warKills += wr.kills; this.counters.warFled += wr.fled;

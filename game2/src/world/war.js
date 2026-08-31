@@ -224,11 +224,18 @@ export const WAR_PER_YEAR = 1 / 24;
 //     9-B の導入の嵐を「死者ゼロ」に固定したのと同じ理由（正典6705）。
 export const WAR_MIN_POP = 100;
 
-// 部隊の規模。旧 battle.js の makeGhost がそのまま持っている数字：
-//   フェーズ1の相手は「隣の村」であって国ではない → FIRST_WAR_SIZE(5)＋0〜3
-//   それ以降 → 12 + 0〜27 ＝ **12〜40**
-export const FORCE_MIN = 12, FORCE_MAX = 40;
-export const LEVY_SHARE = 0.30;       // 兵に出せるのは働き盛りの何割か
+// 部隊の規模。
+// ★★ 2026-08-31：**上限40 を外した。**★★
+//   40 は旧 battle.js の makeGhost（フェーズ1の相手が「隣の村」だった頃）の数字で、
+//   **世界が育っても兵は40人までだった。**人口6,000の世界の徴兵対象は約2,000人なので、
+//   **1人が戦に出る確率が 40/2000 ＝ 2%**。16〜50歳の34年で参戦の期待値は
+//   1/24年 × 34年 × 2% ＝ **0.028回**。正典3719「**戦功3回で rank1**」に
+//   構造的に永久に届かず、騎士→局長→祭祀局長→異端審問会 の鎖が全部詰まっていた
+//   （実測：400年で戦11回・討取38・討取3回に届いた者1人／異端狩り 40種300年で0件）。
+//   → 正典が言っているのは「**出せるのは働き盛りの◯割まで**」だけ。**割合で決める。**
+//   ★ 下限12（兵が12人に満たない世界では戦にならない）は残す。
+export const FORCE_MIN = 12;
+export const LEVY_SHARE = 0.30;       // 兵に出せるのは働き盛りの何割か（既定。カードで動く）
 export const LEVY_MIN_AGE = 16, LEVY_MAX_AGE = 50;
 
 // 戦果の代金（正典3-2 の評判表そのまま。1点も足さない）
@@ -239,7 +246,7 @@ export const REP_FLED = REP.REP_EVENT.戦で逃げた;  // −20
  * 戦を1つ解いて、世界へ結果を書き戻す。★ 乱数は戦闘のストリーム（10番）だけ。
  * @returns {{fought, dead, kills, fled, won, byStat, byLuck}}
  */
-export function warMonth(P, pop, tick, rng, onFamilyDeath) {
+export function warMonth(P, pop, tick, rng, onFamilyDeath, levyShare = 0) {
   const A = P.a;
   // ---- 掟：開戦の抽選は毎月必ず1回引く ----
   const r = rng.next();
@@ -256,7 +263,9 @@ export function warMonth(P, pop, tick, rng, onFamilyDeath) {
   }
 
   // ---- 徴兵。★ 出せるのは働き盛りの3割まで。部隊は 12〜40（旧 battle.js の規模）
-  const n = Math.min(FORCE_MAX, Math.max(FORCE_MIN, Math.floor(levy.length * LEVY_SHARE)));
+  // ★ 徴兵率は #18 §1 のカード（軍務局・既定0.20・0〜0.40）。読まずに 0.30 を焼き込んでいた
+  const share = levyShare > 0 ? levyShare : LEVY_SHARE;
+  const n = Math.max(FORCE_MIN, Math.floor(levy.length * share));
   if (levy.length < n) return { fought: 0, dead: 0, deadList: [], kills: 0, fled: 0, won: 0, byStat: 0, byLuck: 0 };
   // ★★ **籤で引く。**添字の順にすると「いつも同じ最年長者だけが戦に出る」ことになり、
   //   戦果＝叙爵の道が一部の者に固定される。誰が引かれるかは運、
@@ -282,6 +291,10 @@ export function warMonth(P, pop, tick, rng, onFamilyDeath) {
     const i = u.id;
     if (A.battles[i] < 255) A.battles[i]++;
     if (u.dead) {
+      // ★ 2026-08-31：**戦死した者の討取を世界の台帳に入れる。**
+      //   本人はもう叙爵されないので `A.kills` には積まないが、
+      //   数えないと「戦死819・討取128」のように**敵の死者が消える**
+      kills += u.kills;
       P.kill(i, tick, DEATH_WAR); deadList.push(i);
       if (onFamilyDeath) onFamilyDeath(i);
       continue;

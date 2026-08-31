@@ -2612,7 +2612,11 @@ check('戦の定数が旧実装のまま（1つも作っていない）', () => 
   if (WAR.LUCK_SHARE !== 0.10) return `流れ矢が ${WAR.LUCK_SHARE}`;
   if (WAR.WOUND_SHARE !== 0.40) return `傷病が ${WAR.WOUND_SHARE}`;
   if (WAR.MAX_ROUNDS !== 40) return `ラウンド上限が ${WAR.MAX_ROUNDS}`;
-  if (WAR.FORCE_MIN !== 12 || WAR.FORCE_MAX !== 40) return '部隊の規模が旧実装と違う';
+  // ★ 2026-08-31：**上限40 を外した**（旧 battle.js の「隣の村」時代の数字で、
+  //   世界が育っても兵が40人までだった ＝ 1人が戦に出る確率2%・生涯0.028回で
+  //   正典3719「戦功3回で rank1」に構造的に届かない）。下限12 と割合だけを見る
+  if (WAR.FORCE_MIN !== 12) return '部隊の下限が旧実装と違う';
+  if (WAR.FORCE_MAX !== undefined) return 'FORCE_MAX が残っている（割合で決めるはず）';
   if (WAR.REP_WIN !== 15 || WAR.REP_FLED !== -20) return '戦の評判が正典3-2 の表と違う';
   return true;
 });
