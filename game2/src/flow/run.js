@@ -242,6 +242,9 @@ export class Run {
   }
   /** いま選べる速さ。デバッグの500はここにしか出てこない */
   speedChoices() { return this.dev ? SPEEDS.concat([SPEED_DEBUG]) : SPEEDS.slice(); }
+
+  /** その速さでの「1ヶ月＝何実秒か」。★ UI が式を持ち直すと A-11 の破棄済みの式が復活する */
+  secondsPerMonthAt(speed) { return C.realSecondsPerMonth(speed); }
   msPerTick() { return C.msPerTick(this.speed); }
 
   /**
@@ -249,11 +252,20 @@ export class Run {
    * **ここが唯一の入口。**世界の中身は tick の整数しか見ない。
    * @returns 進めた日数
    */
-  pump(dtMs) {
+  /**
+   * @param maxDt 1回で受け取る実時間の上限。既定は MAX_DT_MS。
+   *   ★★ 2026-08-31（別セッションの精査で発見）：**裏タブで世界が実質停止していた。**★★
+   *     `setInterval` はブラウザに約1秒へ間引かれるので dt が 1000ms 前後になるが、
+   *     ここで 250ms に切っていたので**実時間の3/4を毎回捨てていた**（実測 12.8秒で0tick）。
+   *     正典 0-3h が名指しで禁じた症状に、別経路で戻っていた。
+   *     → **裏タブのときは呼ぶ側が上限を上げる。**1回あたりの仕事量は
+   *       `MAX_TICKS_PER_PUMP` が別に押さえているので、暴走はしない。
+   */
+  pump(dtMs, maxDt = MAX_DT_MS) {
     if (!this.playing) return 0;
     let dt = dtMs;
     if (!(dt > 0)) return 0;
-    if (dt > MAX_DT_MS) dt = MAX_DT_MS;    // 裏タブで溜まったぶんは捨てる
+    if (dt > maxDt) dt = maxDt;            // 見えているときはフレームの飛びを捨てる
     this.acc += dt;
     const per = this.msPerTick();
     let n = Math.floor(this.acc / per);
@@ -476,10 +488,12 @@ export class Run {
       pop, adults, children, women, pregnant, hungry,
       meanAge: pop ? sumAge / pop : 0,
       houses: w.houses.count, slots: HOUSES_PER_VILLAGE * Math.max(1, villages.length),
-      food: v0 ? v0.food : 0,
-      foodCap: v0 ? v0.foodCap : 0,
-      produced: v0 ? v0.produced : 0,
-      eaten: v0 ? v0.eaten : 0,
+      // ★★ 2026-08-31（別セッションの精査で発見）：**村0番の値だけを出していた。**★★
+      //   創世の村が死ぬと、世界に3,811人いても蔵0.0 で張り付く。**世界の合計を出す。**
+      food: villages.reduce((t, x) => t + x.food, 0),
+      foodCap: villages.reduce((t, x) => t + x.foodCap, 0),
+      produced: villages.reduce((t, x) => t + x.produced, 0),
+      eaten: villages.reduce((t, x) => t + x.eaten, 0),
       ration: rationOn,
       rationLeftYears: Math.max(0, RATION_YEARS - C.yearOf(tick)),
       born: w.counters.born, died: w.counters.died,

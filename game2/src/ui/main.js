@@ -12,7 +12,7 @@
 //     世界を進めるのは setInterval のほう。
 //     **UI は world を直接呼ばない。**読むのは flow/run.js が返す形だけ。
 
-import { Run, HOUSES_PER_VILLAGE, RATION_YEARS } from '../flow/run.js';
+import { Run, HOUSES_PER_VILLAGE, RATION_YEARS, MAX_FOLK} from '../flow/run.js';
 import { MapView } from './map.js';
 import { Portrait, portraitLegend } from './portrait.js';
 
@@ -54,7 +54,9 @@ function buildSpeeds() {
     b.className = 'sp' + (s > 60 ? ' debug' : '');
     b.dataset.speed = String(s);
     b.textContent = `×${s}`;
-    b.title = s > 60 ? 'デバッグ専用。本番には出さない（A-11）' : `1ヶ月 ${fix(30 * 60 / s, 0)}秒`;
+    // ★ 2026-08-31：**破棄済み A-11 の式 `30*60/s` で計算し直していたので表示が実際の3倍**
+    //   だった（×10 でエンジンは60秒/月なのに「1ヶ月3分」と出る）。run が実値を持っている
+    b.title = s > 60 ? 'デバッグ専用。本番には出さない（A-11）' : `1ヶ月 ${fix(run.secondsPerMonthAt(s), 0)}秒`;
     b.onclick = () => { run.setSpeed(s); if (!run.playing) run.play(); };
     box.appendChild(b);
   }
@@ -62,7 +64,7 @@ function buildSpeeds() {
 function markSpeeds() {
   for (const b of $('speeds').children) b.classList.toggle('on', Number(b.dataset.speed) === run.speed);
   // **いまの速さが何を意味するかを、常に出す。**「×15」だけでは誰にも分からない
-  const secPerMonth = 30 * 60 / run.speed;
+  const secPerMonth = run.status().secondsPerMonth;   // ★ 実値を読む（旧：破棄済み A-11 の式）
   $('speedhint').textContent = secPerMonth >= 60
     ? `1ヶ月 ${(secPerMonth / 60).toFixed(0)}分`
     : `1ヶ月 ${secPerMonth.toFixed(0)}秒`;
@@ -83,8 +85,10 @@ function drawBar(force = false) {
 
   $('pop').textContent = String(v.pop);
   $('popsub').textContent = `大人${v.adults}・子${v.children}`;
-  $('houses').textContent = `${v.houses} / ${HOUSES_PER_VILLAGE}`;
-  $('housesub').textContent = v.houses >= HOUSES_PER_VILLAGE ? '満（溢れている）' : `空き${HOUSES_PER_VILLAGE - v.houses}`;
+  // ★ 2026-08-31：**分母に定数30 を使っていた**ので「家 1122 / 30」「満（溢れている）」と
+  //   出ていた。run が世界の枠（30 × 村数）を `slots` で持っている
+  $('houses').textContent = `${v.houses} / ${v.slots}`;
+  $('housesub').textContent = v.houses >= v.slots ? '満（溢れている）' : `空き${v.slots - v.houses}`;
   $('food').textContent = fix(v.food, 1);
   $('foodsub').textContent = `産${fix(v.produced, 1)} ／ 食${fix(v.eaten, 1)}`;
   $('foodbar').style.width = `${Math.max(0, Math.min(100, v.foodCap ? v.food / v.foodCap * 100 : 0))}%`;
@@ -301,6 +305,13 @@ function empty() {
   const snap = run.snapshot();
   const folk = snap.folk.slice().sort((a, b) => b.age - a.age);
   const b = snap.bar;
+  // ★ 2026-08-31（別セッションの精査で発見）：人口が MAX_FOLK を超えると
+  //   `folk` が空になる（正典 A-19「人が多すぎたら箱だけにする」の設計どおり）が、
+  //   **名簿が「3,811人」と「誰もいない」を並べていた**。理由を出す
+  if (snap.tooMany) {
+    return `<div class="note">人が多すぎるので、ひとりずつは出していません（${b.pop}人）。`
+      + `<br>正典 A-19：**${MAX_FOLK}人を超えたら箱だけにする**。村を絞るか、地図の箱を押してください。</div>`;
+  }
 
   const rows = folk.map(f => {
     const mark = [];
@@ -368,13 +379,17 @@ function drawDev() {
 
 // ---- 時計 ------------------------------------------------------------------
 // 世界を進めるのは setInterval。裏タブでも止まらない。
+// ★ 2026-08-31：`＋1日`／`＋1ヶ月`／`10年`／`100年` が drawBar() を呼んでおらず、
+//   押しても上帯（日付・人口・蔵）が変わらなかった。強制描画を足した
 // 溜まりすぎたぶんは run 側が捨てる（オフライン進行は別の話・A-11）。
 let last = performance.now();
 setInterval(() => {
   const now = performance.now();
   const dt = now - last;
   last = now;
-  const n = run.pump(dt);
+  // ★ 裏タブでは setInterval が約1秒に間引かれるので、上限を上げて実時間を捨てない
+  //   （見えているときは 250ms のままでフレームの飛びを吸収する）
+  const n = run.pump(dt, document.hidden ? 5000 : undefined);
   if (n > 0) map.dirty = true;
 }, 16);
 
@@ -411,12 +426,12 @@ run.on('notice', addNotice);
 run.on('speed', markSpeeds);
 
 $('playbtn').onclick = () => run.toggle();
-$('stepday').onclick = () => { run.stepDay(); map.dirty = true; drawDetail(); };
-$('stepmonth').onclick = () => { run.stepMonth(); map.dirty = true; drawDetail(); };
+$('stepday').onclick = () => { run.stepDay(); map.dirty = true; drawBar(true); drawDetail(); };
+$('stepmonth').onclick = () => { run.stepMonth(); map.dirty = true; drawBar(true); drawDetail(); };
 $('fitbtn').onclick = () => map.fit(run.snapshot().villages.length);
 if (DEV) {
-  $('ff10').onclick = () => { run.fastForwardYears(10); map.dirty = true; drawDetail(); };
-  $('ff100').onclick = () => { run.fastForwardYears(100); map.dirty = true; drawDetail(); };
+  $('ff10').onclick = () => { run.fastForwardYears(10); map.dirty = true; drawBar(true); drawDetail(); };
+  $('ff100').onclick = () => { run.fastForwardYears(100); map.dirty = true; drawBar(true); drawDetail(); };
 }
 
 addEventListener('resize', () => { map.resize(); map.fit(run.snapshot().villages.length); });
