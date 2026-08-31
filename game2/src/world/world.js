@@ -289,7 +289,9 @@ export class World {
           p += NEAR.spreadP(this.near.dist[v * NEAR.NEAR + k], cross[v * NEAR.NEAR + k]);
         }
         return p;
-      });
+      },
+      // ★ #17 §7-2：開墾の代償。未開の区画が減るほど疫病と火災が増える
+      this.land ? (v) => WK.densityMul(WK.wildRatio(this.land, this.map.L, v)) : null);
     if (dz.dead > 0) {
       this.counters.died += dz.dead;
       this.counters.byCause[DIS9.DEATH_ACCIDENT] += dz.dead;

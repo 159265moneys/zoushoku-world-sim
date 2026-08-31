@@ -94,7 +94,10 @@ const ID_CLEAN = S.needId('潔癖');
  * @param importP (v) → その村へ**隣の村から飛んでくる**月率（#11-F）。無ければ0
  * @returns {{storms, plagues, fires, beasts, dead, deadList}}
  */
-export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
+/**
+ * @param wildMul 村ID → §7-2 の未開率の倍率（**開墾の代償**）。無ければ 1.00 のまま
+ */
+export function disasterMonth(P, V, H, tick, rng, onX, importP = null, wildMul = null) {
   const A = P.a, VA = V.a, nv = VA.len;
   const old12 = (i) => (A.ageMonths[i] / 12 | 0) >= X_AGE;   // ★「村の12歳以上」
   const month = C.monthOf(tick) % C.MONTHS_PER_YEAR;
@@ -158,7 +161,18 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
 
     // ---- 疫病 ----。人口密度 ×（100 − 潔癖の平均）÷100 × 基準
     //   ＋ #11-F：隣の村で流行っていれば、そこから飛んでくる
-    const pPlague = (n / 100) * ((100 - cleanAvg) / 100) * PLAGUE_BASE / 12
+    // ★★ #17 §7-2 ── **開墾の代償。**★★
+    //   > 「密度」の分母を、その村の13区画のうち**未開のまま残っている区画数**
+    //   >   （平野・荒地・樹齢<8の森林）に置き換える
+    //   >   未開率 f = 未開区画数/13 ／ 倍率 = clamp(0.6, 1.8, 1 + 0.8×(0.231−f)/0.231)
+    //   表：未開0→**1.80**／1→1.53／**3→1.00（三圃の既定＝いまの基準値）**／6→0.60
+    //   ★ 正典3-7 の「100人の村で20年に1回」は**未開3区画のときの値**なので、
+    //     PLAGUE_BASE / FIRE_PER_YEAR は校正し直さなくてよい（倍率1.00の点がそこ）。
+    //   ★ 掛けるのは**その村が自分で生む項だけ。**#11-F の飛び火（importP）には掛けない
+    //     ── 正典は「密度の分母を置き換える」としか書いておらず、飛び火は別の機構。
+    //   ★ 乱数の呼び出し回数は1回も変わらない（確率に掛けるだけ）
+    const wm = wildMul ? wildMul(v) : 1;
+    const pPlague = (n / 100) * ((100 - cleanAvg) / 100) * PLAGUE_BASE / 12 * wm
                   + (importP ? importP(v) : 0);
     if (rPlague < pPlague) {
       plagues++;
@@ -172,7 +186,7 @@ export function disasterMonth(P, V, H, tick, rng, onX, importP = null) {
     }
 
     // ---- 火災 ----
-    const pFire = (VA.houses[v] / 30) * (FIRE_PER_YEAR / 12);
+    const pFire = (VA.houses[v] / 30) * (FIRE_PER_YEAR / 12) * wm;   // ★ §7-2 の代償
     if (rFire < pFire) {
       fires++;
       VA.food[v] *= (1 - FIRE_STORE);
