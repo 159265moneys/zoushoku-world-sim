@@ -830,6 +830,18 @@ export class World {
     //       6枚まで＋先回り 下の値 ／ 6枚までのみ 381 ／ 先回りのみ 288
     const want = (v) => {
       const fields = WK.countRole(this.land, L, v, PARCEL.R.FIELD);
+      // ★★ 2026-09-01：**洪水が片道だった。**（第2回の精査の指摘）
+      //   治す道が四圃（+0.5/年）だけで、四圃には畑8枚が要る。届かない村は洪水2発で
+      //   `fertMul(0)=0` ＝ 畑の産出が厳密に0になり、**150年走査で 9.5〜21.2% の村が
+      //   「治せない村」**になっていた。正典 §4-5 は回復路をもう1本書いている ──
+      //   **牧草地 +2/年**（§9-3 の抜け道1の塞ぎも「牧草地の +2/年 で地力8に戻すのに4年」）。
+      //   → **8枚に届かない村は、いちばん傷んだ畑を牧草地にして治し、治ったら畑へ戻す。**
+      if (fields < WK.ROTATION[WK.ROT_FOUR].need &&
+          (this.land.fert?.[v] ?? LAND.FERT_BASE) < LAND.FERT_BASE * 0.5)
+        return PARCEL.R.PASTURE;
+      // 治り終えた牧草地は畑へ戻す（地力が基準に戻っていたら）
+      if (WK.countRole(this.land, L, v, PARCEL.R.PASTURE) > 0 &&
+          (this.land.fert?.[v] ?? 0) >= LAND.FERT_BASE) return PARCEL.R.FIELD;
       if (fields < 6) return PARCEL.R.FIELD;
       // ★ 土地が傷んでいるなら、**四圃を回せる8枚まで開く**（§4-4「四圃は土地を治す道具」）。
       //   四圃は +0.5/年 で、洪水の期待損 0.04×4 ＝ 0.16/年 を大きく上回る。

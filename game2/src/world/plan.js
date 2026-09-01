@@ -116,13 +116,27 @@ export class Plans {
     return due;
   }
 
-  /** 上限を超えたぶんは古いものから実行される（止められない） */
+  /**
+   * 上限を超えたぶんは古いものから実行される（止められない）。
+   * ★★ 2026-09-01（第2回の精査で発見）：**上限を世界でんぶ1本にしていた。**★★
+   *   正典3916 は「待ち行列：**段ごと・箱ごと・級ごと**に上限（軽50／重180）」。
+   *   1本にしていたので**役職者が50人を超えた瞬間に世界じゅうが溢れ**、
+   *   `plansOverflow` が 0 → 14,880件 になっていた。**箱ごとに数える。**
+   */
   overflow(level) {
-    const same = this.q.filter((p) => !p.done && p.level === level);
-    const over = same.length - QUEUE_CAP[level];
-    if (over <= 0) return 0;
-    same.sort((a, b) => a.due - b.due || a.id - b.id);
-    for (let k = 0; k < over; k++) same[k].due = -1;      // すぐ実行
+    const byBox = new Map();
+    for (const p of this.q) {
+      if (p.done || p.level !== level) continue;
+      (byBox.get(p.box) ?? byBox.set(p.box, []).get(p.box)).push(p);
+    }
+    let over = 0;
+    for (const same of byBox.values()) {
+      const n = same.length - QUEUE_CAP[level];
+      if (n <= 0) continue;
+      same.sort((a, b) => a.due - b.due || a.id - b.id);
+      for (let k = 0; k < n; k++) same[k].due = -1;       // すぐ実行
+      over += n;
+    }
     return over;
   }
 
