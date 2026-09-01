@@ -5,12 +5,11 @@
       "name": "zoushoku",
       "runtimeExecutable": "python3",
       "runtimeArgs": [
-        "-m",
-        "http.server",
-        "8837"
+        "-c",
+        "import http.server as h, socketserver\nclass H(h.SimpleHTTPRequestHandler):\n    def end_headers(self):\n        self.send_header('Cache-Control', 'no-store, must-revalidate')\n        self.send_header('Pragma', 'no-cache')\n        super().end_headers()\nsocketserver.TCPServer.allow_reuse_address = True\nsocketserver.TCPServer(('', 8837), H).serve_forever()\n"
       ],
       "port": 8837,
-      "url": "http://localhost:8837"
+      "url": "http://127.0.0.1:8837"
     }
   ]
 }

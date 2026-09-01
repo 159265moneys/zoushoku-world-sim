@@ -46,6 +46,7 @@ import * as FAC from './faction.js';     // 派閥（正典3-3）
 import * as NEAR from './near.js';
 import * as WK from './works.js';        // 工事（#17 §4-2/§4-3）
 import * as SCOUT from './scout.js';     // 斥候（#17 §6-8・正典9540）
+import { Chronicle, EV, NO_VILLAGE16 } from './chronicle.js';   // 年代記と因果の台座（正典3-9）
 import * as PARCEL from './parcel.js';  // 区画の役割16種（#17 §4-1）
 import * as LAND from './land.js';      // 区画の定員（CAP_FIELD）       // 近い順3村（#11-D・#11-F）
 import * as PLAN from './plan.js';       // 具申と差し止め（#14）
@@ -100,6 +101,11 @@ export class World {
     this.plans = new PLAN.Plans();                  // 予定の待ち行列（#14）
     this.works = new WK.Works();                    // 工事キュー（#17 §4-3・村ごと同時1件）
     this.scouts = new SCOUT.Scouts();               // 斥候（#17 §6-8）
+    // ★ 年代記と因果の台座（正典3-9）。**先に作るのは UI ではなくデータ層。**
+    //   追記型。何も捨てない。真の原因（cause）と公表された帰属（told）を別の欄で持つ
+    this.chron = new Chronicle(256);
+    // ★ 村ごとの「直近の災いの事件ID」。産出低下と恨みの**真の原因**をここから引く
+    this.lastBlow = [];
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
     this.tick = 0;
     this.people = new People(opts.cap ?? 256);
@@ -320,6 +326,15 @@ export class World {
     this.counters.storms += dz.storms; this.counters.plagues += dz.plagues;
     this.counters.fires += dz.fires;   this.counters.beasts += dz.beasts;
     this.counters.floods += dz.floods;
+    // ---- 年代記（正典3-9）。★ 厄災は「年代記を開く動機」の芯 ----
+    for (const [n, k] of [[dz.plagues, EV.疫病], [dz.storms, EV.災害],
+                          [dz.fires, EV.災害], [dz.floods, EV.災害]]) {
+      if (n > 0) {
+        const id = this.chron.add(t, k, { x: n });
+        // ★ その月に族が立った村へ「直近の災い」として結ぶ。産出低下の**真の原因**になる
+        for (let v = 0; v < V.a.len; v++) if (V.a.alive[v] && V.a.kin[v]) this.lastBlow[v] = id;
+      }
+    }
     if (dz.floods && this.once('flood')) this.note('洪水', '川が溢れ、蔵の3割と地力が流れた');
     if (dz.storms && this.once('storm')) this.note('嵐', '蔵が3割持っていかれた');
     if (dz.plagues && this.once('plague')) this.note('疫病', '村の4分の1が伏せた');
@@ -365,6 +380,8 @@ export class World {
     const off = OFF.officeMonth(P, V, H, t);
     this.counters.seated += off.seated;
     this.counters.ennobled += off.ennobled;
+    if (off.seated > 0) this.chron.add(t, EV.任命, { x: off.seated });
+    if (off.ennobled > 0) this.chron.add(t, EV.叙爵, { x: off.ennobled });
     if (off.seated > 0 && this.once('headman')) this.note('最初の村長', '10軒目が建った');
 
     // ---- 森が育つ（#17 §4-6：植えた月に0、毎月 +0.25、60ヶ月で樹齢15）----
@@ -452,8 +469,27 @@ export class World {
       },
       this.cards.value('蔵の上限'));   // ★ 二重定義をやめ、カードの実値を渡す（#18 §1）
     for (const r of food) {
-      if (r && r.shortage > 0 && this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');
+      // ★ 引き金は `shortage`（蔵を食い尽くしてから立つ）ではなく **産出 < 消費**。
+      //   正典3-9 の言葉どおり「**作る量が食べる量に届かない**」＝ 柱6 の唯一の崩壊条件そのもの。
+      //   蔵があるうちは死なないが、**そこが「なぜか産出が落ちている」の始まり**
+      // ★ **冬は除く。**冬は畑の季節係数が0で産出が落ちるのが当たり前（§5-3）。
+      //   正典が言う「**なぜか**産出が落ちている」は、**そうでない月に落ちること**
+      if (!r || r.winter || !(r.produced < r.demand)) continue;
+      // ★★ 正典3-9：**産出率に出所を持たせるのは、それが唯一の崩壊条件だから（柱7）。**
+      //   「なぜか産出が落ちている」は**不作為・横領・隠匿・疫病・災害が全部集まる場所**であり、
+      //   **プレイヤーが年代記を開く動機の一番手**になる。
+      //   → 村が「作る量 < 食べる量」に落ちた月を、**直近の災いを真の原因として**記録する。
+      //     ★ 同じ村で続くあいだは1件にまとめる（追記型だが、毎月同じ行は増やさない）
+      const v = r.village ?? NO_VILLAGE16;
+      if (this._shortSince?.[v] !== 1) {
+        (this._shortSince ??= [])[v] = 1;
+        this.chron.add(t, EV.産出低下,
+          { village: v, cause: this.lastBlow[v], x: r.produced - r.demand });
+      }
+      if (this.once('hunger')) this.note('最初の飢え', '作る量が食べる量に届かない');
     }
+    // 立ち直った村の印を落とす（次に落ちたらまた1件立つ）
+    for (const r of food) if (r && r.produced >= r.demand && this._shortSince) this._shortSince[r.village] = 0;
 
     // ---- 族の判定（#9-D）。★ ⑤の直後。蔵と飢えが確定してから。1月1族 ----
     //   ここで村ごとの死者率 r（#9-E）も確定する。宗派（#8）が入る日にそのまま読む
@@ -475,6 +511,9 @@ export class World {
       this.counters.warWon += wr.won;
       this.counters.warByStat += wr.byStat; this.counters.warByLuck += wr.byLuck;
       this.counters.byCause[8] += wr.dead;
+      // ★ 戦は国の年代記。戦死はここから伸びる恨みの**真の原因**になる
+      this.warEvent = this.chron.add(t, EV.戦闘,
+        { x: wr.dead, cause: this.warEvent ?? undefined });
       // ★ 数えるのは**戦死した者だけ**。生きている全員を数えると村の台帳が壊れる
       for (const i of wr.deadList) if (P.a.village[i] !== 0xFFFF) this.cal.count(P.a.village[i], 8);
       this.counters.mourned += COND.mourn(P, wr.deadList);   // 戦死も「喪」の入力になる
@@ -514,6 +553,7 @@ export class World {
           this.inq.alive, this.foreignSect);
         this.counters.captives += cp.taken;
         this.counters.refused += cp.refused;
+        if (cp.taken > 0) this.chron.add(t, EV.捕虜, { x: cp.taken, cause: this.warEvent });
         if (cp.taken && this.once('captive')) this.note('最初のよそ者', '血。混ざる');
       }
       if (this.once('war')) this.note('最初の戦', `団結が折れる。戦死は戻らない（${wr.won ? '勝ち' : '負け'}・戦死${wr.dead}）`);
@@ -534,6 +574,11 @@ export class World {
       (v) => this.script.kinAt(v, t));
     if (fnd.founded) {
       this.counters.sectsFounded += fnd.founded;
+      // ★ 宗派の発起は国の年代記。**真の原因はその村を殴った厄災**（#9-D の族）
+      for (const id of fnd.ids) {
+        this.chron.add(t, EV.宗教,
+          { village: this.sects.a.village[id], actor: this.sects.a.founder[id], x: id });
+      }
       if (this.once('sect')) {
         const id = fnd.ids[0], SA = this.sects.a;
         this.note('最初の宗教', `起源＝${KIN_NAMES[SA.origin[id]]}・村${SA.village[id]}`);
@@ -558,6 +603,7 @@ export class World {
       this.counters.warned += hz.warned; this.counters.exiled += hz.exiled;
       this.counters.burned += hz.burned; this.counters.misfired += hz.misfired;
       this.counters.byCause[9] += hz.burned;
+      if (hz.burned + hz.exiled > 0) this.chron.add(t, EV.粛清, { x: hz.burned + hz.exiled });
       if (hz.burned && this.once('burn')) this.note('最初の焚刑', '焼く教団は、焼かれた者から生まれる');
       if (this.once('inquisition')) this.note('異端審問会', `正統＝宗派${hz.star}・厳格さ${hz.hs.toFixed(0)}・激しさ${hz.hv.toFixed(0)}`);
     }
@@ -617,6 +663,7 @@ export class World {
         };
         const fy = WK.fertYear(L, this.land, V, rotOf, C.yearOf(t));
         this.counters.fertRuined += fy.ruined;
+        if (fy.ruined > 0) this.chron.add(t, EV.開墾, { x: -fy.ruined });   // 畑が荒地へ落ちた
         if (fy.ruined && this.once('ruined')) this.note('畑が死んだ', '地力が0になり荒地へ落ちた');
       }
       // ★ その年の作柄を引く（正典3-7）。厄災のストリーム（6番）なので他の11本は動かない
@@ -872,6 +919,7 @@ export class World {
         this.land.seedParcels(nv, SPLIT_FIELDS);   // 拠点地1枚＋畑（B-39）
         this.moveHouses(v, nv);
         this.counters.split++;
+        this.chron.add(this.tick, EV.分村, { village: nv, x: spot.r });
         this.note('分村', `${spot.r.toFixed(1)}里 先に村ができた（畑の定員${this.land.fieldCap[nv]}人月）`);
       } else {
         const nv = V.create(this.tick, this.opts.where ?? WHERE_FRONTIER, 0);

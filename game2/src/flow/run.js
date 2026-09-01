@@ -247,6 +247,27 @@ export class Run {
   /** その速さでの「1ヶ月＝何実秒か」。★ UI が式を持ち直すと A-11 の破棄済みの式が復活する */
   secondsPerMonthAt(speed) { return C.realSecondsPerMonth(speed); }
 
+  // ---- 年代記（正典3-9）。★ 5段。**世界に1本の年代記を作らない** ----------
+  /**
+   * いま見るべき年代記を返す。**選んでいる個体があればその人の一生、
+   * 無ければ国の出来事**（正典3-9「クリックしてパネルで開く」）。
+   * @returns {{scope:string, rows:object[]}}
+   */
+  chronicle(limit = 40) {
+    const w = this.world, c = w.chron;
+    if (this.selected >= 0 && this.selected < w.people.a.len) {
+      const rows = c.ofPerson(this.selected, limit);
+      if (rows.length) return { scope: `この人の一生（#${this.selected}）`, rows };
+      const v = w.people.a.village[this.selected];
+      if (v !== 0xFFFF) return { scope: `村${v} の歴史`, rows: c.ofVillage(v, limit) };
+    }
+    return { scope: '国の出来事', rows: c.ofNation(limit) };
+  }
+  /** ★ 真の原因をたどる（システムだけが知っている列） */
+  traceCause(id) { return this.world.chron.traceCause(id).map((k) => this.world.chron.row(k)); }
+  /** 正史を確定させる（正典3-9「決める」の一種。**新しい動詞は作らない**） */
+  tellTruth(id, told) { this.world.chron.tell(id, told); }
+
   // ---- 方針カード（#18 §1）。★ オーナーが触る唯一の口 ----------------------
   /** 国のつまみの一覧。段・実数・注記を UI が読める形にして返す */
   nationCards() {

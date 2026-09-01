@@ -234,7 +234,7 @@ function drawDetail() {
       </table>
       <p class="hint">箱1つ＝1家系。行をクリックすると、その一体が見える</p>`;
     for (const tr of box.querySelectorAll('.fam tr')) {
-      tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); map.dirty = true; };
+      tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); drawChronicle(); map.dirty = true; };
     }
     return;
   }
@@ -311,7 +311,7 @@ function drawDetail() {
   }
 
   for (const a of box.querySelectorAll('a[data-i]')) {
-    a.onclick = e => { e.preventDefault(); run.select(Number(a.dataset.i)); drawDetail(); map.dirty = true; };
+    a.onclick = e => { e.preventDefault(); run.select(Number(a.dataset.i)); drawDetail(); drawChronicle(); map.dirty = true; };
   }
 }
 function link(label, i) { return `${label}<a href="#" data-i="${i}">${i}番</a>`; }
@@ -326,7 +326,7 @@ function link(label, i) { return `${label}<a href="#" data-i="${i}">${i}番</a>`
 function showEmpty(box) {
   box.innerHTML = empty();
   for (const tr of box.querySelectorAll('.roster tr[data-i]')) {
-    tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); map.dirty = true; };
+    tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); drawChronicle(); map.dirty = true; };
   }
 }
 
@@ -376,6 +376,33 @@ function empty() {
 }
 
 // ---- 年代記（初めて起きたことだけが載る・A-10） -----------------------------
+// ---- 年代記（正典3-9）。★ 5段。選んでいるものに応じて中身が変わる -------
+// > **世界に1本の年代記を作らない。ひとつずつが自分の分を持つ。**
+// > **クリックしてパネルで開く。**個体を押せばその人の一生、村を押せばその村の歴史。
+// ★ **真の原因と、公表された帰属を、別の欄として持つ。これが要点。**
+//   帰属が「未公表」の行は、押すと**真の原因の鎖**が出る（システムだけが知っている列）
+let openCause = -1;
+function drawChronicle() {
+  const box = $('chronreal');
+  if (!box) return;
+  const { scope, rows } = run.chronicle(40);
+  const head = `<div class="cscope">${scope}<small>${rows.length}件</small></div>`;
+  box.innerHTML = head + (rows.length ? rows.map((r) => {
+    const where = r.village >= 0 ? `村${r.village}` : '国';
+    const told = r.told === 0 ? '' : `<u class="${r.exposed ? 'bad' : ''}">「${r.toldName}」${r.exposed ? '・暴かれた' : ''}</u>`;
+    const chain = (openCause === r.id && r.cause >= 0)
+      ? `<div class="cchain">${run.traceCause(r.id).slice(1).map((p) =>
+          `↑ ${p.year}年${p.month}月　${p.kindName}（${p.village >= 0 ? '村' + p.village : '国'}）`).join('<br>')}</div>`
+      : '';
+    return `<div class="crow${r.cause >= 0 ? ' has' : ''}" data-id="${r.id}">`
+      + `<b>${r.year}年${r.month}月</b> ${r.kindName}<i>${where}</i>${told}`
+      + (r.cause >= 0 ? '<span class="ctrace">因</span>' : '') + chain + '</div>';
+  }).join('') : '<div class="dim">まだ何も起きていない</div>');
+  for (const el of box.querySelectorAll('.crow.has')) {
+    el.onclick = () => { const id = Number(el.dataset.id); openCause = openCause === id ? -1 : id; drawChronicle(); };
+  }
+}
+
 function addNotice(n) {
   const ul = $('chronlist');
   const li = document.createElement('li');
@@ -445,6 +472,7 @@ function frame() {
     if (m !== lastDetailMonth) {
       lastDetailMonth = m;
       if (run.selected >= 0 || run.selectedHouse >= 0) drawDetail();
+      drawChronicle();   // ★ 年代記（正典3-9）。月が変わったときだけ引き直す
     }
   }
   requestAnimationFrame(frame);
@@ -481,6 +509,7 @@ map.resize();
 map.fit(run.snapshot().villages.length);
 drawBar(true);
 drawCards();   // ★ 方針カード（#18 §1）を最初に描く
+drawChronicle();   // ★ 年代記（正典3-9）
 drawDetail();
 markSpeeds();
 for (const n of run.notices) addNotice(n);
