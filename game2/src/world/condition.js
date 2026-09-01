@@ -495,14 +495,21 @@ export const HURT_TO_SCAR = 0.60, SICK_TO_SCAR = 0.20, HARD_BIRTH_TO_SCAR = 0.25
  *     「厄災は村ごとに必ず5回引く」が世界の人数と無関係に保たれる。
  * @param r 呼ぶ側が引いた乱数（0..1）。**当たらなくても必ず引かれている**
  */
-export function healMonth(P, i, r) {
+export function healMonth(P, i, r, hasHealer = false) {
   const A = P.a;
   if (!A.hurtStage[i]) return 0;
   if (A.hurtHeal[i] > 0) A.hurtHeal[i]--;
   if (A.hurtHeal[i] > 0) return 0;
   const w = A.hurtStage[i], part = A.hurtPart[i] || PART_ARM;
   A.hurtStage[i] = 0; A.hurtPart[i] = 0;
-  if (w >= 3 && r < HURT_TO_SCAR) { addScar(P, i, part, Math.max(1, w - 1)); return 1; }
+  // ★★ 2026-09-01（第2回の精査で発見）：**`w >= 3` しか見ていなかった。**★★
+  //   正典4724 は「**段3、または手当ての担い手がいない村で治癒**」の**2条件**。
+  //   だが `hurtStage` に **3 を書く行がコード中に1つも無い**（嵐・獣害・熊・戦は1と2だけ）ので、
+  //   **`addScar` も `HURT_TO_SCAR` も `counters.scarred` も死んだコード**になっていた。
+  //   ＝ 予備(11)から引いた乱数が世界のどこにも届かず、ストリームの検査が空撃ちしていた。
+  //   → **生きているのは第2条件のほう。**手当ての担い手（医の職）はまだ無いので、
+  //     いまは全村が「担い手のいない村」＝常に引く。職が生えたら `hasHealer` を渡す
+  if ((w >= 3 || !hasHealer) && r < HURT_TO_SCAR) { addScar(P, i, part, Math.max(1, w - 1)); return 1; }
   return 0;
 }
 
@@ -521,6 +528,8 @@ export function conditionMonth(P, tick, loadOf, rng) {
     if (!A.alive[i]) continue;
     const y = (A.ageMonths[i] / 12) | 0;
     const rHeal = rng.next();          // ★ 掟：当たらなくても必ず1回。分岐の外で引く
+    // ★ 憤怒の「直近12ヶ月」の窓を1つ送る（#5 §5025）。12bit だけ使う
+    A.warRing[i] = (A.warRing[i] << 1) & 0x0FFF;
     // 病臥は非番と同じ（負荷0）
     // 病の治癒（B-26）。★ 乱数を引かない。段が下がるのではなく、治ったら消える
     if (A.sickStage[i] > 0) {

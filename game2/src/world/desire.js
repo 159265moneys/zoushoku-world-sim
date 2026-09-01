@@ -293,7 +293,10 @@ export function desireMonth(P, V, tick, opts) {
     //     （`kills` は戦果であって狩りではない。混ぜない）。
     let liveGrudge = false;
     for (let k = 0; k <= DIS.D_OUT; k++) if (A.grudge[k][i] > 0) { liveGrudge = true; break; }
-    u[WRATH] = unmetWrath(A.battles[i], 0, 0, 0, liveGrudge);
+    // ★ 2026-09-01：**通算ではなく直近12ヶ月**（#5 §5025「← 直近12ヶ月」）。
+    //   通算だと生涯4戦で永久に満充足になる（第2回の精査の指摘）
+    let w12 = 0; for (let b = A.warRing[i]; b; b >>= 1) w12 += b & 1;
+    u[WRATH] = unmetWrath(w12, 0, 0, 0, liveGrudge);
     const bore12 = A.lastBirth[i] >= 0 && tick - A.lastBirth[i] < 360;
     u[LUST] = unmetLust(A.spouse[i] !== NO_ONE, bore12 || (A.state[i] & ST_PREGNANT) !== 0);
     u[SLOTH] = unmetSloth(workDaysOf(i));

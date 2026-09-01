@@ -298,6 +298,7 @@ export function warMonth(P, pop, tick, rng, onFamilyDeath, levyShare = NaN) {
   for (const u of home.units) {
     const i = u.id;
     if (A.battles[i] < 255) A.battles[i]++;
+    A.warRing[i] |= 1;                 // ★ 直近12ヶ月の窓に「この月は交戦した」を立てる
     if (u.dead) {
       // ★ 2026-08-31：**戦死した者の討取を世界の台帳に入れる。**
       //   本人はもう叙爵されないので `A.kills` には積まないが、
