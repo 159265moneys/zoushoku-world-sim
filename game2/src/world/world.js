@@ -26,6 +26,7 @@ import {
   AREA_YIELD_STATS, Q_DIVISOR,
   drawHarvest, STORE_PER_HOUSE, HARVEST_HARSH, HARVEST_POOR,
   BEAR_HURT, BEAR_DEAD, MID_HURT,          // 熊と鹿猪の負傷（#17 §5-2）
+  AREA_SCOUT,                              // 斥候の職域（#17 §6-8）
 } from './village.js';
 import { growMonth, seedEffortForAge } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
@@ -390,7 +391,7 @@ export class World {
             if (v >= V.a.len || V.a.pop[v] <= bestPop) continue;
             best = i; bestPop = V.a.pop[v];
           }
-          if (best >= 0) P.a.job[best] = AREA_HOME;   // ★ 産出に出ない（正典9540）
+          if (best >= 0) P.a.job[best] = AREA_SCOUT;   // ★ 産出に出ない（正典9540）。専用の職域
           return best;
         },
         () => {   // 出発点：いちばん人口の多い村（＝豊かな村しか探索できない）
@@ -400,8 +401,16 @@ export class World {
           return [(this.land.px[bv] / PPL) | 0, (this.land.py[bv] / PPL) | 0];
         },
         (i) => P.a.alive[i],
-        (i) => { P.kill(i, t, SCOUT.DEATH_ACCIDENT); this.counters.died++;
-                 this.counters.byCause[SCOUT.DEATH_ACCIDENT]++; this.counters.scoutsLost++; });
+        (i) => {
+          // ★ 2026-09-01：**喪と村の死因台帳を通す。**通さないと「誰も悲しまない死」になり、
+          //   #9-D の族の判定にも入らない（第2回の精査の指摘）
+          const v = P.a.village[i];
+          P.kill(i, t, SCOUT.DEATH_ACCIDENT);
+          this.counters.died++; this.counters.byCause[SCOUT.DEATH_ACCIDENT]++; this.counters.scoutsLost++;
+          if (v !== 0xFFFF) this.cal.count(v, SCOUT.DEATH_ACCIDENT);
+          this.counters.mourned += COND.mourn(P, [i]);
+        },
+        (i) => { if (P.a.alive[i]) P.a.job[i] = AREA_HOME; });   // ★ 帰ったら配役へ戻す
       this.counters.scoutTiles = this.scouts.tiles;
       this.counters.scoutsOut = sc.out;
     }
@@ -606,7 +615,7 @@ export class World {
           this.land.capField[v] = WK.ROTATION[r].cap;
           return r;
         };
-        const fy = WK.fertYear(L, this.land, V, rotOf);
+        const fy = WK.fertYear(L, this.land, V, rotOf, C.yearOf(t));
         this.counters.fertRuined += fy.ruined;
         if (fy.ruined && this.once('ruined')) this.note('畑が死んだ', '地力が0になり荒地へ落ちた');
       }

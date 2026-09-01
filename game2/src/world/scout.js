@@ -45,7 +45,7 @@ const DIRS = [[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
  * @param homeOf () → 出発点 [tx, ty]
  * @param onDead (i) → 死んだ斥候の始末（world 側が P.kill する）
  */
-export function scoutMonth(sc, fog, rng, want, workers, pick, homeOf, alive, onDead) {
+export function scoutMonth(sc, fog, rng, want, workers, pick, homeOf, alive, onDead, onReturn = null) {
   // ---- 死んでいる／村から消えた者を落とす ----
   for (let k = sc.who.length - 1; k >= 0; k--) {
     if (!alive(sc.who[k])) { drop(sc, k); }
@@ -78,7 +78,7 @@ export function scoutMonth(sc, fog, rng, want, workers, pick, homeOf, alive, onD
     const h = homeOf();
     if (h) {
       const dx = sc.x[k] - h[0], dy = sc.y[k] - h[1];
-      if (dx * dx + dy * dy > SCOUT_RANGE * SCOUT_RANGE) drop(sc, k);
+      if (dx * dx + dy * dy > SCOUT_RANGE * SCOUT_RANGE) { if (onReturn) onReturn(sc.who[k]); drop(sc, k); }
     }
   }
   return { out: sc.who.length, sent: sc.sent, lost: sc.lost };

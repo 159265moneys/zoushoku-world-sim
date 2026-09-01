@@ -3629,7 +3629,10 @@ check('★ src が Node の顔をしていない（process/require/__dirname を
         const t = line.trim();
         if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) continue;
         if (/typeof\s+process\s*!==\s*['"]undefined['"]/.test(line)) continue;
-        if (/\bprocess\s*\.|\brequire\s*\(|\b__dirname\b|\b__filename\b/.test(line))
+        // ★★ 2026-09-01（第2回の精査で発見）：**`node:fs` の import と `Buffer` が
+        //   静的・動的の両方をすり抜けていた。**（`process['env']` は動的が救う）
+        //   ブラウザに無いものを名前で全部並べる
+        if (/\bprocess\s*[.[]|\brequire\s*\(|\b__dirname\b|\b__filename\b|\bBuffer\b|from\s*['"]node:|import\s*\(\s*['"]node:|\bglobal\s*\./.test(line))
           bad.push(`${f.slice(f.indexOf('src/'))}: ${t.slice(0, 60)}`);
       }
     }
@@ -3638,9 +3641,41 @@ check('★ src が Node の顔をしていない（process/require/__dirname を
   return bad.length ? bad.slice(0, 3).join(' / ') : true;
 });
 
-check('★ 入口が process 無しで評価できる（ブラウザで頁が黙って落ちない）', () => {
-  const entry = join(GAME2, 'src/flow/run.js').replace(/\\/g, '/');
-  const code = `delete globalThis.process; await import('file://${entry}');`;
+check('★ core/world/flow の全モジュールが process 無しで評価できる', () => {
+  // ★★ 2026-09-01（第2回の精査で発見）：**入口を1つだけ import していた。**
+  //   頁が実際に読み込むのは `ui/main.js` で、`run.js` は `ui/` を1つも import しない。
+  //   ＝ `ui/main.js` に `node:fs` を1行足すと 232/232 緑のまま画面が真っ黒になった。
+  //   → **入口の選び方に依存しないよう、src の .js を1つずつ評価する。**
+  const files = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const f = join(dir, e.name);
+      if (e.isDirectory()) walk(f);
+      else if (e.name.endsWith('.js')) files.push(f.replace(/\\/g, '/'));
+    }
+  };
+  // ★ 動的に評価できるのは **DOM を持たない層**（core / world / flow）まで。
+  //   `ui/*.js` は本物の canvas と DOM が要るので Node では最後まで評価できない
+  //   ── そちらは**静的検査が全ファイルを見て**押さえている
+  //   （`node:fs` と `Buffer` を仕込んで赤くなることを確認済み・2026-09-01）。
+  for (const d of ['src/core', 'src/world', 'src/flow']) walk(join(GAME2, d));
+  if (files.length < 20) return `評価できる .js が ${files.length} 本しか見つからない`;
+  // ★ ブラウザ側の器は最小限だけ与える（`ui/*.js` は `location`/`document` を使うのが**正しい**）。
+  //   見たいのは「**Node にしか無いものに触っていないか**」の1点だけ
+  const stub = `
+    const el = new Proxy(function(){}, { get: (t, k) => (k === 'style' || k === 'dataset' || k === 'classList'
+      ? new Proxy({}, { get: () => () => {} }) : (k === 'children' ? [] : el)), set: () => true, apply: () => el });
+    globalThis.document = new Proxy({}, { get: () => () => el });
+    globalThis.location = { search: '', href: '', hash: '' };
+    globalThis.window = globalThis;
+    try { globalThis.navigator = { userAgent: '' }; } catch { /* Node 26 では読み取り専用。あるなら流用する */ }
+    try { globalThis.performance = globalThis.performance ?? { now: () => 0 }; } catch {}
+    globalThis.addEventListener = () => {}; globalThis.removeEventListener = () => {};
+    globalThis.requestAnimationFrame = () => 0; globalThis.setInterval = () => 0;
+    globalThis.devicePixelRatio = 1;
+    delete globalThis.process;
+  `;
+  const code = stub + '\n' + files.map((f) => `await import('file://${f}');`).join('\n');
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
   if (r.status !== 0)
     return 'process を消すと落ちる：' + (r.stderr || '').split('\n').filter(Boolean).slice(0, 2).join(' / ');

@@ -262,7 +262,16 @@ export function rotationOf(land, L, v, want = ROT_THREE) {
  * @returns {{changed:number, ruined:number}} ruined ＝ 荒地へ落ちた区画
  */
 export const FERT_YEAR = { [R.FIBER]: -3, [R.GARDEN]: +1, [R.PASTURE]: +2, [R.ORCHARD]: 0 };
-export function fertYear(L, land, V, rotOf) {
+/**
+ * ★★ 2026-09-01（第2回の精査で発見）：**±0.5 が整数丸めで消えていた。**★★
+ *   地力は4bitの整数なので `Math.round(整数 ± 0.5)` は JS の仕様で**常に上へ**倒れる：
+ *     二圃（−0.5）… 8→8→8→8… **1ミリも減らない**（正典の「16年もつ」が不成立）
+ *     四圃（+0.5）… 9→10→11… **+1/年 ＝ 表の2倍**、7年で天井
+ *   → **半端な刻みは「2年に1度 ±1」で出す。**平均は厳密に ±0.5/年 になり、
+ *     整数のまま持てる（正典 §2-4「状態値 0..15」を破らない）。
+ * @param year その年（2年周期の位相に使う）
+ */
+export function fertYear(L, land, V, rotOf, year = 0) {
   let changed = 0, ruined = 0;
   for (let v = 0; v < V.len; v++) {
     if (!V.a.alive[v]) continue;
@@ -271,7 +280,9 @@ export function fertYear(L, land, V, rotOf) {
     for (const p of land.cells[v] ?? []) {
       const role = roleOf(L, p);
       if (role < R.FIELD || role > R.PADDY) continue;
-      const d = (role === R.FIELD || role === R.PADDY) ? rot.fert : (FERT_YEAR[role] ?? 0);
+      let d = (role === R.FIELD || role === R.PADDY) ? rot.fert : (FERT_YEAR[role] ?? 0);
+      // ★ 半端な刻み（±0.5）は2年に1度 ±1 として出す。平均は厳密に元の値
+      if (d !== 0 && Math.abs(d) < 1) d = (year % 2 === 0) ? Math.sign(d) : 0;
       if (!d) continue;
       let f = stateOf(L, p) + d;
       if (f > 15) f = 15;
@@ -283,7 +294,13 @@ export function fertYear(L, land, V, rotOf) {
       }
       changed++; touched++;
     }
-    if (touched) land.recap(v);
+    // ★★ 2026-09-01（第2回の精査で発見）：**`touched` のときだけ recap していた。**★★
+    //   輪作が四圃（cap5）→三圃（cap7）へ戻る年は `fert:0` で1区画も触らないので
+    //   `recap` が呼ばれず、`fieldCap` が **cap5 のまま永久に固まって定員 −28.6%**
+    //   になっていた（30種200年で 29/30種）。**土地を治した村が代金を払い続ける。**
+    //   `capField` は毎年ここで書き換わるので、**年に1度は必ず数え直す。**
+    land.recap(v);
+    if (touched) { /* 数え直しは上で済んでいる */ }
   }
   return { changed, ruined };
 }

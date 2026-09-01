@@ -246,7 +246,7 @@ export const REP_FLED = REP.REP_EVENT.戦で逃げた;  // −20
  * 戦を1つ解いて、世界へ結果を書き戻す。★ 乱数は戦闘のストリーム（10番）だけ。
  * @returns {{fought, dead, kills, fled, won, byStat, byLuck}}
  */
-export function warMonth(P, pop, tick, rng, onFamilyDeath, levyShare = 0) {
+export function warMonth(P, pop, tick, rng, onFamilyDeath, levyShare = NaN) {
   const A = P.a;
   // ---- 掟：開戦の抽選は毎月必ず1回引く ----
   const r = rng.next();
@@ -263,8 +263,16 @@ export function warMonth(P, pop, tick, rng, onFamilyDeath, levyShare = 0) {
   }
 
   // ---- 徴兵。★ 出せるのは働き盛りの3割まで。部隊は 12〜40（旧 battle.js の規模）
-  // ★ 徴兵率は #18 §1 のカード（軍務局・既定0.20・0〜0.40）。読まずに 0.30 を焼き込んでいた
-  const share = levyShare > 0 ? levyShare : LEVY_SHARE;
+  // ★ 徴兵率は #18 §1 のカード（軍務局・既定0.20・0〜0.40）。
+  //   ★★ 2026-09-01（第2回の精査で発見）：`levyShare > 0` のガードが**段−2 の値 0 を
+  //     falsy として弾き**、焼き込みの 0.30 に落ちていた。**画面上いちばん低い札（0%）が、
+  //     5段でいちばん高い設定（30%）**になっており、単調ですらなかった
+  //     （実測：段−2 と段+1 が全8項目で完全に同一の世界）。
+  //     「蔵の上限の二重定義」とまったく同じ型の欠陥を、軍務局に新しく作っていた。
+  const share = Number.isFinite(levyShare) ? levyShare : LEVY_SHARE;
+  // ★ 札が 0% なら出さない。`FORCE_MIN` は「12人に満たない世界では戦にならない」という
+  //   世界の大きさの床であって、**オーナーが0と言ったときの床ではない**
+  if (share <= 0) return { fought: 0, dead: 0, deadList: [], kills: 0, fled: 0, won: 0, byStat: 0, byLuck: 0 };
   const n = Math.max(FORCE_MIN, Math.floor(levy.length * share));
   if (levy.length < n) return { fought: 0, dead: 0, deadList: [], kills: 0, fled: 0, won: 0, byStat: 0, byLuck: 0 };
   // ★★ **籤で引く。**添字の順にすると「いつも同じ最年長者だけが戦に出る」ことになり、
@@ -305,7 +313,7 @@ export function warMonth(P, pop, tick, rng, onFamilyDeath, levyShare = 0) {
       //   **兵の64%が逃げる**（16戦・1,760人中1,129人。逃走の機構そのものは
       //   旧 battle.js からの移植で正しい）ので、討取374 のうち**集計に残るのが169**
       //   ＝ 正典3719「戦功3回で rank1」に届く者が構造的に出ない。
-      //   オーナー裁定 B-33「**目に見えてわかる戦果**」に照らすと、
+      //   オーナーの言葉「**評判というか功績かな。特に戦果**」（起票は B-41）に照らすと、
       //   討ち取りは**事実**、評判は**名誉**。逃げた者も討ち取った事実は消えない。
       //   → `kills` は積む。**評判 +15 は付けない**（名誉は取り上げる）うえに **−20**。
       fled++;
