@@ -381,6 +381,29 @@ function empty() {
 // > **クリックしてパネルで開く。**個体を押せばその人の一生、村を押せばその村の歴史。
 // ★ **真の原因と、公表された帰属を、別の欄として持つ。これが要点。**
 //   帰属が「未公表」の行は、押すと**真の原因の鎖**が出る（システムだけが知っている列）
+// ---- 動詞「決める」（正典3-1・#14）----------------------------------------
+// > **既定＝実行。**役職者が予定を立て、猶予を過ぎたら勝手に実行される。
+// > オーナーは**猶予のあいだだけ止められる。**
+function drawDecide() {
+  const box = $('decide');
+  if (!box) return;
+  const ds = run.decisions(8);
+  box.innerHTML = ds.length ? ds.map((d) =>
+    `<div class="drow" data-id="${d.id}">`
+    + `<b>${d.levelName}</b>${d.whoName}<i>${d.village === 0xFFFF || d.village < 0 ? '国' : '村' + d.village}</i><u>あと${d.daysLeft}日</u>`
+    + `<button class="ghost db" data-h="block">止める</button>`
+    + `<button class="ghost db" data-h="pass">通す</button></div>`).join('')
+    : '<div class="dim">いま猶予のあいだの予定は無い（既定＝実行）</div>';
+  for (const el of box.querySelectorAll('.db')) {
+    el.onclick = () => {
+      const id = Number(el.closest('.drow').dataset.id);
+      run.decide(id, el.dataset.h);
+      toast('決めた', el.dataset.h === 'block' ? '止めた' : '通した');
+      drawDecide(); redrawPanels();
+    };
+  }
+}
+
 // ---- 国の段と国力（正典1-5・4-3・1-1c）------------------------------------
 // ★ 正典1-5「**転換は「解禁」ではなく「喪失」として起こす。獲得ではなく剥奪として体験させる**」
 //   ので、**得たものの一覧は作らない。失ったものだけを出す。**
@@ -422,7 +445,7 @@ function drawVerbs() {
 // ★ 右の面をまとめて描き直す。**どれか1つが落ちても他が死なない**ようにする
 //   （起動時に1つ throw すると、その後ろの面が丸ごと出なくなる）
 function redrawPanels() {
-  for (const f of [drawChronicle, drawVerbs, drawNation]) {
+  for (const f of [drawChronicle, drawVerbs, drawNation, drawDecide]) {
     try { f(); } catch (e) { console.error('面の描画で落ちた:', f.name, e); }
   }
 }

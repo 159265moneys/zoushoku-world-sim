@@ -299,3 +299,11 @@ details.all summary:hover { color: var(--ink); }
 #natbox .nr b { min-width: 1.6em; text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
 #natbox .nr u { margin-left: auto; text-decoration: none; font-variant-numeric: tabular-nums; }
 #natbox .nr.me { opacity: 1; font-weight: 600; }
+
+/* 動詞「決める」（正典#14）。★ 2026-09-01 */
+#decidebox .drow { display: flex; align-items: center; gap: 6px; padding: 2px 0; font-size: 12px;
+  border-top: 1px solid var(--line, #2a2f36); }
+#decidebox .drow b { opacity: .7; font-weight: 500; }
+#decidebox .drow i { opacity: .5; font-style: normal; }
+#decidebox .drow u { margin-left: auto; text-decoration: none; opacity: .6; font-variant-numeric: tabular-nums; }
+#decidebox .db { padding: 1px 6px; font-size: 11px; }

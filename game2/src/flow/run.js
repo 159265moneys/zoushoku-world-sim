@@ -17,6 +17,8 @@
 
 import * as C from '../core/calendar.js';
 import * as NAT from '../world/nation.js';   // 国の段と国力（正典1-5・4-3）
+import { EV as CHRON_EV, TOLD } from '../world/chronicle.js';
+const EV_DECIDE = CHRON_EV.任命;   // 「決める」は任命と同じ帯で年代記に載る
 import * as OFF from '../world/office.js';   // 身分・爵位・役職（#10）
 import * as CARD from '../world/cards.js';   // 方針カード（#18 §1）
 import * as S from '../core/stats.js';
@@ -282,6 +284,30 @@ export class Run {
       ranking: w.ranking(), foes: w.searchFoes(20), canAim: w.canAim(),
     };
   }
+
+  // ---- 動詞「決める」（正典3-1・#14）--------------------------------------
+  //   > **既定＝実行。**役職者が予定を立て、猶予を過ぎたら勝手に実行される。
+  //   > オーナーは**猶予のあいだだけ止められる**。
+  /** 猶予のあいだの予定 */
+  decisions(limit = 12) {
+    const w = this.world, A = w.people.a;
+    return w.plans.due(w.tick, limit).map((p) => ({
+      ...p,
+      whoName: `#${p.who}`,
+      levelName: p.level === 0 ? '軽' : '重',
+      post: A.post[p.who], village: p.box,
+    }));
+  }
+  /** 止める。★ 通すのは「何もしない」＝既定なので、明示の `pass` は前倒しの意味 */
+  decide(id, how) {
+    const w = this.world;
+    const ok = how === 'block' ? w.plans.block(id) : w.plans.pass(id, w.tick);
+    if (ok) { w.counters.ownerActs++;
+      w.chron.add(w.tick, EV_DECIDE, { x: how === 'block' ? -1 : 1 }); }
+    return { ok };
+  }
+  /** 正史を確定させる（正典3-9「決める」の一種。**新しい動詞は作らない**） */
+  tellHistory(id, told) { this.world.chron.tell(id, told); return { ok: true }; }
 
   /** いま選んでいる者に対して撃てる手を返す（撃てない理由つき） */
   placeOptions() {

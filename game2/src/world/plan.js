@@ -165,6 +165,29 @@ export class Plans {
   }
 
   get pending() { let n = 0; for (const p of this.q) if (!p.done) n++; return n; }
+
+  // ---- 動詞「決める」（正典3-1・#14）。★ **既定＝実行。**オーナーは猶予のあいだだけ止められる
+  /** 猶予のあいだの予定を出す（新しい順） */
+  due(tick, limit = 20) {
+    const out = [];
+    for (let k = this.q.length - 1; k >= 0 && out.length < limit; k--) {
+      const p = this.q[k];
+      if (p.done) continue;
+      out.push({ id: p.id, who: p.who, box: p.box, level: p.level, due: p.due, kind: p.kind,
+                 daysLeft: Math.max(0, p.due - tick) });
+    }
+    return out;
+  }
+  /** 止める（オーナーの専権）。★ 通すのは「何もしない」＝既定 */
+  block(id) {
+    for (const p of this.q) if (p.id === id && !p.done) { p.done = 1; p.blocked = 1; return true; }
+    return false;
+  }
+  /** 通す（いま実行する）。猶予を待たずに撃つ */
+  pass(id, tick) {
+    for (const p of this.q) if (p.id === id && !p.done) { p.due = tick - 1; return true; }
+    return false;
+  }
 }
 
 /** その役職が年に何件立てるか（正典3855） */
