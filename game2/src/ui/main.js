@@ -234,7 +234,7 @@ function drawDetail() {
       </table>
       <p class="hint">箱1つ＝1家系。行をクリックすると、その一体が見える</p>`;
     for (const tr of box.querySelectorAll('.fam tr')) {
-      tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); drawChronicle(); map.dirty = true; };
+      tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); drawChronicle(); drawVerbs(); map.dirty = true; };
     }
     return;
   }
@@ -311,7 +311,7 @@ function drawDetail() {
   }
 
   for (const a of box.querySelectorAll('a[data-i]')) {
-    a.onclick = e => { e.preventDefault(); run.select(Number(a.dataset.i)); drawDetail(); drawChronicle(); map.dirty = true; };
+    a.onclick = e => { e.preventDefault(); run.select(Number(a.dataset.i)); drawDetail(); drawChronicle(); drawVerbs(); map.dirty = true; };
   }
 }
 function link(label, i) { return `${label}<a href="#" data-i="${i}">${i}番</a>`; }
@@ -326,7 +326,7 @@ function link(label, i) { return `${label}<a href="#" data-i="${i}">${i}番</a>`
 function showEmpty(box) {
   box.innerHTML = empty();
   for (const tr of box.querySelectorAll('.roster tr[data-i]')) {
-    tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); drawChronicle(); map.dirty = true; };
+    tr.onclick = () => { run.select(Number(tr.dataset.i)); drawDetail(); drawChronicle(); drawVerbs(); map.dirty = true; };
   }
 }
 
@@ -381,6 +381,52 @@ function empty() {
 // > **クリックしてパネルで開く。**個体を押せばその人の一生、村を押せばその村の歴史。
 // ★ **真の原因と、公表された帰属を、別の欄として持つ。これが要点。**
 //   帰属が「未公表」の行は、押すと**真の原因の鎖**が出る（システムだけが知っている列）
+// ---- 国の段と国力（正典1-5・4-3・1-1c）------------------------------------
+// ★ 正典1-5「**転換は「解禁」ではなく「喪失」として起こす。獲得ではなく剥奪として体験させる**」
+//   ので、**得たものの一覧は作らない。失ったものだけを出す。**
+function drawNation() {
+  const box = $('nation');
+  if (!box) return;
+  const n = run.nation();
+  const lost = n.lost.length
+    ? `<div class="nlost"><b>失ったもの</b>${n.nlostSep ?? ''}<ul>${n.lost.map((x) => `<li>${x}</li>`).join('')}</ul></div>`
+    : '<div class="dim">まだ何も失っていない</div>';
+  const me = n.ranking.find((r) => r.id === 'me');
+  const rank = n.ranking.map((r) =>
+    `<div class="nr${r.id === 'me' ? ' me' : ''}"><b>${r.rank}</b>${r.name}<u>${r.power.toFixed(1)}</u></div>`).join('');
+  box.innerHTML =
+    `<div class="nhead">段 <b>${n.phaseName}</b>　国力 <b>${n.power.toFixed(1)}</b>　順位 <b>${me.rank}/${n.ranking.length}</b></div>`
+    + lost
+    + `<div class="nsub">配役 ${n.canPlace ? '撃てる' : '<span class="bad">もう手では置けない</span>'}`
+    + `　／　向ける ${n.canAim ? `撃てる（候補${n.foes.length}件）` : '候補が無い'}</div>`
+    + `<div class="nrank"><b>国力ランキング</b>（全プレイヤー間の順位）${rank}</div>`;
+}
+
+// ---- 動詞「置く」（正典4090-4105）。★ オーナーの専権 ----------------------
+function drawVerbs() {
+  const box = $('verbs');
+  if (!box) return;
+  const opts = run.placeOptions();
+  if (!opts.length) { box.innerHTML = '<div class="dim">個体を選ぶと「置く」が撃てる</div>'; return; }
+  box.innerHTML = opts.map((o) =>
+    `<button class="vb${o.why ? ' off' : ''}" data-k="${o.key}" title="${o.why || ''}">${o.label}</button>`).join('');
+  for (const el of box.querySelectorAll('.vb')) {
+    el.onclick = () => {
+      const r = run.place(el.dataset.k);
+      toast(r.ok ? '置いた' : '撃てない', r.ok ? '年代記に載った' : (r.why || ''));
+      drawVerbs(); drawDetail(); drawChronicle(); map.dirty = true;
+    };
+  }
+}
+
+// ★ 右の面をまとめて描き直す。**どれか1つが落ちても他が死なない**ようにする
+//   （起動時に1つ throw すると、その後ろの面が丸ごと出なくなる）
+function redrawPanels() {
+  for (const f of [drawChronicle, drawVerbs, drawNation]) {
+    try { f(); } catch (e) { console.error('面の描画で落ちた:', f.name, e); }
+  }
+}
+
 let openCause = -1;
 function drawChronicle() {
   const box = $('chronreal');
@@ -472,7 +518,7 @@ function frame() {
     if (m !== lastDetailMonth) {
       lastDetailMonth = m;
       if (run.selected >= 0 || run.selectedHouse >= 0) drawDetail();
-      drawChronicle();   // ★ 年代記（正典3-9）。月が変わったときだけ引き直す
+      redrawPanels();    // ★ 年代記（3-9）・動詞「置く」（4090）・国の段と国力（1-5/4-3）。月が変わったときだけ引き直す
     }
   }
   requestAnimationFrame(frame);
@@ -483,12 +529,12 @@ run.on('notice', addNotice);
 run.on('speed', markSpeeds);
 
 $('playbtn').onclick = () => run.toggle();
-$('stepday').onclick = () => { run.stepDay(); map.dirty = true; drawBar(true); drawDetail(); };
-$('stepmonth').onclick = () => { run.stepMonth(); map.dirty = true; drawBar(true); drawDetail(); };
+$('stepday').onclick = () => { run.stepDay(); map.dirty = true; drawBar(true); drawDetail(); redrawPanels(); };
+$('stepmonth').onclick = () => { run.stepMonth(); map.dirty = true; drawBar(true); drawDetail(); redrawPanels(); };
 $('fitbtn').onclick = () => map.fit(run.snapshot().villages.length);
 if (DEV) {
-  $('ff10').onclick = () => { run.fastForwardYears(10); map.dirty = true; drawBar(true); drawDetail(); };
-  $('ff100').onclick = () => { run.fastForwardYears(100); map.dirty = true; drawBar(true); drawDetail(); };
+  $('ff10').onclick = () => { run.fastForwardYears(10); map.dirty = true; drawBar(true); drawDetail(); redrawPanels(); };
+  $('ff100').onclick = () => { run.fastForwardYears(100); map.dirty = true; drawBar(true); drawDetail(); redrawPanels(); };
 }
 
 addEventListener('resize', () => { map.resize(); map.fit(run.snapshot().villages.length); });
@@ -509,6 +555,7 @@ map.resize();
 map.fit(run.snapshot().villages.length);
 drawBar(true);
 drawCards();   // ★ 方針カード（#18 §1）を最初に描く
+redrawPanels();   // ★ 年代記（3-9）・動詞「置く」（4090）・国の段と国力（1-5/4-3）
 drawChronicle();   // ★ 年代記（正典3-9）
 drawDetail();
 markSpeeds();

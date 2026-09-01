@@ -16,6 +16,8 @@
 //     requestAnimationFrame も持たない（旧版は戦闘だけ rAF で、裏タブで止まった）。
 
 import * as C from '../core/calendar.js';
+import * as NAT from '../world/nation.js';   // 国の段と国力（正典1-5・4-3）
+import * as OFF from '../world/office.js';   // 身分・爵位・役職（#10）
 import * as CARD from '../world/cards.js';   // 方針カード（#18 §1）
 import * as S from '../core/stats.js';
 import { World, converge as convergeOf } from '../world/world.js';
@@ -267,6 +269,59 @@ export class Run {
   traceCause(id) { return this.world.chron.traceCause(id).map((k) => this.world.chron.row(k)); }
   /** 正史を確定させる（正典3-9「決める」の一種。**新しい動詞は作らない**） */
   tellTruth(id, told) { this.world.chron.tell(id, told); }
+
+  // ---- 動詞「置く」（正典4090-4105）。★ オーナーの専権 --------------------
+  // ---- 国の段と国力（正典1-5・4-3・1-1c）--------------------------------
+  /** 段・失ったもの・国力・順位・候補を1つにまとめて返す */
+  nation() {
+    const w = this.world, p = w.nationalPower();
+    return {
+      phase: w.phase, phaseName: NAT.PHASE_NAMES[w.phase],
+      lost: w.lost, canPlace: w.canPlace,
+      power: p.power, parts: p.parts,          // ★ 内訳は自国だけ（正典2978）
+      ranking: w.ranking(), foes: w.searchFoes(20), canAim: w.canAim(),
+    };
+  }
+
+  /** いま選んでいる者に対して撃てる手を返す（撃てない理由つき） */
+  placeOptions() {
+    const i = this.selected;
+    const w = this.world, A = w.people.a;
+    if (i < 0 || i >= A.len || !A.alive[i]) return [];
+    const y = (A.ageMonths[i] / 12) | 0;
+    const young = y < 18 ? '18歳未満' : '';
+    const ruled = w.villagesRuledBy(i);
+    const cap = OFF.rankForVillages(ruled);
+    const out = [
+      { key: 'headman', label: '村長に就ける', why: young || (A.post[i] === OFF.POST_HEADMAN ? 'もう村長' : '') },
+      { key: 'mayor', label: '街長に就ける', why: young || (A.post[i] === OFF.POST_MAYOR ? 'もう街長' : '') },
+      { key: 'chief', label: '局長に就ける',
+        why: young || (A.rank[i] < 6 ? '局長は公爵でなければならない（#10-A）' : (A.post[i] === OFF.POST_CHIEF ? 'もう局長' : '')) },
+      { key: 'none', label: '席から外す', why: A.post[i] === OFF.POST_NONE ? 'もともと無役' : '' },
+      { key: 'ennoble', label: '叙する',
+        why: A.rank[i] >= cap ? `治めている村が${ruled}なので これ以上は叙せない（#10-A）` : '' },
+      { key: 'strip', label: '削ぐ', why: A.rank[i] <= 1 ? 'これ以上は削げない' : '' },
+      // ★ 動詞「呼ぶ」（正典4084-4087）。**一生に1度なので積み増せない**
+      { key: 'summon', label: '呼ぶ', why: w.people.a.summoned?.has(i) ? 'もう呼んだ（一生に1度）' : '' },
+    ];
+    return out;
+  }
+  /** 撃つ。@returns {{ok:boolean, why?:string}} */
+  place(key) {
+    const i = this.selected;
+    if (i < 0) return { ok: false, why: '誰も選んでいない' };
+    const w = this.world;
+    switch (key) {
+      case 'headman': return w.place(i, OFF.POST_HEADMAN);
+      case 'mayor':   return w.place(i, OFF.POST_MAYOR);
+      case 'chief':   return w.place(i, OFF.POST_CHIEF);
+      case 'none':    return w.place(i, OFF.POST_NONE);
+      case 'ennoble': return w.ennoble(i);
+      case 'strip':   return w.strip(i);
+      case 'summon':  return w.summon(i);
+      default:        return { ok: false, why: '知らない手' };
+    }
+  }
 
   // ---- 方針カード（#18 §1）。★ オーナーが触る唯一の口 ----------------------
   /** 国のつまみの一覧。段・実数・注記を UI が読める形にして返す */

@@ -18,7 +18,7 @@ import * as C from '../core/calendar.js';
 import { makeStreams, STREAM, saveStreams, loadStreams } from '../core/rng.js';
 import {
   People, SEX_MALE, SEX_FEMALE, RANK_COMMON, ST_PREGNANT, agingAndDeath, lifespanOf,
-  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep, KIN_NAMES, SECT_NONE, KIN_WAR, BUREAUS} from './people.js';
+  DEATH_COUNT, DEATH_HUNGER, DEATH_BIRTH, titleStep, KIN_NAMES, SECT_NONE, KIN_WAR, BUREAUS, RANK_NAMES as PEOPLE_RANK_NAMES, TOWN_VILLAGES, POST_NAMES} from './people.js';
 import { Houses } from './house.js';
 import {
   Villages, WHERE_FRONTIER, HOUSES_PER_VILLAGE,
@@ -26,7 +26,7 @@ import {
   AREA_YIELD_STATS, Q_DIVISOR,
   drawHarvest, STORE_PER_HOUSE, HARVEST_HARSH, HARVEST_POOR,
   BEAR_HURT, BEAR_DEAD, MID_HURT,          // 熊と鹿猪の負傷（#17 §5-2）
-  AREA_SCOUT,                              // 斥候の職域（#17 §6-8）
+  AREA_SCOUT, AREA_FOREST,                 // 斥候の職域（#17 §6-8）／森
 } from './village.js';
 import { growMonth, seedEffortForAge } from './grow.js';
 import { widow, marryMonth, conceiveMonth, birthDay, nursingMonth } from './marry.js';
@@ -47,9 +47,14 @@ import * as NEAR from './near.js';
 import * as WK from './works.js';        // 工事（#17 §4-2/§4-3）
 import * as SCOUT from './scout.js';     // 斥候（#17 §6-8・正典9540）
 import { Chronicle, EV, NO_VILLAGE16 } from './chronicle.js';   // 年代記と因果の台座（正典3-9）
+import * as NAT from './nation.js';      // 国の段（フェーズ＝喪失）と国力（正典1-5・4-3）
+import { defaultRoster } from './roster.js';   // 10国のライバル・ロスター（正典1-1c）
 import * as PARCEL from './parcel.js';  // 区画の役割16種（#17 §4-1）
 import * as LAND from './land.js';      // 区画の定員（CAP_FIELD）       // 近い順3村（#11-D・#11-F）
 import * as PLAN from './plan.js';       // 具申と差し止め（#14）
+// ★ 動詞「呼ぶ」の代金（正典4084-4087）。1点も足していない
+const SUMMON_INFL = 8.33, SUMMON_L = 8, SUMMON_ENVY = 0.119;
+const ID_PRIDE_W = S.needId('誇り');
 import * as CARD from './cards.js';      // 方針カード（つまみ・#18 §1）
 // ★ 地図（#17）。**2026-08-30 から既定でオン。**
 //   #11-D 結婚の範囲・#11-F 疫病の村間伝播・#11-G 備蓄の融通 は3つとも「村の距離」を読み、
@@ -104,6 +109,8 @@ export class World {
     // ★ 年代記と因果の台座（正典3-9）。**先に作るのは UI ではなくデータ層。**
     //   追記型。何も捨てない。真の原因（cause）と公表された帰属（told）を別の欄で持つ
     this.chron = new Chronicle(256);
+    // ★ 10国のライバル（ゴースト）。**走っている世界ではなく記録**（正典533）
+    this.roster = defaultRoster();
     // ★ 村ごとの「直近の災いの事件ID」。産出低下と恨みの**真の原因**をここから引く
     this.lastBlow = [];
     // 0番（地形）は mapgen が自前で立てるので、ここでは番号を予約しているだけ
@@ -128,6 +135,8 @@ export class World {
       // ---- 厄災（#9）----
       storms: 0, plagues: 0, fires: 0, beasts: 0, floods: 0, fertRuined: 0,
       scoutsLost: 0, scoutsOut: 0, scoutTiles: 0,
+      ownerActs: 0,          // ★ オーナーが撃った回数（動詞5つ）
+      summoned: 0,           // ★ 呼んだ回数（正典4087）
       shock: 0,                             // 厄災の X の合計（⑤の溜め池の入口）
       // ---- 宗派（#8）----
       sectsFounded: 0, sectsDissolved: 0, converted: 0,
@@ -794,6 +803,153 @@ export class World {
     nursingMonth(P, t);
 
     return { death: d, food, marry: m, conceive: c };
+  }
+
+  // =========================================================================
+  // ★★ オーナーの動詞「置く」（正典4090-4105）★★
+  //   > **就ける（席）**／**叙する**／**削ぐ**
+  //   > オーナー … **誰の L も下がらない**（任免は専権・#14）
+  //   ★ 撃った結果は**必ず年代記に載る**（正典3-9）。だから「自分の介入と結果の因果」が読める
+  // =========================================================================
+  /** 席に就ける。@returns {{ok:boolean, why?:string}} */
+  place(i, post, village = -1) {
+    const A = this.people.a;
+    // ★★ 正典697/729：**100人を超えた瞬間、画面から「自分で配役する」ボタンが消える。**
+    //   **もう手で置けないので、代理人を立てるしかない。**獲得ではなく**剥奪**として体験させる
+    if (!this.canPlace) return { ok: false, why: '人口が100を超えた ── もう手では置けない（正典1-5）' };
+    const v = village >= 0 ? village : (A.postVillage[i] !== 0xFFFF ? A.postVillage[i] : A.village[i]);
+    const r = OFF.placeSeat(this.people, this.villages, i, post, v, this.tick);
+    if (!r.ok) return r;
+    this.counters.ownerActs++;
+    this.chron.add(this.tick, EV.任命,
+      { actor: i, target: r.ousted >= 0 ? r.ousted : undefined, village: v, x: post });
+    this.note('置いた', `#${i} を ${POST_NAMES[post] ?? ('席' + post)} に`);
+    return r;
+  }
+  /** 叙する。★ 治める土地の大きさを超えて叙せない（#10-A） */
+  ennoble(i) {
+    const r = OFF.ennoble(this.people, this.villages, i, this.tick,
+      (k) => this.villagesRuledBy(k));
+    if (!r.ok) return r;
+    this.counters.ownerActs++;
+    this.chron.add(this.tick, EV.叙爵, { actor: i, village: this.people.a.village[i], x: 1 });
+    this.note('叙した', `#${i} が ${PEOPLE_RANK_NAMES[this.people.a.rank[i]]} に`);
+    return r;
+  }
+  /** 削ぐ */
+  strip(i) {
+    const r = OFF.strip(this.people, i, this.tick);
+    if (!r.ok) return r;
+    this.counters.ownerActs++;
+    this.chron.add(this.tick, EV.叙爵, { actor: i, village: this.people.a.village[i], x: -1 });
+    this.note('削いだ', `#${i} が ${PEOPLE_RANK_NAMES[this.people.a.rank[i]]} に`);
+    return r;
+  }
+  // ---- 動詞「呼ぶ」（正典4084-4089）------------------------------------
+  //   | その村の**村長**（いなければ家長） | **L_i** | **−8×(0.5+誇り/100)**（誇り60で −8.8）|
+  //   | 同じ村で順位が下がった者 | **不満④**（★③ではない）| 1人あたり定常 **+0.119点** |
+  //   | **呼ばれた本人** | **影響力 I ＋8.33**。n≥16 なら宗教の発起門 T_i=35 を跨ぐ |
+  //   | オーナー自身 | 1村を掃くのに 21.5秒、当たり 0.157人。**一生に1度なので積み増せない** |
+  /**
+   * 呼ぶ。その村を掃いて1人を引き上げる。
+   * ★ 「一生に1度なので積み増せない」＝ **同じ人を二度呼べない**（`summoned` で覚える）
+   */
+  summon(i) {
+    const A = this.people.a;
+    if (!A.alive[i]) return { ok: false, why: '生きていない' };
+    if ((A.summoned ??= new Set()).has(i)) return { ok: false, why: 'もう呼んだ（一生に1度）' };
+    const v = A.village[i];
+    if (v === 0xFFFF) return { ok: false, why: '村に居ない' };
+    A.summoned.add(i);
+    A.infl[i] += SUMMON_INFL;                                   // ★ 影響力 +8.33
+    // その村の村長の L が下がる（誇りで重くなる）
+    for (let k = 0; k < A.len; k++) {
+      if (!A.alive[k] || A.postVillage[k] !== v || A.post[k] !== OFF.POST_HEADMAN) continue;
+      const pride = this.people.effective(k, ID_PRIDE_W);
+      A.loyalty[k] = Math.max(0, (A.loyalty[k] || PLAN.baselineL(this.people, k))
+        - SUMMON_L * (0.5 + pride / 100));
+      break;
+    }
+    // 同じ村で順位が下がった者に ④（★③ではない。嫉妬は S={①} t=0 → 全額④）
+    for (let k = 0; k < A.len; k++) {
+      if (!A.alive[k] || k === i || A.village[k] !== v) continue;
+      if ((A.ageMonths[k] / 12 | 0) < 12) continue;
+      DIS.addDiscontent(this.people, k, DIS.D_SELF, SUMMON_ENVY);
+    }
+    this.counters.ownerActs++; this.counters.summoned++;
+    this.chron.add(this.tick, EV.任命, { actor: i, village: v, x: SUMMON_INFL });
+    this.note('呼んだ', `#${i} の影響力が ${A.infl[i].toFixed(1)} に`);
+    return { ok: true, infl: A.infl[i] };
+  }
+
+  // =========================================================================
+  // 国の段（正典1-5）と国力（正典4-3）
+  // =========================================================================
+  /** いまの段。★ 正典697「**100人を超えた瞬間**」＝ `>` */
+  get phase() { return NAT.phaseOf(this.population()); }
+  /** その段でオーナーが**失ったもの**（正典721 の表の右端。獲得の一覧は作らない） */
+  get lost() { return NAT.LOST[this.phase]; }
+  /** ★ 「自分で配役する」が撃てるか（正典729「100人を超えた瞬間、ボタンが消える」） */
+  get canPlace() { return NAT.canPlace(this.population()); }
+
+  /**
+   * 国力（正典4-3）。★ **蓄え（蔵の中身・財）は入れない。**
+   *   混ぜ方の重みは正典に無いので5項を同じ重みで混ぜている（B-45）
+   */
+  nationalPower() {
+    const A = this.people.a, V = this.villages.a;
+    let pop = 0, skillSum = 0, skillN = 0, produced = 0, demand = 0, fieldCap = 0;
+    for (let i = 0; i < A.len; i++) {
+      if (!A.alive[i]) continue;
+      pop++;
+      const j = A.job[i];
+      if (j === AREA_FIELD || j === AREA_FOREST) {
+        skillSum += this.people.effectiveOf(i, AREA_YIELD_STATS[j]) / Q_DIVISOR; skillN++;
+      }
+    }
+    for (let v = 0; v < V.len; v++) {
+      if (!V.alive[v]) continue;
+      produced += V.produced[v];   // ★ 月次。冬は畑ぶんが0なので下の12ヶ月平均で均す
+      demand += V.pop[v] * 0.6 * EAT_ADULT + V.pop[v] * 0.4 * 0.5;
+      fieldCap += this.land ? (this.land.fieldCap[v] ?? 0) : 0;
+    }
+    // ★ 産出は**12ヶ月ならす**。冬は畑の季節係数が0なので、その月だけ見ると
+    //   国力が季節で3割振れる（正典2989「1ヶ月で動く数字は目安として使えない」の趣旨）
+    (this._prod12 ??= []).push(produced);
+    if (this._prod12.length > 12) this._prod12.shift();
+    const prodAvg = this._prod12.reduce((a, b) => a + b, 0) / this._prod12.length;
+    // 年間出産数（近似：通算 ÷ 経過年）
+    const years = Math.max(1, C.yearOf(this.tick));
+    return NAT.powerOf({
+      pop, skill: skillN ? skillSum / skillN : 0, fieldCap,
+      produced: prodAvg, demand, birthsPerYear: this.counters.born / years,
+    });
+  }
+
+  // ---- 動詞「向ける」（正典3677・4169）------------------------------------
+  //   | **5** | **向ける** | なし（オーナー自身が布告）| 外国 |
+  //     **国力の帯を数値で指定 → 候補一覧 → 布告** | 不可逆 |
+  //   ★ 生えるのは「**国力検索でマッチ候補が1件でも返った日**」（正典4169）
+  //   ★ **相手選びは国力だけ。地理でマッチングしない**（正典517）
+  /** 国力の帯で相手を探す。@returns 候補（**国力しか見えない**・正典562） */
+  searchFoes(bandPct = 20) {
+    return this.roster.search(this.nationalPower().power, bandPct);
+  }
+  /** 国力ランキング（正典508「全プレイヤー間の順位」） */
+  ranking() { return this.roster.ranking(this.nationalPower().power); }
+  /** 「向ける」が撃てるか（正典4169） */
+  canAim(bandPct = 20) { return NAT.canAim(this.searchFoes(bandPct).length); }
+
+  /** その者が治めている村の数（#10-A の爵位の上限に要る） */
+  villagesRuledBy(i) {
+    const A = this.people.a;
+    if (A.post[i] === OFF.POST_HEADMAN) return 1;
+    if (A.post[i] === OFF.POST_MAYOR) {   // 街長＝村9つ（TOWN_VILLAGES）
+      let n = 0; for (let v = 0; v < this.villages.a.len; v++) if (this.villages.a.alive[v]) n++;
+      return Math.min(n, TOWN_VILLAGES);
+    }
+    if (A.post[i] === OFF.POST_CHIEF) return TOWN_VILLAGES;
+    return 0;
   }
 
   /**

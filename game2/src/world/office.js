@@ -118,6 +118,75 @@ export function setPost(P, i, post, village, tick) {
 export const APPOINT_MIN_AGE = 18;
 
 // ---------------------------------------------------------------------------
+// ★★ オーナーの動詞「置く」（正典4090-4105 の表そのまま）★★
+// ---------------------------------------------------------------------------
+// | **就ける（席）** | 就いた者 | **不満④ −25×ΔQ**／評判 +10／傲慢 U が下がる |
+// |                  | **抜かれた同輩** | **① 4.81（実行者へ）／④ 8.27** |
+// |                  | オーナー | **誰の L も下がらない**（任免は専権・#14） |
+// | **叙する**       | 本人 | 野心 drift +8（上限+40）／④ −10×ΔP／評判 +10 |
+// | **削ぐ**         | 本人 | ① 14.42（任命者＝実行者へ）／③ 7.21／④ 14.73／評判 −15 |
+//
+// ★ **オーナーには実行者の個体が無い。**①は「相手のいない①は絶対に作らない」（#5 allocate 段2）
+//   ので、**オーナーが実行者のときは ① を作らず、その分を ④ へ寄せる**。
+//   （正典4104 の「任命者＝実行者へ」は局長が撃ったときの宛先で、オーナーには宛先が無い）
+export const OUSTED_PERSON = 4.81, OUSTED_SELF = 8.27;      // 抜かれた同輩
+export const STRIP_PERSON = 14.42, STRIP_RULE = 7.21, STRIP_SELF = 14.73;   // 削がれた本人
+
+/**
+ * 席に就ける（オーナーの専権）。同じ席に居た者は外れる。
+ * @returns {{ok:boolean, why?:string, ousted:number}}
+ */
+export function placeSeat(P, V, i, post, village, tick) {
+  const A = P.a;
+  if (!A.alive[i]) return { ok: false, why: '生きていない', ousted: -1 };
+  if ((A.ageMonths[i] / 12 | 0) < APPOINT_MIN_AGE) return { ok: false, why: `${APPOINT_MIN_AGE}歳未満`, ousted: -1 };
+  if (post === POST_CHIEF && A.rank[i] < RANK_DUKE) return { ok: false, why: '局長は公爵でなければならない（#10-A）', ousted: -1 };
+  // 同じ村の同じ席に居る者を外す
+  let ousted = -1;
+  for (let k = 0; k < A.len; k++) {
+    if (!A.alive[k] || k === i) continue;
+    if (A.post[k] !== post) continue;
+    if (post !== POST_CHIEF && A.postVillage[k] !== village) continue;
+    if (post === POST_CHIEF && A.bureau[k] !== A.bureau[i]) continue;
+    ousted = k; break;
+  }
+  if (ousted >= 0) {
+    setPost(P, ousted, POST_NONE, NO_VILLAGE, tick);
+    // ★ 抜かれた同輩。オーナーには宛先の個体が無いので ① は作らず ④ へ寄せる
+    DIS.addDiscontent(P, ousted, DIS.D_SELF, OUSTED_SELF + OUSTED_PERSON);
+  }
+  setPost(P, i, post, village, tick);
+  return { ok: true, ousted };
+}
+
+/** 叙する（1段上げる）。★ **治める土地の大きさを超えて叙せない**（正典3711・#10-A） */
+export function ennoble(P, V, i, tick, villagesOf) {
+  const A = P.a;
+  if (!A.alive[i]) return { ok: false, why: '生きていない' };
+  const n = villagesOf ? villagesOf(i) : (A.post[i] >= POST_HEADMAN ? 1 : 0);
+  const cap = rankForVillages(n);
+  if (A.rank[i] >= cap) return { ok: false, why: `治めている村が${n}なので ${RANK_NAMES[cap]} を超えて叙せない（#10-A）` };
+  // ★ 判定は**身分そのもの**で見る。爵位の段 P は `max(0, rank−2)`（正典1845）なので、
+  //   平民→騎士 は身分が上がっても P が動かず、dP では「動かなかった」と誤判定する
+  const before = A.rank[i];
+  setRank(P, i, Math.min(cap, A.rank[i] + 1), tick);
+  const moved = A.rank[i] > before;
+  return { ok: moved, why: moved ? '' : '動かなかった', rank: A.rank[i] };
+}
+
+/** 削ぐ（1段下げる）。正典4104 の代金をそのまま払う */
+export function strip(P, i, tick) {
+  const A = P.a;
+  if (!A.alive[i]) return { ok: false, why: '生きていない' };
+  if (A.rank[i] <= RANK_FLOOR) return { ok: false, why: 'これ以上は削げない' };
+  setRank(P, i, A.rank[i] - 1, tick);
+  // ★ ①の宛先（任命者）はオーナーなので個体が無い。その分を ④ へ寄せる（#5 allocate 段2）
+  DIS.addDiscontent(P, i, DIS.D_RULE, STRIP_RULE);
+  DIS.addDiscontent(P, i, DIS.D_SELF, STRIP_SELF + STRIP_PERSON);
+  return { ok: true, rank: A.rank[i] };
+}
+
+// ---------------------------------------------------------------------------
 // 功績で叙する（オーナーの言葉 2026-08-29。起票は B-41。★ B-33 は別の未裁定の議題だった）
 // ---------------------------------------------------------------------------
 //
